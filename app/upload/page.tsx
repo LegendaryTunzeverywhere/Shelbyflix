@@ -4,6 +4,7 @@ import React from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import UploadForm from '@/components/UploadForm';
+import { SHELBY_FAUCET_URL } from '@/lib/aptos';
 import { useWallet } from '@/hooks/useWallet';
 import { useTokenAccess } from '@/hooks/useTokenAccess';
 import { LockClosedIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
@@ -69,7 +70,7 @@ export default function UploadPage() {
                 You need to hold Shelby Faucet tokens to upload videos.
               </p>
               <a
-                href="https://aptoslabs.com/testnet-faucet"
+                href={SHELBY_FAUCET_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 

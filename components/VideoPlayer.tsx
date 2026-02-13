@@ -56,7 +56,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
         </p>
         <div className="flex gap-3">
           <a
-            href="https://aptoslabs.com/testnet-faucet"
+            href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
             target="_blank"
             rel="noopener noreferrer"
             className="px-6 py-3 bg-primary-600 hover:bg-primary-700 rounded-lg 

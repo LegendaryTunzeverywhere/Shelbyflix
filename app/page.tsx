@@ -94,7 +94,7 @@ export default function Home() {
                     You need Shelby Faucet tokens to access videos.
                   </p>
                   <a
-                    href="https://aptoslabs.com/testnet-faucet"
+                    href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white 

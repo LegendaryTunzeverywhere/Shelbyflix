@@ -1,50 +1,89 @@
 import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
 
-// Configure Aptos client based on environment
-const network = (process.env.NEXT_PUBLIC_APTOS_NETWORK || 'testnet') as Network;
+// ============================================================================
+// SHELBYNET NETWORK CONFIGURATION
+// ============================================================================
+// Shelbynet is a custom Aptos network for Shelby Protocol
+// Official Docs: https://docs.shelby.xyz
 
-const config = new AptosConfig({ 
-  network,
-  fullnode: process.env.NEXT_PUBLIC_APTOS_NODE_URL 
+// Shelbynet Network Details
+export const SHELBYNET_CONFIG = {
+  name: process.env.NEXT_PUBLIC_NETWORK_NAME || 'shelbynet',
+  nodeUrl: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL || 'https://api.shelbynet.shelby.xyz/v1',
+  indexerUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL || 'https://api.shelbynet.shelby.xyz/v1/graphql',
+  faucetUrl: process.env.NEXT_PUBLIC_SHELBYNET_FAUCET_URL || 'https://faucet.shelbynet.shelby.xyz',
+};
+
+// Configure Aptos client for Shelbynet
+const config = new AptosConfig({
+  fullnode: SHELBYNET_CONFIG.nodeUrl,
+  indexer: SHELBYNET_CONFIG.indexerUrl,
+  faucet: SHELBYNET_CONFIG.faucetUrl,
 });
 
 export const aptos = new Aptos(config);
 
-// Shelby Faucet Token Configuration
-// This is the default Aptos Coin address - replace with actual Shelby Faucet Token when available
-export const SHELBY_FAUCET_TOKEN = process.env.NEXT_PUBLIC_TOKEN_ADDRESS || '0x1::aptos_coin::AptosCoin';
+// ============================================================================
+// SHELBYUSD TOKEN CONFIGURATION
+// ============================================================================
+// ShelbyUSD is the native token for paying upload fees on Shelby network
+// Token Type: 0xa8d56bad68eb3d9c54c5c96b91c7e7471fb4c80dafed03e458da0aca6ef0fb5b0x1b18363a9f1fe5e6ebf247daba5cc1c18052bb232efdc4c50f556053922d98e1
+// Get test tokens from faucet: https://faucet.shelbynet.shelby.xyz
+
+export const SHELBYUSD_TOKEN = (
+  process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS
+    ? `${process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS}`
+    : '0x1b18363a9f1fe5e6ebf247daba5cc1c18052bb232efdc4c50f556053922d98e1'
+) as `${string}::${string}::${string}`;
 
 // Module address for the smart contract
-export const MODULE_ADDRESS = process.env.NEXT_PUBLIC_MODULE_ADDRESS || '0x1';
+export const MODULE_ADDRESS = (process.env.NEXT_PUBLIC_MODULE_ADDRESS || '0x1') as string;
+
+// Network display information
+export const NETWORK_NAME = 'Shelbynet';
+export const NETWORK_CHAIN = 'Shelby Testnet';
+export const SHELBY_FAUCET_URL = SHELBYNET_CONFIG.faucetUrl;
+export const SHELBY_DOCS_URL = 'https://docs.shelby.xyz';
 
 /**
- * Check if a wallet address owns the required token
+ * Check if a wallet address owns the required ShelbyUSD tokens
+ * ShelbyUSD tokens are used to pay upload fees on the Shelby network
  * @param walletAddress - The Aptos wallet address to check
- * @param minBalance - Minimum token balance required (default: 1)
+ * @param minBalance - Minimum token balance required (default: 0.1 ShelbyUSD)
  * @returns Promise<boolean> - Whether the wallet has sufficient balance
  */
 export async function checkTokenOwnership(
   walletAddress: string,
-  minBalance: number = 1
+  minBalance: number = parseFloat(process.env.NEXT_PUBLIC_MIN_TOKEN_BALANCE || '0.1')
 ): Promise<{ hasAccess: boolean; balance: string }> {
   try {
-    // For Aptos Coin (or any fungible asset)
+    console.log('🔍 Checking ShelbyUSD balance for:', walletAddress);
+    console.log('📍 Token address:', SHELBYUSD_TOKEN);
+
+    // Check balance of ShelbyUSD tokens using the correct coin type
     const balance = await aptos.getAccountCoinAmount({
       accountAddress: walletAddress,
-      coinType: SHELBY_FAUCET_TOKEN,
+      coinType: SHELBYUSD_TOKEN,
     });
 
-    const balanceInTokens = Number(balance) / 100000000; // Convert from Octas to APT
+    console.log('💰 Raw balance:', balance);
+
+    // ShelbyUSD has 8 decimals
+    const balanceInTokens = Number(balance) / 100000000;
+
+    console.log('✅ Balance in ShelbyUSD:', balanceInTokens.toFixed(8));
+    console.log('🎯 Required minimum:', minBalance);
 
     return {
       hasAccess: balanceInTokens >= minBalance,
-      balance: balanceInTokens.toFixed(4),
+      balance: balanceInTokens.toFixed(8),
     };
   } catch (error) {
-    console.error('Error checking token ownership:', error);
+    console.error('❌ Error checking ShelbyUSD token ownership:', error);
+    // If the account doesn't have the coin store, it means balance is 0
     return {
       hasAccess: false,
-      balance: '0',
+      balance: '0.00000000',
     };
   }
 }
@@ -61,7 +100,7 @@ export async function getAccountResource<T>(
   try {
     const resource = await aptos.getAccountResource({
       accountAddress,
-      resourceType,
+      resourceType: resourceType as `${string}::${string}::${string}`,
     });
     return resource.data as T;
   } catch (error) {
@@ -126,8 +165,13 @@ export async function waitForTransaction(txnHash: string): Promise<boolean> {
 
 // Export network info for display
 export const networkInfo = {
-  name: network,
-  explorerUrl: network === 'mainnet' 
-    ? 'https://explorer.aptoslabs.com'
-    : `https://explorer.aptoslabs.com/?network=${network}`,
+  name: NETWORK_NAME,
+  chain: NETWORK_CHAIN,
+  network: 'shelbynet',
+  nodeUrl: SHELBYNET_CONFIG.nodeUrl,
+  indexerUrl: SHELBYNET_CONFIG.indexerUrl,
+  faucetUrl: SHELBYNET_CONFIG.faucetUrl,
+  explorerUrl: 'https://explorer.aptoslabs.com',
+  faucetDocs: 'https://docs.shelby.xyz/apis/faucet',
+  shelbyDocs: SHELBY_DOCS_URL,
 };

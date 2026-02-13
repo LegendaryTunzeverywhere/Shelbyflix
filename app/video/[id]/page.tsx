@@ -209,7 +209,7 @@ export default function VideoPage() {
               with the required tokens to unlock access.
             </p>
             <a
-              href="https://aptoslabs.com/testnet-faucet"
+              href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-600 

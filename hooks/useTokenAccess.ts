@@ -17,7 +17,7 @@ interface TokenAccessState {
  * @param minBalance - Minimum token balance required (default: 1)
  * @returns Token access state and refetch function
  */
-export function useTokenAccess(minBalance: number = 1): TokenAccessState {
+export function useTokenAccess(minBalance: number = parseFloat(process.env.NEXT_PUBLIC_MIN_TOKEN_BALANCE || '0.1')): TokenAccessState {
   const { address, connected } = useWallet();
   const [hasAccess, setHasAccess] = useState(false);
   const [balance, setBalance] = useState('0');
