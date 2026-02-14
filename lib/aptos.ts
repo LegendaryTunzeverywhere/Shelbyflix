@@ -1,4 +1,4 @@
-import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
+import { Aptos, AptosConfig, Network, InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 
 // ============================================================================
 // SHELBYNET NETWORK CONFIGURATION
@@ -37,11 +37,11 @@ export const SHELBYUSD_TOKEN = (
 ) as `${string}::${string}::${string}`;
 
 // Module address for the smart contract
-export const MODULE_ADDRESS = (process.env.NEXT_PUBLIC_MODULE_ADDRESS || '0x1') as string;
+export const MODULE_ADDRESS = (process.env.NEXT_PUBLIC_MODULE_ADDRESS || '0x1b18363a9f1fe5e6ebf247daba5cc1c18052bb232efdc4c50f556053922d98e1') as string;
 
 // Network display information
 export const NETWORK_NAME = 'Shelbynet';
-export const NETWORK_CHAIN = 'Shelby Testnet';
+export const NETWORK_CHAIN = 'Shelbynet';
 export const SHELBY_FAUCET_URL = SHELBYNET_CONFIG.faucetUrl;
 export const SHELBY_DOCS_URL = 'https://docs.shelby.xyz';
 
@@ -55,36 +55,98 @@ export const SHELBY_DOCS_URL = 'https://docs.shelby.xyz';
 export async function checkTokenOwnership(
   walletAddress: string,
   minBalance: number = parseFloat(process.env.NEXT_PUBLIC_MIN_TOKEN_BALANCE || '0.1')
-): Promise<{ hasAccess: boolean; balance: string }> {
+): Promise<{ hasAccess: boolean; balance: string; isMissingStore?: boolean }> {
   try {
     console.log('🔍 Checking ShelbyUSD balance for:', walletAddress);
-    console.log('📍 Token address:', SHELBYUSD_TOKEN);
+    
+    // Attempt via Indexer (GraphQL) if available, as it's more reliable on Shelbynet
+    // This query looks for the balance of the specific Fungible Asset
+    const query = `
+      query GetFABalance($owner: String!, $asset: String!) {
+        current_fungible_asset_balances(
+          where: {owner_address: {_eq: $owner}, asset_type: {_eq: $asset}}
+        ) {
+          amount
+        }
+      }
+    `;
 
-    // Check balance of ShelbyUSD tokens using the correct coin type
-    const balance = await aptos.getAccountCoinAmount({
-      accountAddress: walletAddress,
-      coinType: SHELBYUSD_TOKEN,
+    const variables = { owner: walletAddress, asset: SHELBYUSD_TOKEN };
+    
+    try {
+      const indexerResult = await aptos.queryIndexer<any>({
+        query: { query, variables }
+      });
+      
+      const amount = indexerResult?.current_fungible_asset_balances?.[0]?.amount || '0';
+      const balanceInTokens = Number(amount) / 100000000;
+      
+      console.log('📊 Indexer FA balance:', balanceInTokens);
+      
+      return {
+        hasAccess: balanceInTokens >= minBalance,
+        balance: balanceInTokens.toFixed(8),
+        isMissingStore: false,
+      };
+    } catch (indexerError) {
+      console.warn('Indexer failed, falling back to REST:', indexerError);
+    }
+
+    // Fallback to REST view function
+    const result = await aptos.view({
+      payload: {
+        function: '0x1::primary_fungible_store::balance' as `${string}::${string}::${string}`,
+        typeArguments: [],
+        functionArguments: [walletAddress, SHELBYUSD_TOKEN],
+      },
     });
 
-    console.log('💰 Raw balance:', balance);
-
-    // ShelbyUSD has 8 decimals
+    const balance = result[0] as string;
     const balanceInTokens = Number(balance) / 100000000;
-
-    console.log('✅ Balance in ShelbyUSD:', balanceInTokens.toFixed(8));
-    console.log('🎯 Required minimum:', minBalance);
 
     return {
       hasAccess: balanceInTokens >= minBalance,
       balance: balanceInTokens.toFixed(8),
+      isMissingStore: false,
     };
-  } catch (error) {
-    console.error('❌ Error checking ShelbyUSD token ownership:', error);
-    // If the account doesn't have the coin store, it means balance is 0
+  } catch (error: any) {
+    console.warn('⚠️ All balance checks failed:', error.message);
     return {
       hasAccess: false,
       balance: '0.00000000',
+      isMissingStore: false,
     };
+  }
+}
+
+/**
+ * Register a coin for an account
+ * @param signAndSubmitTransaction - Wallet adapter function
+ */
+export async function registerShelbyUSD(
+  signAndSubmitTransaction: any
+): Promise<string> {
+  // NOTE: For Fungible Assets, manual registration is NOT typically required.
+  // The store is created automatically when you receive tokens from a faucet.
+  // We keep this function for backwards compatibility or for specific FA setups
+  // that might use a "create_store" pattern.
+  try {
+    // Attempt to create a primary store if it doesn't exist (optional for most FAs)
+    const payload: InputGenerateTransactionPayloadData = {
+      function: '0x1::primary_fungible_store::ensure_primary_store_exists' as `${string}::${string}::${string}`,
+      typeArguments: [],
+      functionArguments: [SHELBYUSD_TOKEN],
+    };
+
+    const response = await signAndSubmitTransaction({
+      data: payload,
+    });
+
+    await waitForTransaction(response.hash);
+    return response.hash;
+  } catch (error: any) {
+    console.error('Failed to ensure ShelbyUSD store:', error);
+    throw error;
   }
 }
 

@@ -2,20 +2,38 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useState } from 'react';
 import Header from '@/components/Header';
 import { useTokenAccess } from '@/hooks/useTokenAccess';
 import { useWallet } from '@/hooks/useWallet';
+import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
+import { registerShelbyUSD } from '@/lib/aptos';
 import {
   LockClosedIcon,
   CloudIcon,
   BoltIcon,
   ShieldCheckIcon,
   ArrowRightIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 
 export default function Home() {
   const { connected } = useWallet();
-  const { hasAccess } = useTokenAccess();
+  const { signAndSubmitTransaction } = useAptosWallet();
+  const { hasAccess, isMissingStore, refetch } = useTokenAccess();
+  const [registering, setRegistering] = useState(false);
+
+  const handleRegister = async () => {
+    try {
+      setRegistering(true);
+      await registerShelbyUSD(signAndSubmitTransaction);
+      await refetch();
+    } catch (error) {
+      console.error('Registration failed:', error);
+    } finally {
+      setRegistering(false);
+    }
+  };
 
   const features = [
     {
@@ -90,19 +108,46 @@ export default function Home() {
                 </>
               ) : (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 max-w-md">
-                  <p className="text-yellow-800 mb-4">
-                    You need Shelby Faucet tokens to access videos.
-                  </p>
-                  <a
-                    href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white 
-                      rounded-lg font-medium inline-flex items-center gap-2"
-                  >
-                    Get Test Tokens
-                    <ArrowRightIcon className="w-4 h-4" />
-                  </a>
+                  {isMissingStore ? (
+                    <>
+                      <p className="text-yellow-800 mb-4 font-medium">
+                        ShelbyUSD not detected
+                      </p>
+                      <p className="text-sm text-yellow-700 mb-6">
+                        You need to register the ShelbyUSD coin in your wallet before you can receive or hold it.
+                      </p>
+                      <button
+                        onClick={handleRegister}
+                        disabled={registering}
+                        className="w-full flex items-center justify-center gap-2 px-6 py-3 
+                          bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium 
+                          transition-colors disabled:bg-gray-400 shadow-md"
+                      >
+                        {registering ? (
+                          <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
+                        ) : (
+                          <SparklesIcon className="w-5 h-5" />
+                        )}
+                        Register ShelbyUSD
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-yellow-800 mb-4">
+                        You need Shelby Faucet tokens to access videos.
+                      </p>
+                      <a
+                        href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white 
+                          rounded-lg font-medium inline-flex items-center gap-2 shadow-md"
+                      >
+                        Get Test Tokens
+                        <ArrowRightIcon className="w-4 h-4" />
+                      </a>
+                    </>
+                  )}
                 </div>
               )
             ) : (

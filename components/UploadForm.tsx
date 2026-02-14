@@ -3,10 +3,10 @@
 import React, { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
-import type { UploadFormData, UploadProgress } from '@/types';
-import { uploadToShelby, validateVideoFile } from '@/lib/shelby';
+import type { UploadProgress } from '@/types';
+import { uploadWithProgress, validateVideoFile } from '@/lib/shelby';
 import { storeVideoMetadataOnChain } from '@/lib/contract';
-import { SHELBY_FAUCET_TOKEN } from '@/lib/aptos';
+import { SHELBYUSD_TOKEN } from '@/lib/aptos';
 import { 
   CloudArrowUpIcon,
   XMarkIcon,
@@ -27,6 +27,7 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [price, setPrice] = useState('0');
   const [isDragging, setIsDragging] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,59 +72,72 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
     e.preventDefault();
 
     if (!file || !title.trim() || !account) {
-      setError('Please fill in all required fields');
+      setError('Please fill in all required fields and connect your wallet');
       return;
     }
 
     try {
       // Stage 1: Preparing
-      setProgress({ percent: 10, stage: 'preparing', message: 'Preparing upload...' });
-      await new Promise(resolve => setTimeout(resolve, 500));
+      setProgress({ percent: 10, stage: 'preparing', message: 'Preparing asset security...' });
 
-      // Stage 2: Uploading to Shelby
-      setProgress({ percent: 30, stage: 'uploading', message: 'Uploading to Shelby storage...' });
-      
-      const uploadResult = await uploadToShelby(file, {
-        title,
-        description,
-        uploader: account.address,
-      });
+      // Stage 2: Uploading to Shelby Storage
+      const uploadResult = await uploadWithProgress(
+        file,
+        account.address,
+        { 
+          title: title.trim(), 
+          description: description.trim(),
+          uploader: account.address 
+        },
+        (p) => {
+          // Map 0-100 to 10-80 range for smoother overall UI progress
+          const mappedPercent = 10 + (p * 0.7);
+          setProgress({ 
+            percent: Math.round(mappedPercent), 
+            stage: 'uploading', 
+            message: `Securing file in storage... ${p}%` 
+          });
+        }
+      );
 
-      if (!uploadResult.success) {
-        throw new Error(uploadResult.error || 'Upload failed');
+      if (!uploadResult.success || !uploadResult.blobId) {
+        throw new Error(uploadResult.error || 'Storage securing failed');
       }
 
-      // Stage 3: Storing metadata on-chain
-      setProgress({ percent: 70, stage: 'processing', message: 'Storing metadata on blockchain...' });
+      // Stage 3: Blockchain Registration (Triggering Wallet)
+      setProgress({ percent: 85, stage: 'processing', message: 'Registering ownership on blockchain... Please check your wallet popup.' });
 
-      const txHash = await storeVideoMetadataOnChain(
+      // Safety check: ensure signAndSubmitTransaction is available
+      if (!signAndSubmitTransaction) {
+        throw new Error('Wallet not ready for transaction signing');
+      }
+
+      await storeVideoMetadataOnChain(
         account.address,
         signAndSubmitTransaction,
         {
-          videoId: uploadResult.videoId,
+          videoId: uploadResult.blobId,
           title: title.trim(),
           description: description.trim(),
-          shelbyUrl: uploadResult.shelbyUrl,
+          shelbyUrl: uploadResult.shelbyUrl || `shelby://${uploadResult.blobId}`,
           uploader: account.address,
-          requiredToken: SHELBY_FAUCET_TOKEN,
+          requiredToken: SHELBYUSD_TOKEN,
+          price: Math.floor(parseFloat(price) * 100000000), // Convert to Octas
         }
       );
 
       // Stage 4: Complete
-      setProgress({ percent: 100, stage: 'complete', message: 'Upload complete!' });
+      setProgress({ percent: 100, stage: 'complete', message: 'Video successfully published!' });
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Success
       if (onSuccess) {
-        onSuccess();
+        setTimeout(onSuccess, 1500);
       } else {
-        router.push(`/video/${uploadResult.videoId}`);
+        setTimeout(() => router.push(`/video/${uploadResult.blobId}`), 1500);
       }
     } catch (err) {
-      console.error('Upload error:', err);
-      setError(err instanceof Error ? err.message : 'Upload failed');
-      setProgress({ percent: 0, stage: 'error', message: 'Upload failed' });
+      console.error('Publishing error:', err);
+      setError(err instanceof Error ? err.message : 'Publishing failed');
+      setProgress(null);
     }
   };
 
@@ -131,6 +145,7 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
     setFile(null);
     setTitle('');
     setDescription('');
+    setPrice('0');
     setProgress(null);
     setError(null);
     if (fileInputRef.current) {
@@ -138,35 +153,44 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
     }
   };
 
-  // Show progress during upload
-  if (progress && progress.stage !== 'error') {
+  if (progress) {
     return (
       <div className="max-w-2xl mx-auto p-8">
-        <div className="bg-white rounded-xl shadow-lg p-8">
+        <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
           <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-50 mb-4">
+              {progress.stage === 'complete' ? (
+                <CheckCircleIcon className="w-10 h-10 text-green-500" />
+              ) : (
+                <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+              )}
+            </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              {progress.stage === 'complete' ? 'Upload Complete!' : 'Uploading...'}
+              {progress.stage === 'complete' ? 'Published!' : 'Publishing Video'}
             </h2>
-            <p className="text-gray-600">{progress.message}</p>
+            <p className="text-gray-600 font-medium">{progress.message}</p>
           </div>
 
-          <div className="mb-8">
-            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+          <div className="mb-4">
+            <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden border border-gray-200">
               <div
-                className="bg-primary-600 h-full transition-all duration-500 ease-out"
+                className="bg-primary-600 h-full transition-all duration-300 ease-out shadow-inner"
                 style={{ width: `${progress.percent}%` }}
               />
             </div>
-            <p className="text-sm text-gray-500 mt-2 text-center">
-              {progress.percent}%
-            </p>
+            <div className="flex justify-between mt-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Progress
+              </span>
+              <span className="text-sm font-bold text-primary-700">
+                {progress.percent}%
+              </span>
+            </div>
           </div>
 
-          {progress.stage === 'complete' && (
-            <div className="flex justify-center">
-              <CheckCircleIcon className="w-16 h-16 text-green-500" />
-            </div>
-          )}
+          <p className="text-xs text-center text-gray-400 mt-6">
+            Do not close this window until publishing is complete.
+          </p>
         </div>
       </div>
     );
@@ -174,8 +198,13 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
 
   return (
     <div className="max-w-2xl mx-auto p-8">
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-lg p-8">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Upload New Video</h2>
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Upload New Video</h2>
+          <div className="px-3 py-1 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100 uppercase tracking-tighter">
+            Secure Storage Enabled
+          </div>
+        </div>
 
         {/* File Upload Area */}
         <div
@@ -199,11 +228,13 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
           />
 
           {file ? (
-            <div className="flex items-center justify-center gap-3">
-              <CheckCircleIcon className="w-8 h-8 text-green-500" />
+            <div className="flex items-center justify-center gap-3 bg-gray-50 p-4 rounded-lg">
+              <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center text-primary-600">
+                <CheckCircleIcon className="w-8 h-8" />
+              </div>
               <div className="text-left">
-                <p className="font-medium text-gray-900">{file.name}</p>
-                <p className="text-sm text-gray-500">
+                <p className="font-bold text-gray-900 truncate max-w-[200px]">{file.name}</p>
+                <p className="text-xs font-medium text-gray-500">
                   {(file.size / 1024 / 1024).toFixed(2)} MB
                 </p>
               </div>
@@ -213,19 +244,21 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
                   e.stopPropagation();
                   resetForm();
                 }}
-                className="ml-auto text-gray-400 hover:text-red-500"
+                className="ml-auto p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
               >
                 <XMarkIcon className="w-6 h-6" />
               </button>
             </div>
           ) : (
             <>
-              <CloudArrowUpIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <p className="text-lg font-medium text-gray-700 mb-2">
-                Drop your video here or click to browse
+              <div className="w-20 h-20 bg-primary-50 rounded-full flex items-center justify-center mx-auto mb-4 text-primary-600">
+                <CloudArrowUpIcon className="w-10 h-10" />
+              </div>
+              <p className="text-lg font-bold text-gray-800 mb-2">
+                Click or drag to upload
               </p>
-              <p className="text-sm text-gray-500">
-                Supported formats: MP4, WebM, MOV · Max size: 100MB
+              <p className="text-sm text-gray-500 font-medium">
+                MP4, WebM, MOV · Max 100MB
               </p>
             </>
           )}
@@ -233,7 +266,7 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
 
         {/* Title Input */}
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-bold text-gray-700 mb-2">
             Title <span className="text-red-500">*</span>
           </label>
           <input
@@ -241,39 +274,59 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             maxLength={100}
-            placeholder="Enter video title"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg 
-              focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            placeholder="What is your video about?"
+            className="w-full px-4 py-3 border border-gray-200 rounded-xl 
+              focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all outline-none"
             required
           />
-          <p className="text-xs text-gray-500 mt-1">{title.length}/100 characters</p>
         </div>
 
         {/* Description Input */}
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-bold text-gray-700 mb-2">
             Description
           </label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             maxLength={500}
-            rows={4}
-            placeholder="Enter video description (optional)"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg 
-              focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+            rows={3}
+            placeholder="Tell your viewers more about this video..."
+            className="w-full px-4 py-3 border border-gray-200 rounded-xl 
+              focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all outline-none resize-none"
           />
-          <p className="text-xs text-gray-500 mt-1">
-            {description.length}/500 characters
+        </div>
+
+        {/* Price Input */}
+        <div className="mb-8">
+          <label className="block text-sm font-bold text-gray-700 mb-2">
+            Viewing Price
+          </label>
+          <div className="relative">
+            <input
+              type="number"
+              step="0.00000001"
+              min="0"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              className="w-full pl-4 pr-24 py-3 border border-gray-200 rounded-xl 
+                focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all outline-none font-mono"
+            />
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-gray-100 rounded text-xs font-bold text-gray-600">
+              ShelbyUSD
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400 mt-2 uppercase font-bold tracking-widest">
+            Enter 0 for free public access
           </p>
         </div>
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg 
-            flex items-start gap-3">
+          <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl 
+            flex items-start gap-3 shadow-sm">
             <ExclamationCircleIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-700">{error}</p>
+            <p className="text-sm font-bold text-red-700">{error}</p>
           </div>
         )}
 
@@ -283,20 +336,20 @@ const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 px-6 py-3 border border-gray-300 rounded-lg 
-                font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              className="flex-1 px-6 py-4 border border-gray-200 rounded-xl 
+                font-bold text-gray-600 hover:bg-gray-50 transition-all"
             >
               Cancel
             </button>
           )}
           <button
             type="submit"
-            disabled={!file || !title.trim()}
-            className="flex-1 px-6 py-3 bg-primary-600 hover:bg-primary-700 
-              disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg 
-              font-medium transition-colors"
+            disabled={!file || !title.trim() || !account}
+            className="flex-1 px-6 py-4 bg-primary-600 hover:bg-primary-700 
+              disabled:bg-gray-200 disabled:cursor-not-allowed text-white rounded-xl 
+              font-bold transition-all shadow-lg shadow-primary-500/20 active:scale-95"
           >
-            Upload Video
+            Publish Now
           </button>
         </div>
       </form>

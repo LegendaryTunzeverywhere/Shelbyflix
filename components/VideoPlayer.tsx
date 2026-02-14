@@ -2,69 +2,133 @@
 
 import React, { useState, useEffect } from 'react';
 import ReactPlayer from 'react-player';
+import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import type { VideoMetadata } from '@/types';
 import { getVideoStreamUrl } from '@/lib/shelby';
+import { checkVideoAccess, purchaseVideo } from '@/lib/contract';
 import { 
   LockClosedIcon,
-  ExclamationCircleIcon 
+  ExclamationCircleIcon,
+  CurrencyDollarIcon,
 } from '@heroicons/react/24/outline';
 
 interface VideoPlayerProps {
   video: VideoMetadata;
   walletAddress: string;
-  hasAccess: boolean;
+  hasAccess: boolean; // This refers to the general token requirement
 }
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAccess }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAccess: hasGeneralAccess }) => {
+  const { signAndSubmitTransaction, connected } = useWallet();
+  const [hasPurchased, setHasPurchased] = useState<boolean>(false);
   const [streamUrl, setStreamUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [purchasing, setPurchasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!hasAccess) {
+    checkAccess();
+  }, [video.videoId, walletAddress, hasGeneralAccess]);
+
+  async function checkAccess() {
+    if (!hasGeneralAccess) {
       setLoading(false);
       return;
     }
 
-    loadVideoStream();
-  }, [video.videoId, walletAddress, hasAccess]);
-
-  async function loadVideoStream() {
     try {
       setLoading(true);
-      setError(null);
-
-      const url = await getVideoStreamUrl(video.videoId, walletAddress);
-      setStreamUrl(url);
+      const access = await checkVideoAccess(video.videoId, walletAddress);
+      setHasPurchased(access);
+      
+      if (access) {
+        await loadVideoStream();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load video');
+      setError('Failed to check video access');
     } finally {
       setLoading(false);
     }
   }
 
-  // No access - show locked state
-  if (!hasAccess) {
+  async function loadVideoStream() {
+    try {
+      const url = await getVideoStreamUrl(video.videoId, walletAddress);
+      setStreamUrl(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load video');
+    }
+  }
+
+  async function handlePurchase() {
+    if (!connected || !walletAddress) {
+      setError('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setPurchasing(true);
+      setError(null);
+      await purchaseVideo(walletAddress, signAndSubmitTransaction, video.videoId);
+      setHasPurchased(true);
+      await loadVideoStream();
+    } catch (err) {
+      console.error('Purchase error:', err);
+      setError(err instanceof Error ? err.message : 'Purchase failed');
+    } finally {
+      setPurchasing(false);
+    }
+  }
+
+  // No general access (ShelbyUSD requirement)
+  if (!hasGeneralAccess) {
     return (
       <div className="aspect-video bg-gradient-to-br from-gray-900 to-gray-800 
-        rounded-xl flex flex-col items-center justify-center text-white p-8">
+        rounded-xl flex flex-col items-center justify-center text-white p-8 text-center">
         <LockClosedIcon className="w-20 h-20 mb-4 text-gray-400" />
-        <h3 className="text-2xl font-bold mb-2">Content Locked</h3>
-        <p className="text-gray-400 text-center max-w-md mb-6">
-          You need to hold Shelby Faucet tokens to watch this video.
-          Connect a wallet with the required tokens to unlock access.
+        <h3 className="text-2xl font-bold mb-2">General Access Locked</h3>
+        <p className="text-gray-400 max-w-md mb-6">
+          You need to hold Shelby Faucet tokens to use this platform.
         </p>
-        <div className="flex gap-3">
-          <a
-            href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-6 py-3 bg-primary-600 hover:bg-primary-700 rounded-lg 
-              font-medium transition-colors"
-          >
-            Get Test Tokens
-          </a>
-        </div>
+        <a
+          href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-6 py-3 bg-primary-600 hover:bg-primary-700 rounded-lg 
+            font-medium transition-colors"
+        >
+          Get Test Tokens
+        </a>
+      </div>
+    );
+  }
+
+  // Not purchased yet
+  if (!hasPurchased && !loading) {
+    return (
+      <div className="aspect-video bg-gradient-to-br from-gray-900 to-gray-800 
+        rounded-xl flex flex-col items-center justify-center text-white p-8 text-center">
+        <CurrencyDollarIcon className="w-20 h-20 mb-4 text-primary-400" />
+        <h3 className="text-2xl font-bold mb-2">Unlock Video</h3>
+        <p className="text-gray-400 max-w-md mb-6">
+          Viewing Price: <span className="text-white font-bold">{((video.price || 0) / 100000000).toFixed(4)} ShelbyUSD</span>
+        </p>
+        <button
+          onClick={handlePurchase}
+          disabled={purchasing}
+          className="px-8 py-4 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-600 
+            rounded-lg font-bold transition-all transform hover:scale-105"
+        >
+          {purchasing ? (
+            <div className="flex items-center gap-2">
+              <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
+              Processing...
+            </div>
+          ) : (
+            `Pay to Unlock`
+          )}
+        </button>
+        {error && <p className="mt-4 text-red-400 text-sm">{error}</p>}
       </div>
     );
   }
@@ -77,14 +141,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 
             border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading video...</p>
+          <p className="text-gray-600">Checking access...</p>
         </div>
       </div>
     );
   }
 
   // Error state
-  if (error) {
+  if (error && hasPurchased) {
     return (
       <div className="aspect-video bg-red-50 border-2 border-red-200 rounded-xl 
         flex flex-col items-center justify-center p-8">
@@ -105,20 +169,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
   // Video player
   return (
     <div className="aspect-video bg-black rounded-xl overflow-hidden shadow-2xl">
-      <ReactPlayer
-        url={streamUrl}
-        controls
-        width="100%"
-        height="100%"
-        playing={false}
-        config={{
-          file: {
-            attributes: {
-              controlsList: 'nodownload',
+      {streamUrl ? (
+        <ReactPlayer
+          url={streamUrl}
+          controls
+          width="100%"
+          height="100%"
+          playing={false}
+          config={{
+            file: {
+              attributes: {
+                controlsList: 'nodownload',
+              },
             },
-          },
-        }}
-      />
+          }}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-white">
+          Preparing stream...
+        </div>
+      )}
     </div>
   );
 };

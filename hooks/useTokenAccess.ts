@@ -5,6 +5,7 @@ import { useWallet } from './useWallet';
 interface TokenAccessState {
   hasAccess: boolean;
   balance: string;
+  isMissingStore: boolean;
   loading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -21,6 +22,7 @@ export function useTokenAccess(minBalance: number = parseFloat(process.env.NEXT_
   const { address, connected } = useWallet();
   const [hasAccess, setHasAccess] = useState(false);
   const [balance, setBalance] = useState('0');
+  const [isMissingStore, setIsMissingStore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +30,7 @@ export function useTokenAccess(minBalance: number = parseFloat(process.env.NEXT_
     if (!address || !connected) {
       setHasAccess(false);
       setBalance('0');
+      setIsMissingStore(false);
       setLoading(false);
       return;
     }
@@ -39,10 +42,12 @@ export function useTokenAccess(minBalance: number = parseFloat(process.env.NEXT_
       const result = await checkTokenOwnership(address, minBalance);
       setHasAccess(result.hasAccess);
       setBalance(result.balance);
+      setIsMissingStore(!!result.isMissingStore);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to check token balance');
       setHasAccess(false);
       setBalance('0');
+      setIsMissingStore(false);
     } finally {
       setLoading(false);
     }
@@ -56,6 +61,7 @@ export function useTokenAccess(minBalance: number = parseFloat(process.env.NEXT_
   return {
     hasAccess,
     balance,
+    isMissingStore,
     loading,
     error,
     refetch: checkAccess,

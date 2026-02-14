@@ -7,7 +7,8 @@ import Header from '@/components/Header';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useWallet } from '@/hooks/useWallet';
 import { useTokenAccess } from '@/hooks/useTokenAccess';
-import { getVideoMetadata } from '@/lib/contract';
+import { getVideoMetadata, deleteVideoFromChain } from '@/lib/contract';
+import { deleteVideoBlob } from '@/lib/shelby-sdk';
 import { formatAddress } from '@/lib/aptos';
 import type { VideoMetadata } from '@/types';
 import {
@@ -16,17 +17,20 @@ import {
   EyeIcon,
   ClockIcon,
   CheckIcon,
+  TrashIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 
 export default function VideoPage() {
   const params = useParams();
   const router = useRouter();
-  const { address } = useWallet();
+  const { address, signAndSubmitTransaction } = useWallet();
   const { hasAccess } = useTokenAccess();
   
   const [video, setVideo] = useState<VideoMetadata | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const videoId = params.id as string;
 
@@ -55,6 +59,37 @@ export default function VideoPage() {
     } catch (error) {
       console.error('Failed to copy:', error);
     }
+  }
+
+  async function handleDelete() {
+    if (!video || !address || !signAndSubmitTransaction) return;
+    if (!confirm('Are you sure you want to delete this video? This action cannot be undone.')) return;
+
+    try {
+      setDeleting(true);
+      
+      // 1. Delete from blockchain
+      await deleteVideoFromChain(address, signAndSubmitTransaction, videoId);
+      
+      // 2. Delete from Shelby storage (best effort)
+      const blobId = video.shelbyUrl.replace('shelby://', '');
+      await deleteVideoBlob(blobId, address);
+
+      router.push('/gallery');
+    } catch (error) {
+      console.error('Error deleting video:', error);
+      alert('Failed to delete video. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function handleDownload() {
+    if (!video || !hasAccess) return;
+    // In a real app, we'd fetch the blob and trigger a download.
+    // For now, we'll open the streaming URL in a new tab which allows "Save Video As"
+    const blobId = video.shelbyUrl.replace('shelby://', '');
+    window.open(`https://api.shelbynet.shelby.xyz/v1/blob/download/${blobId}?uploader=${video.uploader}`, '_blank');
   }
 
   if (loading) {
@@ -150,24 +185,51 @@ export default function VideoPage() {
               </div>
             </div>
 
-            <button
-              onClick={handleShare}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-100 
-                hover:bg-gray-200 rounded-lg font-medium transition-colors 
-                whitespace-nowrap"
-            >
-              {copied ? (
-                <>
-                  <CheckIcon className="w-5 h-5 text-green-600" />
-                  <span>Copied!</span>
-                </>
-              ) : (
-                <>
-                  <ShareIcon className="w-5 h-5" />
-                  <span>Share</span>
-                </>
+            <div className="flex flex-wrap gap-2">
+              {hasAccess && (
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2 px-4 py-2 bg-primary-50 
+                    text-primary-700 hover:bg-primary-100 rounded-lg font-medium 
+                    transition-colors whitespace-nowrap"
+                >
+                  <ArrowDownTrayIcon className="w-5 h-5" />
+                  <span>Download</span>
+                </button>
               )}
-            </button>
+
+              <button
+                onClick={handleShare}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 
+                  hover:bg-gray-200 rounded-lg font-medium transition-colors 
+                  whitespace-nowrap"
+              >
+                {copied ? (
+                  <>
+                    <CheckIcon className="w-5 h-5 text-green-600" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <ShareIcon className="w-5 h-5" />
+                    <span>Share</span>
+                  </>
+                )}
+              </button>
+
+              {address?.toLowerCase() === video.uploader.toLowerCase() && (
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-50 
+                    text-red-600 hover:bg-red-100 rounded-lg font-medium 
+                    transition-colors whitespace-nowrap disabled:opacity-50"
+                >
+                  <TrashIcon className="w-5 h-5" />
+                  <span>{deleting ? 'Deleting...' : 'Delete'}</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Description */}

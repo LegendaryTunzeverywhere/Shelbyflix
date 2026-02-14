@@ -65,7 +65,9 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, hasAccess }) => {
               <LockClosedIcon className="w-12 h-12 text-white" />
               <span className="text-white text-sm font-medium px-3 py-1 bg-black/50 
                 rounded-full">
-                Token Required
+                {video.price && video.price > 0 
+                  ? `${(video.price / 100000000).toFixed(2)} ShelbyUSD` 
+                  : 'Token Required'}
               </span>
             </div>
           )}

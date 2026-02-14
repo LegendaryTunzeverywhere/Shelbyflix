@@ -1,18 +1,32 @@
 'use client';
 
 import React from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import Header from '@/components/Header';
 import UploadForm from '@/components/UploadForm';
-import { SHELBY_FAUCET_URL } from '@/lib/aptos';
-import { useWallet } from '@/hooks/useWallet';
+import { SHELBY_FAUCET_URL, registerShelbyUSD } from '@/lib/aptos';
 import { useTokenAccess } from '@/hooks/useTokenAccess';
-import { LockClosedIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
+import { LockClosedIcon, ArrowRightIcon, SparklesIcon } from '@heroicons/react/24/outline';
 
 export default function UploadPage() {
   const router = useRouter();
-  const { connected } = useWallet();
-  const { hasAccess, loading } = useTokenAccess();
+  const { connected, signAndSubmitTransaction } = useWallet();
+  const { hasAccess, loading, isMissingStore, refetch } = useTokenAccess();
+  const [registering, setRegistering] = useState(false);
+
+  const handleRegister = async () => {
+    try {
+      setRegistering(true);
+      await registerShelbyUSD(signAndSubmitTransaction);
+      await refetch();
+    } catch (error) {
+      console.error('Registration failed:', error);
+    } finally {
+      setRegistering(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -66,22 +80,48 @@ export default function UploadPage() {
               <h2 className="text-2xl font-bold text-gray-900 mb-4">
                 Access Denied
               </h2>
-              <p className="text-gray-600 mb-6">
-                You need to hold Shelby Faucet tokens to upload videos.
-              </p>
-              <a
-                href={SHELBY_FAUCET_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 
-                  hover:bg-primary-700 text-white rounded-lg font-medium 
-                  transition-colors"
-              >
-                Get Test Tokens
-                <ArrowRightIcon className="w-4 h-4" />
-              </a>
-              <p className="text-sm text-gray-500 mt-4">
-                After getting tokens, refresh this page
+              
+              {isMissingStore ? (
+                <div className="mb-6">
+                  <p className="text-gray-600 mb-6">
+                    ShelbyUSD is not registered in your wallet. You must register the coin before you can receive or hold it.
+                  </p>
+                  <button
+                    onClick={handleRegister}
+                    disabled={registering}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 
+                      bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium 
+                      transition-colors disabled:bg-gray-400"
+                  >
+                    {registering ? (
+                      <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
+                    ) : (
+                      <SparklesIcon className="w-5 h-5" />
+                    )}
+                    Register ShelbyUSD
+                  </button>
+                </div>
+              ) : (
+                <div className="mb-6">
+                  <p className="text-gray-600 mb-6">
+                    You need to hold Shelby Faucet tokens to upload videos.
+                  </p>
+                  <a
+                    href={SHELBY_FAUCET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 
+                      hover:bg-primary-700 text-white rounded-lg font-medium 
+                      transition-colors"
+                  >
+                    Get Test Tokens
+                    <ArrowRightIcon className="w-4 h-4" />
+                  </a>
+                </div>
+              )}
+
+              <p className="text-sm text-gray-500">
+                After completing the action above, refresh this page.
               </p>
             </div>
           </div>

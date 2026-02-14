@@ -1,4 +1,4 @@
-import { aptos, MODULE_ADDRESS, stringToHexBytes, hexBytesToString, waitForTransaction } from './aptos';
+import { aptos, MODULE_ADDRESS, stringToHexBytes, hexBytesToString, waitForTransaction, SHELBYUSD_TOKEN } from './aptos';
 import type { VideoMetadata } from '@/types';
 import { InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 
@@ -14,7 +14,8 @@ const MODULE_NAME = 'video_gallery';
 /**
  * Upload video metadata to blockchain
  * 
- * @param signer - Wallet signer instance
+ * @param walletAddress - Wallet address of the uploader
+ * @param signAndSubmitTransaction - Wallet adapter function
  * @param metadata - Video metadata to store
  * @returns Transaction hash
  */
@@ -28,11 +29,12 @@ export async function storeVideoMetadataOnChain(
       function: `${MODULE_ADDRESS}::${MODULE_NAME}::upload_video` as `${string}::${string}::${string}`,
       typeArguments: [],
       functionArguments: [
-        stringToHexBytes(metadata.videoId),
-        stringToHexBytes(metadata.title),
-        stringToHexBytes(metadata.description),
-        stringToHexBytes(metadata.shelbyUrl),
-        metadata.requiredToken,
+        metadata.videoId,
+        metadata.title,
+        metadata.description,
+        metadata.shelbyUrl,
+        metadata.price || 0,
+        MODULE_ADDRESS, // Registry address is the module address in this case
       ],
     };
 
@@ -56,27 +58,60 @@ export async function storeVideoMetadataOnChain(
 }
 
 /**
+ * Purchase access to a video
+ * 
+ * @param walletAddress - Buyer's wallet address
+ * @param signAndSubmitTransaction - Wallet adapter function
+ * @param videoId - ID of the video to purchase
+ */
+export async function purchaseVideo(
+  walletAddress: string,
+  signAndSubmitTransaction: any,
+  videoId: string
+): Promise<string> {
+  try {
+    const payload: InputGenerateTransactionPayloadData = {
+      function: `${MODULE_ADDRESS}::${MODULE_NAME}::purchase_video` as `${string}::${string}::${string}`,
+      typeArguments: [],
+      functionArguments: [
+        videoId,
+        MODULE_ADDRESS,
+        SHELBYUSD_TOKEN, // Passed as asset_metadata_address
+      ],
+    };
+
+    const response = await signAndSubmitTransaction({
+      sender: walletAddress,
+      data: payload,
+    });
+
+    const success = await waitForTransaction(response.hash);
+    if (!success) throw new Error('Purchase transaction failed');
+
+    return response.hash;
+  } catch (error) {
+    console.error('Error purchasing video:', error);
+    throw error;
+  }
+}
+
+/**
  * Get all videos from blockchain
  * 
  * @returns Array of video metadata
  */
 export async function getAllVideosFromChain(): Promise<VideoMetadata[]> {
   try {
-    // TODO: Call view function to get all videos
-    // This is a placeholder - actual implementation depends on Move contract structure
-    
-    /*
-    const videos = await aptos.view({
-      function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_all_videos`,
-      typeArguments: [],
-      functionArguments: [],
+    const result = await aptos.view({
+      payload: {
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_all_videos` as `${string}::${string}::${string}`,
+        typeArguments: [],
+        functionArguments: [MODULE_ADDRESS],
+      }
     });
     
+    const videos = result[0] as any[];
     return videos.map(parseVideoMetadata);
-    */
-
-    // MOCK: Return sample videos for testing
-    return getMockVideos();
   } catch (error) {
     console.error('Error fetching videos from chain:', error);
     return [];
@@ -95,11 +130,13 @@ export async function checkVideoAccess(
   walletAddress: string
 ): Promise<boolean> {
   try {
+    if (!walletAddress) return false;
+
     const result = await aptos.view({
       payload: {
         function: `${MODULE_ADDRESS}::${MODULE_NAME}::can_access_video` as `${string}::${string}::${string}`,
         typeArguments: [],
-        functionArguments: [walletAddress, stringToHexBytes(videoId)],
+        functionArguments: [walletAddress, videoId, MODULE_ADDRESS],
       }
     });
 
@@ -118,23 +155,55 @@ export async function checkVideoAccess(
  */
 export async function getVideoMetadata(videoId: string): Promise<VideoMetadata | null> {
   try {
-    // TODO: Implement view function call
-    /*
-    const metadata = await aptos.view({
-      function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_video_metadata`,
-      typeArguments: [],
-      functionArguments: [stringToHexBytes(videoId)],
+    const result = await aptos.view({
+      payload: {
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_video_by_id` as `${string}::${string}::${string}`,
+        typeArguments: [],
+        functionArguments: [MODULE_ADDRESS, videoId],
+      }
     });
     
-    return parseVideoMetadata(metadata);
-    */
-
-    // MOCK: Return from mock data
-    const videos = getMockVideos();
-    return videos.find(v => v.videoId === videoId) || null;
+    return parseVideoMetadata(result[0]);
   } catch (error) {
     console.error('Error fetching video metadata:', error);
     return null;
+  }
+}
+
+/**
+ * Delete video metadata from blockchain
+ * 
+ * @param walletAddress - Uploader's wallet address
+ * @param signAndSubmitTransaction - Wallet adapter function
+ * @param videoId - ID of the video to delete
+ */
+export async function deleteVideoFromChain(
+  walletAddress: string,
+  signAndSubmitTransaction: any,
+  videoId: string
+): Promise<string> {
+  try {
+    const payload: InputGenerateTransactionPayloadData = {
+      function: `${MODULE_ADDRESS}::${MODULE_NAME}::delete_video` as `${string}::${string}::${string}`,
+      typeArguments: [],
+      functionArguments: [
+        videoId,
+        MODULE_ADDRESS,
+      ],
+    };
+
+    const response = await signAndSubmitTransaction({
+      sender: walletAddress,
+      data: payload,
+    });
+
+    const success = await waitForTransaction(response.hash);
+    if (!success) throw new Error('Delete transaction failed');
+
+    return response.hash;
+  } catch (error) {
+    console.error('Error deleting video from chain:', error);
+    throw error;
   }
 }
 
@@ -143,94 +212,14 @@ export async function getVideoMetadata(videoId: string): Promise<VideoMetadata |
  */
 function parseVideoMetadata(raw: any): VideoMetadata {
   return {
-    videoId: hexBytesToString(raw.video_id),
-    title: hexBytesToString(raw.title),
-    description: hexBytesToString(raw.description),
-    shelbyUrl: hexBytesToString(raw.shelby_url),
+    videoId: raw.video_id,
+    title: raw.title,
+    description: raw.description,
+    shelbyUrl: raw.shelby_url,
     uploader: raw.uploader,
-    timestamp: raw.timestamp,
+    timestamp: Number(raw.timestamp) * 1000, // Convert to ms
     requiredToken: raw.required_token,
+    views: Number(raw.views),
+    price: Number(raw.price),
   };
 }
-
-/**
- * MOCK DATA FOR TESTING
- * Remove this when smart contract is deployed
- */
-function getMockVideos(): VideoMetadata[] {
-  // Use ShelbyUSD token - used to pay upload fees when uploading blobs to Shelby network
-  // Get test tokens from: https://docs.shelby.xyz/apis/faucet/shelbyusd
-  const SHELBYUSD_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS || '0xa8d56bad68eb3d9c54c5c96b91c7e7471fb4c80dafed03e458da0aca6ef0fb5b0x1b18363a9f1fe5e6ebf247daba5cc1c18052bb232efdc4c50f556053922d98e1';
-  
-  return [
-    {
-      videoId: 'video_1',
-      title: 'Welcome to Token-Gated Videos on Shelbynet',
-      description: 'An introduction to decentralized video streaming on Shelbynet with Shelby storage. Requires ShelbyUSD tokens for access.',
-      shelbyUrl: 'shelby://video_1',
-      thumbnailUrl: 'https://picsum.photos/seed/video1/640/360',
-      uploader: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-      timestamp: Date.now() - 86400000 * 2, // 2 days ago
-      requiredToken: SHELBYUSD_TOKEN_ADDRESS,
-      views: 142,
-    },
-    {
-      videoId: 'video_2',
-      title: 'Getting Started with ShelbyUSD',
-      description: 'Learn how to get ShelbyUSD tokens from the faucet and use them to access token-gated content on Shelbynet.',
-      shelbyUrl: 'shelby://video_2',
-      thumbnailUrl: 'https://picsum.photos/seed/video2/640/360',
-      uploader: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
-      timestamp: Date.now() - 86400000 * 5, // 5 days ago
-      requiredToken: SHELBYUSD_TOKEN_ADDRESS,
-      views: 89,
-    },
-    {
-      videoId: 'video_3',
-      title: 'Shelby Protocol Deep Dive',
-      description: 'Exploring Shelby decentralized storage and its sub-second streaming capabilities. Upload fees paid in ShelbyUSD.',
-      shelbyUrl: 'shelby://video_3',
-      thumbnailUrl: 'https://picsum.photos/seed/video3/640/360',
-      uploader: '0x9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba',
-      timestamp: Date.now() - 86400000, // 1 day ago
-      requiredToken: SHELBYUSD_TOKEN_ADDRESS,
-      views: 256,
-    },
-    {
-      videoId: 'video_4',
-      title: 'Blob Uploads on Shelby Network',
-      description: 'How to upload video blobs to the Shelby network using ShelbyUSD tokens for upload fees.',
-      shelbyUrl: 'shelby://video_4',
-      thumbnailUrl: 'https://picsum.photos/seed/video4/640/360',
-      uploader: '0x1111111111111111222222222222222233333333333333334444444444444444',
-      timestamp: Date.now() - 86400000 * 7, // 1 week ago
-      requiredToken: SHELBYUSD_TOKEN_ADDRESS,
-      views: 521,
-    },
-    {
-      videoId: 'video_5',
-      title: 'Decentralized Storage on Shelbynet',
-      description: 'How Shelby storage integrates with Aptos Shelbynet for decentralized video hosting with ShelbyUSD payments.',
-      shelbyUrl: 'shelby://video_5',
-      thumbnailUrl: 'https://picsum.photos/seed/video5/640/360',
-      uploader: '0x5555555555555555666666666666666677777777777777778888888888888888',
-      timestamp: Date.now() - 86400000 * 3, // 3 days ago
-      requiredToken: SHELBYUSD_TOKEN_ADDRESS,
-      views: 178,
-    },
-    {
-      videoId: 'video_6',
-      title: 'Token-Gated Content with ShelbyUSD',
-      description: 'Essential guide to creating token-gated video content using ShelbyUSD on the Shelby network.',
-      shelbyUrl: 'shelby://video_6',
-      thumbnailUrl: 'https://picsum.photos/seed/video6/640/360',
-      uploader: '0xaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbccccccccccccccccdddddddddddddddd',
-      timestamp: Date.now() - 86400000 * 10, // 10 days ago
-      requiredToken: SHELBYUSD_TOKEN_ADDRESS,
-      views: 934,
-    },
-  ];
-}
-
-// Export mock data for use in other components during development
-export { getMockVideos };

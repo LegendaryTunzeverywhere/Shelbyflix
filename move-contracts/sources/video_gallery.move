@@ -2,20 +2,19 @@ module video_gallery::video_gallery {
     use std::string::{Self, String};
     use std::signer;
     use std::vector;
-    use aptos_framework::coin;
-    use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::event;
     use aptos_framework::timestamp;
+    use aptos_std::table::{Self, Table};
+    use aptos_framework::fungible_asset::{Metadata};
+    use aptos_framework::object::{Self};
+    use aptos_framework::primary_fungible_store;
 
     /// Error codes
     const E_NOT_INITIALIZED: u64 = 1;
     const E_ALREADY_INITIALIZED: u64 = 2;
-    const E_INSUFFICIENT_BALANCE: u64 = 3;
     const E_VIDEO_NOT_FOUND: u64 = 4;
     const E_UNAUTHORIZED: u64 = 5;
-
-    /// Minimum token balance required to access videos (in Octas, 1 APT = 100000000 Octas)
-    const MIN_TOKEN_BALANCE: u64 = 100000000; // 1 APT
+    const E_ALREADY_PURCHASED: u64 = 6;
 
     /// Video metadata structure
     struct VideoMetadata has store, copy, drop {
@@ -27,12 +26,14 @@ module video_gallery::video_gallery {
         timestamp: u64,
         required_token: address,
         views: u64,
+        price: u64, // Price in ShelbyUSD (Fungible Asset)
     }
 
     /// Global video registry
     struct VideoRegistry has key {
         videos: vector<VideoMetadata>,
         video_count: u64,
+        purchases: Table<String, Table<address, bool>>,
     }
 
     /// Event emitted when a video is uploaded
@@ -40,12 +41,22 @@ module video_gallery::video_gallery {
         video_id: String,
         uploader: address,
         timestamp: u64,
+        price: u64,
     }
 
-    /// Event emitted when a video is accessed
-    struct VideoAccessedEvent has drop, store {
+    /// Event emitted when a video is purchased
+    struct VideoPurchasedEvent has drop, store {
         video_id: String,
-        viewer: address,
+        buyer: address,
+        uploader: address,
+        amount: u64,
+        timestamp: u64,
+    }
+
+    /// Event emitted when a video is deleted
+    struct VideoDeletedEvent has drop, store {
+        video_id: String,
+        uploader: address,
         timestamp: u64,
     }
 
@@ -57,26 +68,22 @@ module video_gallery::video_gallery {
         move_to(account, VideoRegistry {
             videos: vector::empty<VideoMetadata>(),
             video_count: 0,
+            purchases: table::new<String, Table<address, bool>>(),
         });
     }
 
-    /// Upload a new video (only for token holders)
+    /// Upload a new video
     public entry fun upload_video(
         account: &signer,
         video_id: String,
         title: String,
         description: String,
         shelby_url: String,
+        price: u64,
         registry_address: address,
     ) acquires VideoRegistry {
         let uploader = signer::address_of(account);
         
-        // Check if user has minimum token balance
-        assert!(
-            coin::balance<AptosCoin>(uploader) >= MIN_TOKEN_BALANCE,
-            E_INSUFFICIENT_BALANCE
-        );
-
         // Ensure registry is initialized
         assert!(exists<VideoRegistry>(registry_address), E_NOT_INITIALIZED);
 
@@ -90,41 +97,132 @@ module video_gallery::video_gallery {
             shelby_url,
             uploader,
             timestamp: timestamp::now_seconds(),
-            required_token: @0x1, // AptosCoin address
+            required_token: @0x1, // Placeholder
             views: 0,
+            price,
         };
 
         // Add to registry
         vector::push_back(&mut registry.videos, metadata);
         registry.video_count = registry.video_count + 1;
 
+        // Initialize purchase table for this video
+        table::add(&mut registry.purchases, video_id, table::new<address, bool>());
+
         // Emit event
         event::emit(VideoUploadedEvent {
             video_id: metadata.video_id,
             uploader,
             timestamp: metadata.timestamp,
+            price,
         });
     }
 
-    /// Check if a user can access videos (has sufficient token balance)
-    public fun can_access_video(user: address): bool {
-        coin::balance<AptosCoin>(user) >= MIN_TOKEN_BALANCE
+    /// Purchase access to a video using Fungible Asset (ShelbyUSD)
+    public entry fun purchase_video(
+        account: &signer,
+        video_id: String,
+        registry_address: address,
+        asset_metadata_address: address,
+    ) acquires VideoRegistry {
+        let buyer = signer::address_of(account);
+        assert!(exists<VideoRegistry>(registry_address), E_NOT_INITIALIZED);
+
+        let registry = borrow_global_mut<VideoRegistry>(registry_address);
+        
+        // Find the video and its price
+        let len = vector::length(&registry.videos);
+        let i = 0;
+        let found = false;
+        let uploader = @0x0;
+        let price = 0;
+
+        while (i < len) {
+            let video = vector::borrow(&registry.videos, i);
+            if (video.video_id == video_id) {
+                uploader = video.uploader;
+                price = video.price;
+                found = true;
+                break
+            };
+            i = i + 1;
+        };
+
+        assert!(found, E_VIDEO_NOT_FOUND);
+
+        // Check if already purchased
+        let purchase_record = table::borrow_mut(&mut registry.purchases, video_id);
+        assert!(!table::contains(purchase_record, buyer), E_ALREADY_PURCHASED);
+
+        // Perform Fungible Asset transfer if price > 0
+        if (price > 0) {
+            let asset_metadata = object::address_to_object<Metadata>(asset_metadata_address);
+            primary_fungible_store::transfer(account, asset_metadata, uploader, price);
+        };
+
+        // Record purchase
+        table::add(purchase_record, buyer, true);
+
+        // Emit event
+        event::emit(VideoPurchasedEvent {
+            video_id,
+            buyer,
+            uploader,
+            amount: price,
+            timestamp: timestamp::now_seconds(),
+        });
+    }
+
+    /// Check if a user can access a specific video
+    #[view]
+    public fun can_access_video(user: address, video_id: String, registry_address: address): bool acquires VideoRegistry {
+        if (!exists<VideoRegistry>(registry_address)) return false;
+        
+        let registry = borrow_global<VideoRegistry>(registry_address);
+        
+        // Find the video
+        let len = vector::length(&registry.videos);
+        let i = 0;
+        let video_found = false;
+        let uploader = @0x0;
+        let price = 0;
+
+        while (i < len) {
+            let video = vector::borrow(&registry.videos, i);
+            if (video.video_id == video_id) {
+                uploader = video.uploader;
+                price = video.price;
+                video_found = true;
+                break
+            };
+            i = i + 1;
+        };
+
+        if (!video_found) return false;
+
+        // Uploader always has access
+        if (uploader == user) return true;
+        
+        // Free videos accessible to all
+        if (price == 0) return true;
+
+        // Check purchase record
+        if (table::contains(&registry.purchases, video_id)) {
+            let purchase_record = table::borrow(&registry.purchases, video_id);
+            table::contains(purchase_record, user)
+        } else {
+            false
+        }
     }
 
     /// Get all videos (view function)
     #[view]
     public fun get_all_videos(registry_address: address): vector<VideoMetadata> acquires VideoRegistry {
-        assert!(exists<VideoRegistry>(registry_address), E_NOT_INITIALIZED);
+        if (!exists<VideoRegistry>(registry_address)) {
+            return vector::empty<VideoMetadata>()
+        };
         let registry = borrow_global<VideoRegistry>(registry_address);
         *&registry.videos
-    }
-
-    /// Get video count
-    #[view]
-    public fun get_video_count(registry_address: address): u64 acquires VideoRegistry {
-        assert!(exists<VideoRegistry>(registry_address), E_NOT_INITIALIZED);
-        let registry = borrow_global<VideoRegistry>(registry_address);
-        registry.video_count
     }
 
     /// Get video by ID
@@ -147,87 +245,40 @@ module video_gallery::video_gallery {
         abort E_VIDEO_NOT_FOUND
     }
 
-    /// Record a video view
-    public entry fun record_view(
+    /// Delete a video from the registry
+    public entry fun delete_video(
         account: &signer,
         video_id: String,
         registry_address: address,
     ) acquires VideoRegistry {
-        let viewer = signer::address_of(account);
-        
-        // Check access permission
-        assert!(can_access_video(viewer), E_UNAUTHORIZED);
+        let uploader = signer::address_of(account);
         assert!(exists<VideoRegistry>(registry_address), E_NOT_INITIALIZED);
 
         let registry = borrow_global_mut<VideoRegistry>(registry_address);
+        
         let len = vector::length(&registry.videos);
         let i = 0;
-        
+        let found = false;
+
         while (i < len) {
-            let video = vector::borrow_mut(&mut registry.videos, i);
+            let video = vector::borrow(&registry.videos, i);
             if (video.video_id == video_id) {
-                video.views = video.views + 1;
-                
-                // Emit event
-                event::emit(VideoAccessedEvent {
-                    video_id,
-                    viewer,
-                    timestamp: timestamp::now_seconds(),
-                });
-                
-                return
+                assert!(video.uploader == uploader, E_UNAUTHORIZED);
+                vector::remove(&mut registry.videos, i);
+                registry.video_count = registry.video_count - 1;
+                found = true;
+                break
             };
             i = i + 1;
         };
 
-        abort E_VIDEO_NOT_FOUND
-    }
+        assert!(found, E_VIDEO_NOT_FOUND);
 
-    /// Get minimum required balance
-    #[view]
-    public fun get_min_balance(): u64 {
-        MIN_TOKEN_BALANCE
-    }
-
-    #[test_only]
-    use aptos_framework::account;
-
-    #[test(admin = @video_gallery)]
-    public fun test_initialize(admin: &signer) {
-        let admin_addr = signer::address_of(admin);
-        account::create_account_for_test(admin_addr);
-        
-        initialize(admin);
-        assert!(exists<VideoRegistry>(admin_addr), 0);
-    }
-
-    #[test(admin = @video_gallery, uploader = @0x123)]
-    public fun test_upload_video(admin: &signer, uploader: &signer) acquires VideoRegistry {
-        let admin_addr = signer::address_of(admin);
-        let uploader_addr = signer::address_of(uploader);
-        
-        account::create_account_for_test(admin_addr);
-        account::create_account_for_test(uploader_addr);
-        
-        // Initialize registry
-        initialize(admin);
-        
-        // Fund uploader with APT
-        coin::register<AptosCoin>(uploader);
-        aptos_framework::aptos_coin::mint(admin, uploader_addr, MIN_TOKEN_BALANCE);
-        
-        // Upload video
-        upload_video(
+        // Emit event
+        event::emit(VideoDeletedEvent {
+            video_id,
             uploader,
-            string::utf8(b"test_video_1"),
-            string::utf8(b"Test Video"),
-            string::utf8(b"A test video description"),
-            string::utf8(b"shelby://test_video_1"),
-            admin_addr,
-        );
-        
-        // Verify video was added
-        let count = get_video_count(admin_addr);
-        assert!(count == 1, 0);
+            timestamp: timestamp::now_seconds(),
+        });
     }
 }

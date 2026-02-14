@@ -12,12 +12,14 @@ export interface VideoMetadata {
   fileSize?: number;
   duration?: number;
   views?: number;
+  price?: number;
 }
 
 export interface UploadFormData {
   file: File;
   title: string;
   description: string;
+  price: string;
 }
 
 export interface WalletState {
