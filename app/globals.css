@@ -1,11 +1,25 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 @layer base {
   :root {
-    --primary: 217 91% 60%;
+    --primary: 355 93% 54%; /* Brand Red #F61B2E */
     --primary-foreground: 0 0% 100%;
+    
+    --brand-purple: #7B2BF9;
+    --brand-pink: #E22B7E;
+    --brand-red: #F61B2E;
+    --brand-dark: #0A0A0A;
+
+    --primary-50: #FDF2F3;
+    --primary-100: #FCE4E7;
+    --primary-200: #F9BFC5;
+    --primary-300: #F58F98;
+    --primary-400: #F05F6B;
+    --primary-500: #F61B2E;
+    --primary-600: #D11727;
+    --primary-700: #A91220;
+    --primary-800: #840E19;
+    --primary-900: #5E0A12;
   }
 
   * {
@@ -13,7 +27,8 @@
   }
 
   body {
-    @apply bg-gray-50 text-gray-900;
+    background-color: var(--brand-dark);
+    color: white;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }

@@ -1,360 +1,334 @@
+
 'use client';
 
-import React, { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWallet } from '@aptos-labs/wallet-adapter-react';
-import type { UploadProgress } from '@/types';
-import { uploadWithProgress, validateVideoFile } from '@/lib/shelby';
-import { storeVideoMetadataOnChain } from '@/lib/contract';
-import { SHELBYUSD_TOKEN } from '@/lib/aptos';
-import { 
-  CloudArrowUpIcon,
-  XMarkIcon,
-  CheckCircleIcon,
-  ExclamationCircleIcon 
-} from '@heroicons/react/24/outline';
+import { VideoCategory, UploadProgress, VideoMetadata } from '@/types';
+import { uploadToShelby, validateVideoFile } from '@/lib/shelby';
+import { useNotification } from '@/hooks/useNotification';
+import { useWallet } from '@/hooks/useWallet';
+import CategorySelector from './CategorySelector';
+import TagInput from './TagInput';
+import ExpirationPicker from './ExpirationPicker';
+import UploadProgressDisplay from './UploadProgress';
+import { CloudArrowUpIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 
-interface UploadFormProps {
-  onSuccess?: () => void;
-  onCancel?: () => void;
-}
-
-const UploadForm: React.FC<UploadFormProps> = ({ onSuccess, onCancel }) => {
+export default function UploadForm() {
   const router = useRouter();
-  const { account, signAndSubmitTransaction } = useWallet();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { success, error } = useNotification();
+  const { address } = useWallet();
 
+  // Form state
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [price, setPrice] = useState('0');
-  const [isDragging, setIsDragging] = useState(false);
-  const [progress, setProgress] = useState<UploadProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [category, setCategory] = useState<VideoCategory>(VideoCategory.OTHER);
+  const [tags, setTags] = useState<string[]>([]);
+  const [availabilityDays, setAvailabilityDays] = useState(30);
+  const [price, setPrice] = useState('10000000'); // 0.1 ShelbyUSD (8 decimals)
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
+  // Upload state
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number>(0);
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
 
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      validateAndSetFile(droppedFile);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File selection handler
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      validateAndSetFile(selectedFile);
-    }
-  };
+    if (!selectedFile) return;
 
-  const validateAndSetFile = (file: File) => {
-    const validation = validateVideoFile(file);
+    // Validate file
+    const validation = validateVideoFile(selectedFile);
     if (!validation.valid) {
-      setError(validation.error || 'Invalid file');
+      error(validation.error || 'Invalid file');
       return;
     }
-    setFile(file);
-    setError(null);
+
+    setFile(selectedFile);
+
+    // Get duration
+    try {
+      const { getVideoDuration, generateThumbnail } = await import('@/lib/encryption');
+      const duration = await getVideoDuration(selectedFile);
+      setVideoDuration(duration);
+
+      // Generate thumbnail
+      const thumbnail = await generateThumbnail(selectedFile, Math.floor(duration / 2));
+      setThumbnailPreview(thumbnail);
+    } catch (error) {
+      console.error('Failed to process video:', error);
+    }
   };
 
+  // Form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!file || !title.trim() || !account) {
-      setError('Please fill in all required fields and connect your wallet');
+    if (!file || !address) {
+      error('Please select a file and connect your wallet');
       return;
     }
 
+    if (!title.trim()) {
+      error('Please enter a title');
+      return;
+    }
+
+    if (category === VideoCategory.OTHER && tags.length === 0) {
+      error('Please select a category or add tags');
+      return;
+    }
+
+    setIsUploading(true);
+
     try {
-      // Stage 1: Preparing
-      setProgress({ percent: 10, stage: 'preparing', message: 'Preparing asset security...' });
-
-      // Stage 2: Uploading to Shelby Storage
-      const uploadResult = await uploadWithProgress(
+      // Upload with progress tracking
+      const result = await uploadToShelby(
         file,
-        account.address,
-        { 
-          title: title.trim(), 
-          description: description.trim(),
-          uploader: account.address 
-        },
-        (p) => {
-          // Map 0-100 to 10-80 range for smoother overall UI progress
-          const mappedPercent = 10 + (p * 0.7);
-          setProgress({ 
-            percent: Math.round(mappedPercent), 
-            stage: 'uploading', 
-            message: `Securing file in storage... ${p}%` 
-          });
-        }
-      );
-
-      if (!uploadResult.success || !uploadResult.blobId) {
-        throw new Error(uploadResult.error || 'Storage securing failed');
-      }
-
-      // Stage 3: Blockchain Registration (Triggering Wallet)
-      setProgress({ percent: 85, stage: 'processing', message: 'Registering ownership on blockchain... Please check your wallet popup.' });
-
-      // Safety check: ensure signAndSubmitTransaction is available
-      if (!signAndSubmitTransaction) {
-        throw new Error('Wallet not ready for transaction signing');
-      }
-
-      await storeVideoMetadataOnChain(
-        account.address,
-        signAndSubmitTransaction,
         {
-          videoId: uploadResult.blobId,
-          title: title.trim(),
-          description: description.trim(),
-          shelbyUrl: uploadResult.shelbyUrl || `shelby://${uploadResult.blobId}`,
-          uploader: account.address,
-          requiredToken: SHELBYUSD_TOKEN,
-          price: Math.floor(parseFloat(price) * 100000000), // Convert to Octas
-        }
+          title,
+          description,
+          category,
+          tags,
+          availabilityPeriod: availabilityDays,
+          uploader: address,
+          channelId: address,
+          channelName: address.slice(0, 6) + '...' + address.slice(-4),
+          price: parseInt(price),
+        },
+        setUploadProgress
       );
 
-      // Stage 4: Complete
-      setProgress({ percent: 100, stage: 'complete', message: 'Video successfully published!' });
+      // Store metadata
+      const { saveVideo } = await import('@/lib/metadata-store');
 
-      if (onSuccess) {
-        setTimeout(onSuccess, 1500);
-      } else {
-        setTimeout(() => router.push(`/video/${uploadResult.blobId}`), 1500);
-      }
+      const videoMetadata: VideoMetadata = {
+        videoId: result.videoId,
+        blobId: result.blobId,
+        blobName: file.name,
+        channelId: address,
+        channelName: address.slice(0, 6) + '...' + address.slice(-4),
+        title,
+        description,
+        category,
+        tags,
+        shelbyUrl: result.shelbyUrl,
+        encryptionKey: result.encryptionKey,
+        duration: result.duration,
+        thumbnailUrl: result.thumbnailUrl,
+        uploadTimestamp: Date.now(),
+        expirationTimestamp: Date.now() + (availabilityDays * 24 * 60 * 60 * 1000),
+        availabilityPeriod: availabilityDays,
+        views: 0,
+        likes: 0,
+        dislikes: 0,
+        commentCount: 0,
+        isShort: result.duration < 60,
+        uploader: address,
+        timestamp: Date.now(),
+        price: parseInt(price),
+      };
+
+      saveVideo(videoMetadata);
+      console.log('Metadata saved:', videoMetadata);
+
+      success('Video uploaded successfully!');
+      
+      // Reset form
+      setFile(null);
+      setTitle('');
+      setDescription('');
+      setCategory(VideoCategory.OTHER);
+      setTags([]);
+      setThumbnailPreview(null);
+      
+      // Redirect to gallery
+      setTimeout(() => {
+        router.push('/gallery');
+      }, 2000);
+
     } catch (err) {
-      console.error('Publishing error:', err);
-      setError(err instanceof Error ? err.message : 'Publishing failed');
-      setProgress(null);
+      console.error('Upload failed:', err);
+      error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  const resetForm = () => {
-    setFile(null);
-    setTitle('');
-    setDescription('');
-    setPrice('0');
-    setProgress(null);
-    setError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  if (progress) {
-    return (
-      <div className="max-w-2xl mx-auto p-8">
-        <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-50 mb-4">
-              {progress.stage === 'complete' ? (
-                <CheckCircleIcon className="w-10 h-10 text-green-500" />
-              ) : (
-                <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
-              )}
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              {progress.stage === 'complete' ? 'Published!' : 'Publishing Video'}
-            </h2>
-            <p className="text-gray-600 font-medium">{progress.message}</p>
-          </div>
-
-          <div className="mb-4">
-            <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden border border-gray-200">
-              <div
-                className="bg-primary-600 h-full transition-all duration-300 ease-out shadow-inner"
-                style={{ width: `${progress.percent}%` }}
-              />
-            </div>
-            <div className="flex justify-between mt-2">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Progress
-              </span>
-              <span className="text-sm font-bold text-primary-700">
-                {progress.percent}%
-              </span>
-            </div>
-          </div>
-
-          <p className="text-xs text-center text-gray-400 mt-6">
-            Do not close this window until publishing is complete.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const isShortVideo = videoDuration > 0 && videoDuration < 60;
 
   return (
-    <div className="max-w-2xl mx-auto p-8">
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-lg p-8 border border-gray-100">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Upload New Video</h2>
-          <div className="px-3 py-1 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100 uppercase tracking-tighter">
-            Secure Storage Enabled
-          </div>
-        </div>
-
-        {/* File Upload Area */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer 
-            transition-all duration-200 mb-6
-            ${isDragging 
-              ? 'border-primary-500 bg-primary-50' 
-              : 'border-gray-300 hover:border-primary-400 hover:bg-gray-50'
-            }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/mp4,video/webm,video/quicktime"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-
-          {file ? (
-            <div className="flex items-center justify-center gap-3 bg-gray-50 p-4 rounded-lg">
-              <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center text-primary-600">
-                <CheckCircleIcon className="w-8 h-8" />
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {/* File Upload Area */}
+      <div>
+        <label className="block text-sm font-medium text-gray-200 mb-2">
+          Video File *
+        </label>
+        
+        {!file ? (
+          <label className="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-700 border-dashed rounded-lg cursor-pointer bg-gray-800 hover:bg-gray-700 transition-colors">
+            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+              <CloudArrowUpIcon className="w-16 h-16 text-gray-400 mb-4" />
+              <p className="mb-2 text-sm text-gray-400">
+                <span className="font-semibold">Click to upload</span> or drag and drop
+              </p>
+              <p className="text-xs text-gray-500">
+                MP4, WebM, or MOV (MAX. 100MB)
+              </p>
+            </div>
+            <input
+              type="file"
+              accept="video/*"
+              onChange={handleFileChange}
+              className="hidden"
+              disabled={isUploading}
+            />
+          </label>
+        ) : (
+          <div className="relative border-2 border-blue-600 rounded-lg p-4 bg-gray-800">
+            {/* Thumbnail Preview */}
+            {thumbnailPreview ? (
+              <img
+                src={thumbnailPreview}
+                alt="Video thumbnail"
+                className="w-full h-48 object-cover rounded-lg mb-4"
+              />
+            ) : (
+              <div className="w-full h-48 bg-gray-700 rounded-lg mb-4 flex items-center justify-center">
+                <VideoCameraIcon className="w-16 h-16 text-gray-500" />
               </div>
-              <div className="text-left">
-                <p className="font-bold text-gray-900 truncate max-w-[200px]">{file.name}</p>
-                <p className="text-xs font-medium text-gray-500">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
-                </p>
+            )}
+
+            {/* File Info */}
+            <div className="space-y-2">
+              <p className="text-white font-medium">{file.name}</p>
+              <div className="flex gap-4 text-sm text-gray-400">
+                <span>{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                {videoDuration > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>{Math.floor(videoDuration / 60)}:{(videoDuration % 60).toString().padStart(2, '0')}</span>
+                    {isShortVideo && (
+                      <>
+                        <span>•</span>
+                        <span className="text-yellow-400 font-medium">Short Video</span>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
+            </div>
+
+            {/* Change File Button */}
+            {!isUploading && (
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  resetForm();
+                onClick={() => {
+                  setFile(null);
+                  setThumbnailPreview(null);
+                  setVideoDuration(0);
                 }}
-                className="ml-auto p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                className="mt-4 text-sm text-blue-400 hover:text-blue-300"
               >
-                <XMarkIcon className="w-6 h-6" />
+                Change file
               </button>
-            </div>
-          ) : (
-            <>
-              <div className="w-20 h-20 bg-primary-50 rounded-full flex items-center justify-center mx-auto mb-4 text-primary-600">
-                <CloudArrowUpIcon className="w-10 h-10" />
-              </div>
-              <p className="text-lg font-bold text-gray-800 mb-2">
-                Click or drag to upload
-              </p>
-              <p className="text-sm text-gray-500 font-medium">
-                MP4, WebM, MOV · Max 100MB
-              </p>
-            </>
-          )}
-        </div>
-
-        {/* Title Input */}
-        <div className="mb-6">
-          <label className="block text-sm font-bold text-gray-700 mb-2">
-            Title <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={100}
-            placeholder="What is your video about?"
-            className="w-full px-4 py-3 border border-gray-200 rounded-xl 
-              focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all outline-none"
-            required
-          />
-        </div>
-
-        {/* Description Input */}
-        <div className="mb-6">
-          <label className="block text-sm font-bold text-gray-700 mb-2">
-            Description
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={500}
-            rows={3}
-            placeholder="Tell your viewers more about this video..."
-            className="w-full px-4 py-3 border border-gray-200 rounded-xl 
-              focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all outline-none resize-none"
-          />
-        </div>
-
-        {/* Price Input */}
-        <div className="mb-8">
-          <label className="block text-sm font-bold text-gray-700 mb-2">
-            Viewing Price
-          </label>
-          <div className="relative">
-            <input
-              type="number"
-              step="0.00000001"
-              min="0"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              className="w-full pl-4 pr-24 py-3 border border-gray-200 rounded-xl 
-                focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 transition-all outline-none font-mono"
-            />
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-gray-100 rounded text-xs font-bold text-gray-600">
-              ShelbyUSD
-            </div>
-          </div>
-          <p className="text-[10px] text-gray-400 mt-2 uppercase font-bold tracking-widest">
-            Enter 0 for free public access
-          </p>
-        </div>
-
-        {/* Error Message */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl 
-            flex items-start gap-3 shadow-sm">
-            <ExclamationCircleIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-sm font-bold text-red-700">{error}</p>
+            )}
           </div>
         )}
+      </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-4">
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="flex-1 px-6 py-4 border border-gray-200 rounded-xl 
-                font-bold text-gray-600 hover:bg-gray-50 transition-all"
-            >
-              Cancel
-            </button>
-          )}
-          <button
-            type="submit"
-            disabled={!file || !title.trim() || !account}
-            className="flex-1 px-6 py-4 bg-primary-600 hover:bg-primary-700 
-              disabled:bg-gray-200 disabled:cursor-not-allowed text-white rounded-xl 
-              font-bold transition-all shadow-lg shadow-primary-500/20 active:scale-95"
-          >
-            Publish Now
-          </button>
+      {/* Title */}
+      <div>
+        <label className="block text-sm font-medium text-gray-200 mb-2">
+          Title *
+        </label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Enter video title..."
+          maxLength={200}
+          required
+          disabled={isUploading}
+          className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+        />
+        <p className="text-xs text-gray-400 mt-1">{title.length}/200 characters</p>
+      </div>
+
+      {/* Description */}
+      <div>
+        <label className="block text-sm font-medium text-gray-200 mb-2">
+          Description
+        </label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Describe your video..."
+          rows={4}
+          maxLength={2000}
+          disabled={isUploading}
+          className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+        />
+        <p className="text-xs text-gray-400 mt-1">{description.length}/2000 characters</p>
+      </div>
+
+      {/* Category */}
+      <CategorySelector
+        value={category}
+        onChange={setCategory}
+      />
+
+      {/* Tags */}
+      <TagInput
+        tags={tags}
+        onChange={setTags}
+        maxTags={10}
+      />
+
+      {/* Expiration */}
+      <ExpirationPicker
+        value={availabilityDays}
+        onChange={setAvailabilityDays}
+      />
+
+      {/* Watch Fee */}
+      <div>
+        <label className="block text-sm font-medium text-gray-200 mb-2">
+          Watch Fee (ShelbyUSD)
+        </label>
+        <div className="relative">
+          <input
+            type="number"
+            value={parseInt(price) / 100000000}
+            onChange={(e) => setPrice((parseFloat(e.target.value) * 100000000).toString())}
+            step="0.01"
+            min="0"
+            disabled={isUploading}
+            className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+          />
+          <span className="absolute right-4 top-3 text-gray-400">SHELBY_USD</span>
         </div>
-      </form>
-    </div>
-  );
-};
+        <p className="text-xs text-gray-400 mt-1">
+          Viewers will pay this fee to watch your video
+        </p>
+      </div>
 
-export default UploadForm;
+      {/* Upload Progress */}
+      {uploadProgress && (
+        <div className="p-6 bg-gray-800 rounded-lg border border-gray-700">
+          <UploadProgressDisplay progress={uploadProgress} />
+        </div>
+      )}
+
+      {/* Submit Button */}
+      <button
+        type="submit"
+        disabled={!file || !title || !address || isUploading}
+        className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
+      >
+        {isUploading ? 'Uploading...' : 'Upload Video'}
+      </button>
+    </form>
+  );
+}

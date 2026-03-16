@@ -2,9 +2,11 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { VideoMetadata } from '@/types';
+import { getTrendingVideos, getRecentVideos } from '@/lib/metadata-store';
+import VideoCard from '@/components/VideoCard';
 import Header from '@/components/Header';
-import { useTokenAccess } from '@/hooks/useTokenAccess';
 import { useWallet } from '@/hooks/useWallet';
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { registerShelbyUSD } from '@/lib/aptos';
@@ -15,12 +17,19 @@ import {
   ShieldCheckIcon,
   ArrowRightIcon,
   SparklesIcon,
+  PlayCircleIcon,
 } from '@heroicons/react/24/outline';
 
 export default function Home() {
   const { connected } = useWallet();
   const { signAndSubmitTransaction } = useAptosWallet();
-  const { hasAccess, isMissingStore, refetch } = useTokenAccess();
+  
+  // Token access no longer required - fee-based viewing instead
+  const hasAccess = true;
+  const isLoading = false;
+  const isMissingStore = false;
+  const refetch = async () => {};
+
   const [registering, setRegistering] = useState(false);
 
   const handleRegister = async () => {
@@ -38,223 +47,249 @@ export default function Home() {
   const features = [
     {
       icon: LockClosedIcon,
-      title: 'Token-Gated Access',
-      description: 'Only users holding Shelby Faucet tokens can upload and watch videos.',
+      title: 'TOKEN-GATED ACCESS',
+      description: 'Exclusive streaming for Shelby Faucet token holders only.',
     },
     {
       icon: CloudIcon,
-      title: 'Decentralized Storage',
-      description: 'Videos are stored on Shelby protocol, ensuring permanence and censorship resistance.',
+      title: 'DECENTRALIZED STORAGE',
+      description: 'Powered by Shelby protocol for permanent, censorship-resistant video.',
     },
     {
       icon: BoltIcon,
-      title: 'Sub-second Streaming',
-      description: 'Shelby provides lightning-fast video streaming with minimal buffering.',
+      title: 'LIT SPEED STREAMING',
+      description: 'Experience sub-second video loading with zero buffering.',
     },
     {
       icon: ShieldCheckIcon,
-      title: 'Blockchain Verified',
-      description: 'All metadata is stored on Aptos blockchain for transparency and immutability.',
+      title: 'APTOS SECURED',
+      description: 'Ownership and metadata secured by the Aptos blockchain.',
     },
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-primary-50">
+    <div className="min-h-screen bg-brand-dark text-white selection:bg-brand-red selection:text-white overflow-x-hidden">
       <Header />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Hero Section */}
-        <div className="text-center mb-16">
-          <div className="inline-block mb-6">
-            <span className="px-4 py-2 bg-primary-100 text-primary-700 rounded-full 
-              text-sm font-medium">
-              Powered by Aptos & Shelby
-            </span>
-          </div>
-          
-          <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-            Decentralized Video
-            <br />
-            <span className="bg-gradient-to-r from-primary-600 to-purple-600 
-              bg-clip-text text-transparent">
-              Token-Gated Access
-            </span>
-          </h1>
+      <main className="relative">
+        {/* Background Gradients */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-[500px] pointer-events-none opacity-20 overflow-hidden">
+          <div className="absolute -top-[200px] -left-[100px] w-[600px] h-[600px] bg-brand-purple rounded-full blur-[120px]" />
+          <div className="absolute -top-[150px] -right-[100px] w-[500px] h-[500px] bg-brand-red rounded-full blur-[100px]" />
+        </div>
 
-          <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-            Upload and share videos with exclusive access control. Only token holders can view your content.
-          </p>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 relative z-10">
+          {/* Hero Section */}
+          <div className="text-center mb-24">
+            <div className="inline-block mb-8 animate-in">
+              <span className="px-4 py-1.5 bg-zinc-900 border border-zinc-800 text-brand-pink rounded-full 
+                text-[10px] font-black uppercase tracking-[0.2em]">
+                The Future of Streaming is Here
+              </span>
+            </div>
+            
+            <h1 className="text-6xl md:text-8xl font-black mb-8 tracking-tighter leading-[0.9]">
+              SHELBY<span className="text-brand-red">FLIX</span>
+            </h1>
 
-          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-            {connected ? (
-              hasAccess ? (
+            <p className="text-xl text-zinc-400 mb-12 max-w-2xl mx-auto font-medium leading-relaxed">
+              Experience the next generation of decentralized video. Share, stream, and secure your content with exclusive token-gated access.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+              {connected ? (
                 <>
                   <Link
                     href="/upload"
-                    className="px-8 py-4 bg-primary-600 hover:bg-primary-700 text-white 
-                      rounded-lg font-semibold transition-colors shadow-lg hover:shadow-xl 
-                      flex items-center gap-2"
+                    className="px-10 py-5 bg-white text-black hover:bg-zinc-200 
+                      rounded-2xl font-black transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] 
+                      flex items-center gap-2 group"
                   >
-                    Upload Video
-                    <ArrowRightIcon className="w-5 h-5" />
+                    UPLOAD VIDEO
+                    <ArrowRightIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </Link>
                   <Link
                     href="/gallery"
-                    className="px-8 py-4 bg-white hover:bg-gray-50 text-gray-900 
-                      border border-gray-300 rounded-lg font-semibold transition-colors"
+                    className="px-10 py-5 bg-zinc-900 hover:bg-zinc-800 text-white 
+                      border border-zinc-800 rounded-2xl font-black transition-all flex items-center gap-2"
                   >
-                    Browse Gallery
+                    BROWSE GALLERY
                   </Link>
                 </>
               ) : (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 max-w-md">
-                  {isMissingStore ? (
-                    <>
-                      <p className="text-yellow-800 mb-4 font-medium">
-                        ShelbyUSD not detected
-                      </p>
-                      <p className="text-sm text-yellow-700 mb-6">
-                        You need to register the ShelbyUSD coin in your wallet before you can receive or hold it.
-                      </p>
-                      <button
-                        onClick={handleRegister}
-                        disabled={registering}
-                        className="w-full flex items-center justify-center gap-2 px-6 py-3 
-                          bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium 
-                          transition-colors disabled:bg-gray-400 shadow-md"
-                      >
-                        {registering ? (
-                          <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
-                        ) : (
-                          <SparklesIcon className="w-5 h-5" />
-                        )}
-                        Register ShelbyUSD
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-yellow-800 mb-4">
-                        You need Shelby Faucet tokens to access videos.
-                      </p>
-                      <a
-                        href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white 
-                          rounded-lg font-medium inline-flex items-center gap-2 shadow-md"
-                      >
-                        Get Test Tokens
-                        <ArrowRightIcon className="w-4 h-4" />
-                      </a>
-                    </>
-                  )}
+                <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 rounded-3xl p-10 max-w-lg">
+                  <PlayCircleIcon className="w-16 h-16 text-brand-red mx-auto mb-6 opacity-80" />
+                  <p className="text-2xl font-black text-white mb-3">
+                    READY TO WATCH?
+                  </p>
+                  <p className="text-zinc-500 font-medium mb-8">
+                    Connect your wallet to access the decentralized gallery and start streaming.
+                  </p>
+                  <div className="inline-flex items-center gap-2 text-brand-pink font-bold text-sm bg-brand-pink/10 px-4 py-2 rounded-full">
+                    <SparklesIcon className="w-4 h-4" />
+                    JOIN THE REVOLUTION
+                  </div>
                 </div>
-              )
-            ) : (
-              <div className="bg-primary-50 border border-primary-200 rounded-lg p-6">
-                <p className="text-primary-800 mb-4 font-medium">
-                  Connect your wallet to get started
-                </p>
-                <p className="text-sm text-primary-600">
-                  Use the "Connect Wallet" button in the top right
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Features Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
-          {features.map((feature, index) => (
-            <div
-              key={index}
-              className="bg-white rounded-xl p-6 shadow-sm hover:shadow-md 
-                transition-shadow border border-gray-100"
-            >
-              <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center 
-                justify-center mb-4">
-                <feature.icon className="w-6 h-6 text-primary-600" />
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">{feature.title}</h3>
-              <p className="text-gray-600 text-sm">{feature.description}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* How It Works */}
-        <div className="bg-white rounded-2xl shadow-lg p-8 md:p-12">
-          <h2 className="text-3xl font-bold text-gray-900 mb-8 text-center">
-            How It Works
-          </h2>
-          
-          <div className="grid md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-primary-600 text-white rounded-full 
-                flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                1
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Connect Wallet</h3>
-              <p className="text-gray-600 text-sm">
-                Connect your Petra or Martian wallet with Shelby Faucet tokens
-              </p>
-            </div>
-
-            <div className="text-center">
-              <div className="w-16 h-16 bg-primary-600 text-white rounded-full 
-                flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                2
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Upload Videos</h3>
-              <p className="text-gray-600 text-sm">
-                Upload your videos to decentralized Shelby storage
-              </p>
-            </div>
-
-            <div className="text-center">
-              <div className="w-16 h-16 bg-primary-600 text-white rounded-full 
-                flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                3
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Share & Stream</h3>
-              <p className="text-gray-600 text-sm">
-                Token holders can stream videos with sub-second loading
-              </p>
+              )}
             </div>
           </div>
-        </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-12">
-          {[
-            { label: 'Decentralized', value: '100%' },
-            { label: 'Load Time', value: '<1s' },
-            { label: 'Security', value: 'On-chain' },
-            { label: 'Network', value: 'Aptos' },
-          ].map((stat, index) => (
-            <div key={index} className="text-center">
-              <p className="text-3xl font-bold text-primary-600 mb-1">{stat.value}</p>
-              <p className="text-sm text-gray-600">{stat.label}</p>
+          {/* Video Discovery Section - NEW */}
+          {connected && (
+            <div className="mt-32">
+              {/* Trending Videos */}
+              <VideoDiscoverySection />
             </div>
-          ))}
+          )}
+
+          {/* Features Grid */}
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-32">
+            {features.map((feature, index) => (
+              <div
+                key={index}
+                className="bg-zinc-900/40 backdrop-blur-sm rounded-3xl p-8 
+                  hover:bg-zinc-800/40 transition-all border border-zinc-800 group"
+              >
+                <div className="w-14 h-14 bg-zinc-900 rounded-2xl flex items-center 
+                  justify-center mb-6 border border-zinc-800 group-hover:border-brand-pink/50 transition-colors">
+                  <feature.icon className="w-6 h-6 text-brand-red group-hover:text-brand-pink transition-colors" />
+                </div>
+                <h3 className="font-black text-white mb-3 tracking-tighter text-lg">{feature.title}</h3>
+                <p className="text-zinc-500 text-sm leading-relaxed font-medium">{feature.description}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* How It Works */}
+          <div className="relative rounded-[40px] overflow-hidden bg-gradient-to-b from-zinc-900 to-black p-12 md:p-20 border border-zinc-800">
+            <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-brand-purple/10 blur-[100px] -z-10" />
+            
+            <h2 className="text-4xl md:text-5xl font-black text-white mb-16 text-center tracking-tighter">
+              THREE STEPS TO <span className="text-brand-red">STREAMING</span>
+            </h2>
+            
+            <div className="grid md:grid-cols-3 gap-12">
+              <div className="relative">
+                <div className="text-[120px] font-black text-white/5 absolute -top-20 -left-10 leading-none">01</div>
+                <h3 className="text-2xl font-black text-white mb-4 relative z-10">CONNECT</h3>
+                <p className="text-zinc-500 font-medium relative z-10">
+                  Connect your Aptos wallet to identify yourself on the .
+                </p>
+              </div>
+
+              <div className="relative">
+                <div className="text-[120px] font-black text-white/5 absolute -top-20 -left-10 leading-none">02</div>
+                <h3 className="text-2xl font-black text-white mb-4 relative z-10">UPLOAD</h3>
+                <p className="text-zinc-500 font-medium relative z-10">
+                  Submit your content to the Shelby decentralized protocol.
+                </p>
+              </div>
+
+              <div className="relative">
+                <div className="text-[120px] font-black text-white/5 absolute -top-20 -left-10 leading-none">03</div>
+                <h3 className="text-2xl font-black text-white mb-4 relative z-10">STREAM</h3>
+                <p className="text-zinc-500 font-medium relative z-10">
+                  Instantly watch content with sub-second load times globally.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mt-32">
+            {[
+              { label: 'DECENTRALIZED', value: '100%' },
+              { label: 'LATENCY', value: '<1.0s' },
+              { label: '', value: 'APTOS' },
+              { label: 'PROTOCOL', value: 'SHELBY' },
+            ].map((stat, index) => (
+              <div key={index} className="text-center group">
+                <p className="text-4xl md:text-5xl font-black text-white mb-2 group-hover:text-brand-red transition-colors">{stat.value}</p>
+                <p className="text-xs font-black text-zinc-500 uppercase tracking-widest">{stat.label}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
 
-      <footer className="bg-white border-t border-gray-200 py-8 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-gray-600 text-sm">
-          <p>Built on Aptos blockchain with Shelby decentralized storage</p>
-          <p className="mt-2">
+      <footer className="border-t border-zinc-900 bg-black py-20 mt-32 relative z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col items-center">
+          <div className="flex items-center gap-3 mb-10">
+            <h1 className="font-black text-2xl tracking-tighter text-white">
+              SHELBY<span className="text-brand-red">FLIX</span>
+            </h1>
+          </div>
+          
+          <div className="flex flex-wrap justify-center gap-10 mb-12">
             <a href="https://aptoslabs.com" target="_blank" rel="noopener noreferrer" 
-              className="text-primary-600 hover:underline">
-              Learn more about Aptos
+              className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
+              Aptos
             </a>
-            {' · '}
             <a href="https://shelby.xyz" target="_blank" rel="noopener noreferrer" 
-              className="text-primary-600 hover:underline">
-              Learn more about Shelby
+              className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
+              Shelby
             </a>
+            <a href="#" className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
+              Twitter
+            </a>
+            <a href="#" className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
+              Discord
+            </a>
+          </div>
+
+          <p className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.3em] text-center">
+            &copy; 2026 SHELBYFLIX &middot; ALL RIGHTS RESERVED
           </p>
         </div>
       </footer>
     </div>
   );
 }
+
+// Video Discovery Component
+function VideoDiscoverySection() {
+  const [trendingVideos, setTrendingVideos] = useState<VideoMetadata[]>([]);
+  const [recentVideos, setRecentVideos] = useState<VideoMetadata[]>([]);
+
+  useEffect(() => {
+    setTrendingVideos(getTrendingVideos(3));
+    setRecentVideos(getRecentVideos(3));
+  }, []);
+
+  if (trendingVideos.length === 0 && recentVideos.length === 0) {
+    return null; // Don't show if no videos
+  }
+
+  return (
+    <div className="space-y-16">
+      {/* Trending */}
+      {trendingVideos.length > 0 && (
+        <div>
+          <h2 className="text-3xl font-black mb-8 tracking-tighter text-white">
+            TRENDING <span className="text-brand-red">NOW</span>
+          </h2>
+          <div className="grid md:grid-cols-3 gap-6">
+            {trendingVideos.map((video) => (
+              <VideoCard key={video.videoId} video={video} hasAccess={true} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent */}
+      {recentVideos.length > 0 && (
+        <div>
+          <h2 className="text-3xl font-black mb-8 tracking-tighter text-white">
+            RECENT <span className="text-brand-red">UPLOADS</span>
+          </h2>
+          <div className="grid md:grid-cols-3 gap-6">
+            {recentVideos.map((video) => (
+              <VideoCard key={video.videoId} video={video} hasAccess={true} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

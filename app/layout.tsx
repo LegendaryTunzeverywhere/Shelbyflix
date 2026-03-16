@@ -6,8 +6,8 @@ import { AptosWalletProvider } from '@/components/AptosWalletProvider';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Token-Gated Videos - Aptos & Shelby',
-  description: 'Decentralized video platform with NFT/token-gated access on Aptos blockchain',
+  title: 'SHELBYFLIX - Aptos & Shelby',
+  description: 'Decentralized video platform with NFT/SHELBYFLIX on Aptos blockchain',
   keywords: ['Web3', 'Aptos', 'Shelby', 'NFT', 'Token-gated', 'Video', 'Decentralized'],
 };
 

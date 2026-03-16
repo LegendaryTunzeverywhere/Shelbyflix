@@ -3,9 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import ReactPlayer from 'react-player';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
-import type { VideoMetadata } from '@/types';
-import { getVideoStreamUrl } from '@/lib/shelby';
-import { checkVideoAccess, purchaseVideo } from '@/lib/contract';
+import type { VideoMetadata } from '../types';
+
 import { 
   LockClosedIcon,
   ExclamationCircleIcon,
@@ -38,6 +37,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
 
     try {
       setLoading(true);
+      const { checkVideoAccess } = await import("@/lib/contract"); // Dynamic import
       const access = await checkVideoAccess(video.videoId, walletAddress);
       setHasPurchased(access);
       
@@ -53,8 +53,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
 
   async function loadVideoStream() {
     try {
-      const url = await getVideoStreamUrl(video.videoId, walletAddress);
+      // Import decryption function
+      const { downloadAndDecryptVideo } = await import("@/lib/shelby");
+      const { incrementViews } = await import("@/lib/metadata-store");
+      
+      // Download and decrypt video
+      const decryptedBlob = await downloadAndDecryptVideo(
+        video.blobId,
+        video.encryptionKey
+      );
+      
+      // Create object URL for player
+      const url = URL.createObjectURL(decryptedBlob);
       setStreamUrl(url);
+      
+      // Increment view count
+      incrementViews(video.videoId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load video');
     }
@@ -69,6 +83,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
     try {
       setPurchasing(true);
       setError(null);
+      const { purchaseVideo } = await import("@/lib/contract"); // Dynamic import
       await purchaseVideo(walletAddress, signAndSubmitTransaction, video.videoId);
       setHasPurchased(true);
       await loadVideoStream();
@@ -170,20 +185,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
   return (
     <div className="aspect-video bg-black rounded-xl overflow-hidden shadow-2xl">
       {streamUrl ? (
-        <ReactPlayer
-          url={streamUrl}
-          controls
-          width="100%"
-          height="100%"
-          playing={false}
-          config={{
-            file: {
-              attributes: {
-                controlsList: 'nodownload',
+        <div style={{ width: '100%', height: '100%' }}>
+          <ReactPlayer
+            url={streamUrl}
+            controls
+            width="100%"
+            height="100%"
+            playing={false}
+
+            config={{
+              // @ts-ignore - Property 'file' does not exist on type 'Config'. This is a known react-player type issue.
+              file: {
+                attributes: {
+                  controlsList: 'nodownload',
+                },
               },
-            },
-          }}
-        />
+            }}
+          />
+        </div>
       ) : (
         <div className="w-full h-full flex items-center justify-center text-white">
           Preparing stream...

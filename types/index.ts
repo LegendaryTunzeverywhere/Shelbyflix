@@ -1,114 +1,108 @@
-// Core Types for Token-Gated Video Gallery
+export enum VideoCategory {
+  ENTERTAINMENT = "Entertainment",
+  EDUCATION = "Education",
+  GAMING = "Gaming",
+  MUSIC = "Music",
+  SPORTS = "Sports",
+  NEWS = "News",
+  TECH = "Technology",
+  LIFESTYLE = "Lifestyle",
+  COMEDY = "Comedy",
+  OTHER = "Other"
+}
 
 export interface VideoMetadata {
+  // Identity
   videoId: string;
+  channelId: string; // Uploader's wallet address
+  channelName: string;
+  
+  // Content
   title: string;
   description: string;
+  category: VideoCategory;
+  tags: string[];
+  
+  // Storage
+  blobId: string; // Shelbynet blob ID
+  blobName: string;
   shelbyUrl: string;
+  encryptionKey: string; // Symmetric key for ACE decryption
   thumbnailUrl?: string;
+  
+  // Metadata
+  duration: number; // Video duration in seconds
+  uploadTimestamp: number;
+  expirationTimestamp: number;
+  availabilityPeriod: number; // Days until expiration
+  
+  // Engagement
+  views: number;
+  likes: number;
+  dislikes: number;
+  commentCount: number;
+  
+  // Video type
+  isShort: boolean; // Videos under 60 seconds
+  
+  // Legacy (keep for backwards compatibility)
   uploader: string;
   timestamp: number;
-  requiredToken: string;
-  fileSize?: number;
-  duration?: number;
-  views?: number;
+  requiredToken?: string;
   price?: number;
 }
 
-export interface UploadFormData {
-  file: File;
-  title: string;
+export interface Channel {
+  channelId: string;
+  channelName: string;
   description: string;
-  price: string;
+  avatarUrl?: string;
+  bannerUrl?: string;
+  subscribers: number;
+  totalViews: number;
+  totalVideos: number;
+  createdAt: number;
 }
 
-export interface WalletState {
-  address: string | null;
-  connected: boolean;
-  hasAccess: boolean;
-  balance: string;
-}
-
-export interface TokenRequirement {
-  tokenAddress: string;
-  minBalance: number;
-}
-
-export interface ShelbyUploadResponse {
+export interface VideoEngagement {
   videoId: string;
-  shelbyUrl: string;
-  success: boolean;
-  error?: string;
+  userId: string;
+  liked: boolean;
+  disliked: boolean;
+  timestamp: number;
 }
 
-export interface ShelbyVideoStream {
-  streamUrl: string;
-  accessToken: string;
-  expiresAt: number;
+export interface Comment {
+  commentId: string;
+  videoId: string;
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  text: string;
+  likes: number;
+  timestamp: number;
+  replies?: Comment[];
+  parentCommentId?: string;
 }
 
-export interface VideoAccessCheck {
-  hasAccess: boolean;
-  reason?: string;
-  tokenBalance?: number;
+export interface Subscription {
+  subscriberId: string;
+  channelId: string;
+  timestamp: number;
 }
 
 export interface UploadProgress {
-  percent: number;
-  stage: 'preparing' | 'uploading' | 'processing' | 'complete' | 'error';
+  stage: 'preparing' | 'encrypting' | 'uploading' | 'registering' | 'finalizing' | 'complete' | 'error' | 'processing';
+  progress: number; // 0-100
   message: string;
 }
 
-export interface GalleryFilters {
-  search: string;
-  sortBy: 'newest' | 'oldest' | 'popular';
-  showLockedOnly?: boolean;
-}
-
-// API Response Types
-export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
-export interface VideoListResponse {
-  videos: VideoMetadata[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
-// Move Smart Contract Types
-export interface MoveVideoMetadata {
-  video_id: number[];
-  title: number[];
-  description: number[];
-  shelby_url: number[];
-  uploader: string;
-  timestamp: number;
-  required_token: string;
-}
-
-export interface MoveResource<T> {
-  type: string;
-  data: T;
-}
-
-// Notification Types
-export type NotificationType = 'success' | 'error' | 'info' | 'warning';
-
-export interface Notification {
-  id: string;
-  type: NotificationType;
-  message: string;
-  duration?: number;
-}
-
-// Storage Interface (for modularity - can swap Shelby with IPFS, etc.)
-export interface VideoStorageProvider {
-  upload(file: File, metadata: Partial<VideoMetadata>): Promise<ShelbyUploadResponse>;
-  retrieve(videoId: string): Promise<string>;
-  checkAccess(videoId: string, walletAddress: string): Promise<boolean>;
-  getStreamUrl(videoId: string, accessToken?: string): Promise<string>;
+export interface ShelbyBlobMetadata {
+  blobId: string;
+  blobName: string;
+  blobCommitment: string;
+  blobSize: number;
+  chunksetCount: number;
+  expirationMicros: number;
+  paymentAmount: number;
 }

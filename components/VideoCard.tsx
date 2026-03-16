@@ -14,10 +14,10 @@ import {
 
 interface VideoCardProps {
   video: VideoMetadata;
-  hasAccess: boolean;
+  hasAccess?: boolean; // Make optional with default
 }
 
-const VideoCard: React.FC<VideoCardProps> = ({ video, hasAccess }) => {
+const VideoCard: React.FC<VideoCardProps> = ({ video, hasAccess = true }) => {
   const {
     videoId,
     title,
@@ -31,83 +31,94 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, hasAccess }) => {
   return (
     <Link
       href={`/video/${videoId}`}
-      className="group block bg-white rounded-xl overflow-hidden shadow-sm 
-        hover:shadow-xl transition-all duration-300 border border-gray-100 
-        hover:border-primary-200"
+      className="group block bg-zinc-900/50 backdrop-blur-md rounded-[24px] overflow-hidden 
+        border border-zinc-800 hover:border-brand-red/50 transition-all duration-500 hover:-translate-y-1"
     >
       {/* Thumbnail */}
-      <div className="relative aspect-video bg-gradient-to-br from-gray-100 to-gray-200 
-        overflow-hidden">
+      <div className="relative aspect-video bg-zinc-950 overflow-hidden">
         {thumbnailUrl ? (
           <img
             src={thumbnailUrl}
             alt={title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform 
-              duration-300"
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform 
+              duration-700"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <PlayCircleIcon className="w-16 h-16 text-gray-400" />
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+            <PlayCircleIcon className="w-16 h-16 text-zinc-800" />
           </div>
         )}
         
-        {/* Lock/Unlock Overlay */}
-        <div className={`absolute inset-0 flex items-center justify-center 
-          ${hasAccess ? 'bg-green-500/0 group-hover:bg-green-500/10' : 'bg-black/60'} 
-          transition-colors duration-300`}>
+        {/* Overlay */}
+        <div className={`absolute inset-0 flex items-center justify-center transition-all duration-500
+          ${hasAccess ? 'bg-black/0 group-hover:bg-black/40' : 'bg-black/80 backdrop-blur-[2px]'}`}>
           {hasAccess ? (
-            <div className="opacity-0 group-hover:opacity-100 transition-opacity 
-              duration-300">
-              <PlayCircleIcon className="w-16 h-16 text-white drop-shadow-lg" />
+            <div className="opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all duration-500">
+              <div className="w-16 h-16 bg-brand-red rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(246,27,46,0.5)]">
+                <PlayCircleIcon className="w-10 h-10 text-white" />
+              </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2">
-              <LockClosedIcon className="w-12 h-12 text-white" />
-              <span className="text-white text-sm font-medium px-3 py-1 bg-black/50 
-                rounded-full">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-14 h-14 bg-zinc-800/50 rounded-2xl flex items-center justify-center border border-zinc-700/50">
+                <LockClosedIcon className="w-7 h-7 text-brand-red" />
+              </div>
+              <span className="text-[10px] text-white font-black uppercase tracking-[0.2em] px-4 py-1.5 bg-brand-red rounded-full">
                 {video.price && video.price > 0 
-                  ? `${(video.price / 100000000).toFixed(2)} ShelbyUSD` 
-                  : 'Token Required'}
+                  ? `${(video.price / 100000000).toFixed(2)} SUSD` 
+                  : 'AUTH REQUIRED'}
               </span>
             </div>
           )}
         </div>
 
-        {/* Duration Badge (if available) */}
+        {/* Duration Badge */}
         {video.duration && (
-          <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 text-white 
-            text-xs font-medium rounded">
+          <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/80 backdrop-blur-md text-white 
+            text-[10px] font-black tracking-widest rounded border border-zinc-800">
             {formatDuration(video.duration)}
           </div>
         )}
       </div>
 
       {/* Content */}
-      <div className="p-4">
-        <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 
-          group-hover:text-primary-600 transition-colors">
+      <div className="p-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-1.5 h-1.5 rounded-full bg-brand-pink opacity-50" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Digital Archive</span>
+        </div>
+        
+        <h3 className="font-black text-white mb-2 line-clamp-1 text-lg tracking-tighter
+          group-hover:text-brand-red transition-colors">
           {title}
         </h3>
         
-        <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+        <p className="text-xs text-zinc-500 mb-6 line-clamp-2 font-medium leading-relaxed">
           {description}
         </p>
 
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <div className="flex items-center gap-1">
-            <span className="font-medium">{formatAddress(uploader)}</span>
+        <div className="flex items-center justify-between pt-4 border-t border-zinc-800/50">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center">
+              <div className="w-2 h-2 bg-brand-purple rounded-full" />
+            </div>
+            <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+              {formatAddress(uploader)}
+            </span>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             {views !== undefined && (
-              <div className="flex items-center gap-1">
-                <EyeIcon className="w-4 h-4" />
-                <span>{formatViews(views)}</span>
+              <div className="flex items-center gap-1.5 text-zinc-600">
+                <EyeIcon className="w-3.5 h-3.5" />
+                <span className="text-[10px] font-black tracking-tighter">{formatViews(views)}</span>
               </div>
             )}
-            <div className="flex items-center gap-1">
-              <ClockIcon className="w-4 h-4" />
-              <span>{formatDistanceToNow(timestamp, { addSuffix: true })}</span>
+            <div className="flex items-center gap-1.5 text-zinc-600">
+              <ClockIcon className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-black tracking-tighter uppercase">
+                {formatDistanceToNow(timestamp, { addSuffix: false }).replace('about ', '')}
+              </span>
             </div>
           </div>
         </div>

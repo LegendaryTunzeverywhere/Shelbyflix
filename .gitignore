@@ -51,3 +51,7 @@ move-contracts/.aptos/
 
 # OS
 Thumbs.db
+
+#exe
+*.exe
+.aptos

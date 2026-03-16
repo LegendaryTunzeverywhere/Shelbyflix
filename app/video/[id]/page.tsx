@@ -6,9 +6,9 @@ import { formatDistanceToNow } from 'date-fns';
 import Header from '@/components/Header';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useWallet } from '@/hooks/useWallet';
-import { useTokenAccess } from '@/hooks/useTokenAccess';
-import { getVideoMetadata, deleteVideoFromChain } from '@/lib/contract';
-import { deleteVideoBlob } from '@/lib/shelby-sdk';
+ 
+import { getVideoMetadata, deleteVideoFromChain } from '@/lib/aptos';
+import { deleteFromShelby } from '@/lib/shelby';
 import { formatAddress } from '@/lib/aptos';
 import type { VideoMetadata } from '@/types';
 import {
@@ -19,13 +19,14 @@ import {
   CheckIcon,
   TrashIcon,
   ArrowDownTrayIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 
 export default function VideoPage() {
   const params = useParams();
   const router = useRouter();
   const { address, signAndSubmitTransaction } = useWallet();
-  const { hasAccess } = useTokenAccess();
+  const hasAccess = true; // Fee-based access, not token-gated
   
   const [video, setVideo] = useState<VideoMetadata | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,7 +74,7 @@ export default function VideoPage() {
       
       // 2. Delete from Shelby storage (best effort)
       const blobId = video.shelbyUrl.replace('shelby://', '');
-      await deleteVideoBlob(blobId, address);
+      await deleteFromShelby(videoId, address);
 
       router.push('/gallery');
     } catch (error) {
@@ -86,24 +87,17 @@ export default function VideoPage() {
 
   function handleDownload() {
     if (!video || !hasAccess) return;
-    // In a real app, we'd fetch the blob and trigger a download.
-    // For now, we'll open the streaming URL in a new tab which allows "Save Video As"
     const blobId = video.shelbyUrl.replace('shelby://', '');
     window.open(`https://api.shelbynet.shelby.xyz/v1/blob/download/${blobId}?uploader=${video.uploader}`, '_blank');
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-brand-dark">
         <Header />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 
-                border-primary-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">Loading video...</p>
-            </div>
-          </div>
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-brand-red mx-auto mb-8"></div>
+          <p className="text-zinc-500 font-black uppercase tracking-widest text-sm">Deciphering Archive</p>
         </main>
       </div>
     );
@@ -111,23 +105,23 @@ export default function VideoPage() {
 
   if (!video) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-brand-dark text-white">
         <Header />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="text-center">
-            <h1 className="text-3xl font-bold text-gray-900 mb-4">
-              Video Not Found
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
+          <div className="text-center bg-zinc-900/50 backdrop-blur-xl rounded-[40px] border border-zinc-800 p-20">
+            <h1 className="text-4xl font-black tracking-tighter mb-4 uppercase">
+              ARCHIVE <span className="text-brand-red">PURGED</span>
             </h1>
-            <p className="text-gray-600 mb-6">
-              The video you're looking for doesn't exist or has been removed.
+            <p className="text-zinc-500 font-medium mb-12 max-w-sm mx-auto">
+              The data you are attempting to access has been permanently deleted from the network.
             </p>
             <button
               onClick={() => router.push('/gallery')}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 
-                hover:bg-primary-700 text-white rounded-lg font-medium transition-colors"
+              className="inline-flex items-center gap-2 px-10 py-5 bg-white text-black 
+                rounded-2xl font-black text-xs tracking-widest transition-all hover:bg-zinc-200"
             >
               <ArrowLeftIcon className="w-5 h-5" />
-              Back to Gallery
+              RETURN TO BASE
             </button>
           </div>
         </main>
@@ -136,22 +130,39 @@ export default function VideoPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-brand-dark text-white">
       <Header />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Back Button */}
         <button
           onClick={() => router.push('/gallery')}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 
-            mb-6 transition-colors"
+          className="flex items-center gap-2 text-zinc-500 hover:text-white 
+            mb-10 transition-all font-black text-[10px] uppercase tracking-[0.3em] group"
         >
-          <ArrowLeftIcon className="w-5 h-5" />
-          <span className="font-medium">Back to Gallery</span>
+          <ArrowLeftIcon className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+          <span>Exit Vault</span>
         </button>
 
-        {/* Video Player */}
-        <div className="mb-8">
+        {/* Video Player Section */}
+        <div className="mb-12 rounded-[40px] overflow-hidden border border-zinc-800 bg-black shadow-2xl relative group">
+          {!hasAccess && (
+             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
+                <div className="w-20 h-20 bg-brand-red/10 rounded-[32px] border border-brand-red/20 flex items-center justify-center mb-6">
+                  <ShieldCheckIcon className="w-10 h-10 text-brand-red" />
+                </div>
+                <h2 className="text-2xl font-black tracking-tighter mb-2">ENCRYPTED STREAM</h2>
+                <p className="text-zinc-500 font-medium mb-8">Access level insufficient</p>
+                <a
+                  href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-8 py-4 bg-brand-red text-white rounded-2xl font-black text-xs tracking-widest hover:bg-brand-red/90 transition-all"
+                >
+                  AUTHORIZE ACCESS
+                </a>
+             </div>
+          )}
           <VideoPlayer
             video={video}
             walletAddress={address || ''}
@@ -159,130 +170,110 @@ export default function VideoPage() {
           />
         </div>
 
-        {/* Video Info */}
-        <div className="bg-white rounded-xl shadow-sm p-6 md:p-8">
-          <div className="flex flex-col md:flex-row md:items-start md:justify-between 
-            gap-4 mb-6">
-            <div className="flex-1">
-              <h1 className="text-3xl font-bold text-gray-900 mb-3">
+        {/* Video Info Container */}
+        <div className="grid lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-8">
+            <div className="bg-zinc-900/30 backdrop-blur-md rounded-[40px] border border-zinc-800 p-8 md:p-12">
+              <div className="flex items-center gap-3 mb-6">
+                 <div className="w-2 h-2 rounded-full bg-brand-pink" />
+                 <span className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Video Manifest</span>
+              </div>
+              
+              <h1 className="text-4xl md:text-5xl font-black text-white mb-6 tracking-tighter leading-tight">
                 {video.title}
               </h1>
               
-              <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
-                <div className="flex items-center gap-1">
-                  <ClockIcon className="w-4 h-4" />
-                  <span>
+              <div className="flex flex-wrap items-center gap-8 mb-10 pt-6 border-t border-zinc-800/50">
+                <div className="flex items-center gap-2 text-zinc-400">
+                  <ClockIcon className="w-4 h-4 text-brand-red" />
+                  <span className="text-xs font-black uppercase tracking-widest">
                     {formatDistanceToNow(video.timestamp, { addSuffix: true })}
                   </span>
                 </div>
                 
                 {video.views !== undefined && (
-                  <div className="flex items-center gap-1">
-                    <EyeIcon className="w-4 h-4" />
-                    <span>{video.views.toLocaleString()} views</span>
+                  <div className="flex items-center gap-2 text-zinc-400">
+                    <EyeIcon className="w-4 h-4 text-brand-purple" />
+                    <span className="text-xs font-black uppercase tracking-widest">{video.views.toLocaleString()} ARCHIVED VIEWS</span>
                   </div>
                 )}
               </div>
-            </div>
 
-            <div className="flex flex-wrap gap-2">
-              {hasAccess && (
-                <button
-                  onClick={handleDownload}
-                  className="flex items-center gap-2 px-4 py-2 bg-primary-50 
-                    text-primary-700 hover:bg-primary-100 rounded-lg font-medium 
-                    transition-colors whitespace-nowrap"
-                >
-                  <ArrowDownTrayIcon className="w-5 h-5" />
-                  <span>Download</span>
-                </button>
-              )}
-
-              <button
-                onClick={handleShare}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 
-                  hover:bg-gray-200 rounded-lg font-medium transition-colors 
-                  whitespace-nowrap"
-              >
-                {copied ? (
-                  <>
-                    <CheckIcon className="w-5 h-5 text-green-600" />
-                    <span>Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <ShareIcon className="w-5 h-5" />
-                    <span>Share</span>
-                  </>
-                )}
-              </button>
-
-              {address?.toLowerCase() === video.uploader.toLowerCase() && (
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-50 
-                    text-red-600 hover:bg-red-100 rounded-lg font-medium 
-                    transition-colors whitespace-nowrap disabled:opacity-50"
-                >
-                  <TrashIcon className="w-5 h-5" />
-                  <span>{deleting ? 'Deleting...' : 'Delete'}</span>
-                </button>
+              {video.description && (
+                <div className="bg-black/20 rounded-[32px] p-8 border border-zinc-800/50">
+                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-4">Transmission Data</h3>
+                  <p className="text-zinc-400 font-medium leading-relaxed whitespace-pre-wrap">{video.description}</p>
+                </div>
               )}
             </div>
           </div>
 
-          {/* Description */}
-          {video.description && (
-            <div className="mb-6 pb-6 border-b border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-2">Description</h3>
-              <p className="text-gray-700 whitespace-pre-wrap">{video.description}</p>
-            </div>
-          )}
+          <div className="space-y-6">
+            {/* Actions Panel */}
+            <div className="bg-zinc-900/30 backdrop-blur-md rounded-[40px] border border-zinc-800 p-8">
+              <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-6 text-center">Operations</h3>
+              <div className="space-y-3">
+                {hasAccess && (
+                  <button
+                    onClick={handleDownload}
+                    className="w-full flex items-center justify-between px-6 py-4 bg-zinc-800/50 
+                      text-white hover:bg-zinc-800 rounded-2xl font-black text-xs tracking-widest 
+                      transition-all group border border-zinc-800/50"
+                  >
+                    <span>EXTRACT DATA</span>
+                    <ArrowDownTrayIcon className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
+                  </button>
+                )}
 
-          {/* Uploader Info */}
-          <div>
-            <h3 className="font-semibold text-gray-900 mb-3">Uploader</h3>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-primary-400 to-purple-500 
-                rounded-full flex items-center justify-center text-white font-bold">
-                {video.uploader.slice(2, 4).toUpperCase()}
+                <button
+                  onClick={handleShare}
+                  className="w-full flex items-center justify-between px-6 py-4 bg-zinc-800/50 
+                    text-white hover:bg-zinc-800 rounded-2xl font-black text-xs tracking-widest 
+                    transition-all group border border-zinc-800/50"
+                >
+                  <span>{copied ? 'LINK COPIED' : 'SHARE SIGNAL'}</span>
+                  {copied ? (
+                    <CheckIcon className="w-5 h-5 text-green-500" />
+                  ) : (
+                    <ShareIcon className="w-5 h-5 group-hover:-translate-y-1 group-hover:translate-x-1 transition-all" />
+                  )}
+                </button>
+
+                {address?.toLowerCase() === video.uploader.toLowerCase() && (
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="w-full flex items-center justify-between px-6 py-4 bg-brand-red/10 
+                      text-brand-red hover:bg-brand-red hover:text-white rounded-2xl font-black text-xs tracking-widest 
+                      transition-all group border border-brand-red/20"
+                  >
+                    <span>{deleting ? 'PURGING...' : 'PURGE ARCHIVE'}</span>
+                    <TrashIcon className="w-5 h-5" />
+                  </button>
+                )}
               </div>
-              <div>
-                <p className="font-medium text-gray-900">
-                  {formatAddress(video.uploader)}
-                </p>
-                <p className="text-sm text-gray-500 font-mono break-all">
-                  {video.uploader}
-                </p>
+            </div>
+
+            {/* Uploader Card */}
+            <div className="bg-zinc-900/30 backdrop-blur-md rounded-[40px] border border-zinc-800 p-8">
+              <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-6">Source Origin</h3>
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 bg-gradient-to-br from-brand-purple to-brand-red 
+                  rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-lg shadow-brand-red/20">
+                  {video.uploader.slice(2, 4).toUpperCase()}
+                </div>
+                <div className="overflow-hidden">
+                  <p className="font-black text-white text-sm tracking-tight mb-1">
+                    {formatAddress(video.uploader)}
+                  </p>
+                  <p className="text-[10px] text-zinc-500 font-mono truncate">
+                    {video.uploader}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-
-        {/* Token Requirement Notice */}
-        {!hasAccess && (
-          <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-            <h3 className="font-semibold text-yellow-900 mb-2">
-              🔒 Token Required
-            </h3>
-            <p className="text-yellow-800 text-sm mb-4">
-              This video requires Shelby Faucet tokens to watch. Connect a wallet 
-              with the required tokens to unlock access.
-            </p>
-            <a
-              href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-600 
-                hover:bg-yellow-700 text-white rounded-lg font-medium 
-                transition-colors text-sm"
-            >
-              Get Test Tokens
-              <ArrowLeftIcon className="w-4 h-4 rotate-180" />
-            </a>
-          </div>
-        )}
       </main>
     </div>
   );

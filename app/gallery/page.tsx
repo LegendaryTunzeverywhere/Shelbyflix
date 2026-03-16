@@ -4,12 +4,12 @@ import React, { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import VideoCard from '@/components/VideoCard';
 import { getAllVideosFromChain } from '@/lib/contract';
-import { useTokenAccess } from '@/hooks/useTokenAccess';
+ 
 import type { VideoMetadata, GalleryFilters } from '@/types';
-import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
 
 export default function GalleryPage() {
-  const { hasAccess } = useTokenAccess();
+  const { hasAccess } =  
   const [videos, setVideos] = useState<VideoMetadata[]>([]);
   const [filteredVideos, setFilteredVideos] = useState<VideoMetadata[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,15 +70,15 @@ export default function GalleryPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-brand-dark">
         <Header />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 
-                border-primary-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">Loading videos...</p>
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
+          <div className="flex flex-col items-center justify-center h-64">
+            <div className="relative">
+              <div className="absolute inset-0 bg-brand-red blur-xl opacity-20 animate-pulse"></div>
+              <div className="relative animate-spin rounded-full h-16 w-16 border-t-2 border-brand-red"></div>
             </div>
+            <p className="text-zinc-500 mt-8 font-black uppercase tracking-widest text-sm">Initializing Gallery</p>
           </div>
         </main>
       </div>
@@ -86,74 +86,76 @@ export default function GalleryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-brand-dark text-white">
       <Header />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         {/* Page Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Video Gallery</h1>
-          <p className="text-gray-600">
-            {videos.length} {videos.length === 1 ? 'video' : 'videos'} available
+        <div className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-2 h-2 rounded-full bg-brand-red animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">Live Library</span>
+            </div>
+            <h1 className="text-5xl font-black tracking-tighter">THE <span className="text-brand-red">VAULT</span></h1>
+          </div>
+          <p className="text-zinc-500 font-bold uppercase tracking-widest text-xs bg-zinc-900 px-4 py-2 rounded-full border border-zinc-800">
+            {videos.length} <span className="text-white">{videos.length === 1 ? 'OBJECT' : 'OBJECTS'}</span> DISCOVERED
           </p>
         </div>
 
         {/* Filters */}
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-8 flex flex-col md:flex-row 
-          gap-4 items-stretch md:items-center">
+        <div className="bg-zinc-900/50 backdrop-blur-md rounded-[24px] border border-zinc-800 p-3 mb-12 flex flex-col md:flex-row gap-3 items-stretch">
           {/* Search */}
-          <div className="flex-1 relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 
-              w-5 h-5 text-gray-400" />
+          <div className="flex-1 relative group">
+            <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 
+              w-5 h-5 text-zinc-600 group-focus-within:text-brand-pink transition-colors" />
             <input
               type="text"
               value={filters.search}
               onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-              placeholder="Search videos..."
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg 
-                focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              placeholder="SEARCH THE VOID..."
+              className="w-full bg-black/40 border-none rounded-[16px] pl-12 pr-4 py-4 text-sm font-bold uppercase tracking-widest 
+                focus:ring-1 focus:ring-zinc-700 transition-all placeholder:text-zinc-700 text-white"
             />
           </div>
 
           {/* Sort */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
-              Sort by:
-            </label>
+          <div className="flex items-center gap-2 bg-black/40 rounded-[16px] px-4 border border-zinc-800/50">
+            <AdjustmentsHorizontalIcon className="w-5 h-5 text-zinc-600" />
             <select
               value={filters.sortBy}
               onChange={(e) =>
                 setFilters({ ...filters, sortBy: e.target.value as any })
               }
-              className="px-4 py-2 border border-gray-300 rounded-lg 
-                focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
+              className="bg-transparent border-none text-xs font-black uppercase tracking-widest py-4 focus:ring-0 text-zinc-400 cursor-pointer hover:text-white transition-colors"
             >
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="popular">Most Popular</option>
+              <option value="newest" className="bg-zinc-900">Newest</option>
+              <option value="oldest" className="bg-zinc-900">Oldest</option>
+              <option value="popular" className="bg-zinc-900">Popular</option>
             </select>
           </div>
         </div>
 
         {/* Video Grid */}
         {filteredVideos.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-gray-500 text-lg mb-4">
+          <div className="text-center py-32 bg-zinc-900/20 rounded-[40px] border border-dashed border-zinc-800">
+            <p className="text-zinc-600 font-black uppercase tracking-[0.2em] mb-6">
               {filters.search
-                ? 'No videos found matching your search.'
-                : 'No videos yet. Be the first to upload!'}
+                ? 'NO DATA MATCHES THE QUERY'
+                : 'THE VAULT IS CURRENTLY EMPTY'}
             </p>
             {filters.search && (
               <button
                 onClick={() => setFilters({ ...filters, search: '' })}
-                className="text-primary-600 hover:underline"
+                className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
               >
-                Clear search
+                RESET SCAN
               </button>
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {filteredVideos.map((video) => (
               <VideoCard key={video.videoId} video={video} hasAccess={hasAccess} />
             ))}
@@ -162,14 +164,24 @@ export default function GalleryPage() {
 
         {/* Access Notice */}
         {!hasAccess && videos.length > 0 && (
-          <div className="mt-8 bg-yellow-50 border border-yellow-200 rounded-lg p-6 
-            text-center">
-            <p className="text-yellow-800 font-medium mb-2">
-              🔒 Some videos are locked
-            </p>
-            <p className="text-yellow-700 text-sm">
-              Connect a wallet with Shelby Faucet tokens to unlock all videos
-            </p>
+          <div className="mt-20 relative group overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-brand-purple to-brand-red opacity-10 group-hover:opacity-20 transition-opacity"></div>
+            <div className="relative bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-[32px] p-10 flex flex-col md:flex-row items-center justify-between gap-8">
+              <div className="text-center md:text-left">
+                <h3 className="text-2xl font-black tracking-tighter mb-2">SECURE CONTENT DETECTED</h3>
+                <p className="text-zinc-500 font-medium max-w-md">
+                  Some archives are locked behind token-gated encryption. Use Shelby Faucet tokens to gain full administrative access.
+                </p>
+              </div>
+              <a
+                href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-10 py-5 bg-white text-black rounded-2xl font-black text-sm tracking-widest hover:bg-zinc-200 transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+              >
+                AUTHORIZE ACCESS
+              </a>
+            </div>
           </div>
         )}
       </main>

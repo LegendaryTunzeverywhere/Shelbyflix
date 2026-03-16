@@ -1,5 +1,5 @@
 {
-  "name": "token-gated-videos",
+  "name": "shelbyflix",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,27 +9,46 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@aptos-labs/ts-sdk": "^1.28.0",
-    "@aptos-labs/wallet-adapter-react": "^3.6.0",
-    "@aptos-labs/wallet-adapter-core": "^4.12.0",
-    "petra-plugin-wallet-adapter": "^0.4.5",
-    "@martianwallet/aptos-wallet-adapter": "^0.0.5",
-    "@heroicons/react": "^2.1.1",
-    "aptos": "^1.21.0",
-    "date-fns": "^3.3.1",
-    "next": "14.1.0",
-    "react": "^18",
-    "react-dom": "^18",
-    "react-player": "^2.14.1",
-    "zustand": "^4.5.0"
+    "@aptos-labs/ace-sdk": "^0.1.1",
+    "@aptos-labs/ts-sdk": "^5.2.1",
+    "@aptos-labs/wallet-adapter-core": "^7.8.0",
+    "@aptos-labs/wallet-adapter-react": "^7.2.5",
+    "@aptos-labs/wallet-standard": "^0.5.2",
+    "@headlessui/react": "^2.2.9",
+    "@heroicons/react": "^2.2.0",
+    "@shelby-protocol/sdk": "*",
+    "@tailwindcss/forms": "^0.5.11",
+    "@tailwindcss/postcss": "^4.2.1",
+    "@telegram-apps/bridge": "npm:@tma.js/bridge@^2.2.3",
+    "@tma.js/bridge": "^2.2.0",
+    "@tma.js/sdk": "^3.1.0",
+    "@tma.js/types": "^1.0.0",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.577.0",
+    "next": "^15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-hot-toast": "^2.4.1",
+    "react-player": "^3.4.0",
+    "react-select": "^5.10.2",
+    "styled-jsx": "^5.1.7"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "autoprefixer": "^10.0.1",
-    "postcss": "^8",
-    "tailwindcss": "^3.3.0",
-    "typescript": "^5"
+    "@types/crypto-js": "^4.2.2",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.0",
+    "crypto-js": "^4.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "15.1.6",
+    "postcss": "^8.4.0",
+    "react-intersection-observer": "^9.5.3",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.3.3"
+  },
+  "overrides": {
+    "valibot": ">=1.2.0",
+    "@aptos-labs/wallet-standard": "^0.5.2"
   }
 }
