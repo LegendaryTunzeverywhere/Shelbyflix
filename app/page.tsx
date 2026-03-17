@@ -230,10 +230,10 @@ export default function Home() {
               className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
               Shelby
             </a>
-            <a href="#" className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
+            <a href="https://x.com/shelbyflix" className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
               Twitter
             </a>
-            <a href="#" className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
+            <a href="https://discord.com/invite/shelbyflix" className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
               Discord
             </a>
           </div>

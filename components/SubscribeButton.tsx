@@ -24,7 +24,7 @@ export default function SubscribeButton({ channelId }: SubscribeButtonProps) {
 
   const loadSubscriptionStatus = () => {
     if (address) {
-      setSubscribed(isSubscribed(address, channelId));
+      setSubscribed(isSubscribed(address.toString(), channelId));
     }
     setSubscriberCount(getSubscriberCount(channelId));
   };
@@ -32,13 +32,13 @@ export default function SubscribeButton({ channelId }: SubscribeButtonProps) {
   const handleToggle = () => {
     if (!address) return;
     
-    const newStatus = toggleSubscription(address, channelId);
+    const newStatus = toggleSubscription(address.toString(), channelId);
     setSubscribed(newStatus);
     loadSubscriptionStatus();
   };
 
   // Don't show if viewing own channel
-  if (address?.toLowerCase() === channelId.toLowerCase()) {
+  if (address?.toString().toLowerCase() === channelId.toLowerCase()) {
     return null;
   }
 

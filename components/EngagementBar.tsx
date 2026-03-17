@@ -38,7 +38,7 @@ export default function EngagementBar({ videoId }: EngagementBarProps) {
 
   const loadEngagement = () => {
     if (address) {
-      const engagement = getUserEngagement(videoId, address);
+      const engagement = getUserEngagement(videoId, address.toString());
       setLiked(engagement.liked);
       setDisliked(engagement.disliked);
     }
@@ -48,9 +48,9 @@ export default function EngagementBar({ videoId }: EngagementBarProps) {
   };
 
   const handleLike = () => {
-    if (!address) return;
+  if (!address) return;
     
-    const result = toggleLike(videoId, address);
+    const result = toggleLike(videoId, address.toString());
     setLiked(result.liked);
     setDisliked(result.disliked);
     loadEngagement();
@@ -59,7 +59,7 @@ export default function EngagementBar({ videoId }: EngagementBarProps) {
   const handleDislike = () => {
     if (!address) return;
     
-    const result = toggleDislike(videoId, address);
+    const result = toggleDislike(videoId, address.toString());
     setLiked(result.liked);
     setDisliked(result.disliked);
     loadEngagement();

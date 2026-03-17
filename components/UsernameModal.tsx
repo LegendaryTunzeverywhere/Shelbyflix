@@ -23,7 +23,7 @@ export default function UsernameModal({ walletAddress, onComplete }: UsernameMod
     return regex.test(value);
   };
 
-  const handleUsernameChange = async (value: string) => {
+    const handleUsernameChange = async (value: string) => {
     setUsername(value.toLowerCase());
     setError('');
     setAvailable(null);
@@ -31,23 +31,27 @@ export default function UsernameModal({ walletAddress, onComplete }: UsernameMod
     if (!value) return;
 
     if (!validateUsername(value)) {
-      setError('Username must be 3-20 characters (letters, numbers, underscore only)');
-      return;
+        setError('Username must be 3-20 characters (letters, numbers, underscore only)');
+        return;
     }
 
     setChecking(true);
     try {
-      const isAvailable = await isUsernameAvailable(value);
-      setAvailable(isAvailable);
-      if (!isAvailable) {
+        console.log('🔍 Checking username availability:', value);
+        const isAvailable = await isUsernameAvailable(value);
+        console.log('✅ Username availability result:', isAvailable);
+        
+        setAvailable(isAvailable);
+        if (!isAvailable) {
         setError('Username already taken');
-      }
+        }
     } catch (err) {
-      setError('Failed to check username availability');
+        console.error('❌ Error checking username:', err);
+        setError('Failed to check username availability');
     } finally {
-      setChecking(false);
+        setChecking(false);
     }
-  };
+    };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

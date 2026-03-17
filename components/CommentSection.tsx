@@ -43,9 +43,9 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
     
     if (!address || !newComment.trim()) return;
     
-    const userName = address.slice(0, 6) + '...' + address.slice(-4);
+    const userName = address.toString().slice(0, 6) + '...' + address.toString().slice(-4);
     
-    addComment(videoId, address, userName, newComment.trim());
+    addComment(videoId, address.toString(), userName, newComment.trim());
     setNewComment('');
     loadComments();
   };
@@ -53,11 +53,11 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
   const handleReply = (parentCommentId: string) => {
     if (!address || !replyText.trim()) return;
     
-    const userName = address.slice(0, 6) + '...' + address.slice(-4);
+    const userName = address.toString().slice(0, 6) + '...' + address.toString().slice(-4);
     
     addComment(
       videoId, 
-      address, 
+      address.toString(), 
       userName, 
       replyText.trim(),
       parentCommentId
@@ -72,7 +72,7 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
     if (!address) return;
     
     if (confirm('Delete this comment?')) {
-      deleteComment(commentId, address);
+      deleteComment(commentId, address.toString());
       loadComments();
     }
   };
@@ -136,7 +136,7 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
             replyText={replyText}
             setReplyText={setReplyText}
             handleReply={handleReply}
-            currentUserId={address}
+            currentUserId={address?.toString()}
           />
         ))}
       </div>

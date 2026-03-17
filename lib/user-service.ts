@@ -11,10 +11,15 @@ export async function isUsernameAvailable(username: string): Promise<boolean> {
   const { data, error } = await supabase
     .from('users')
     .select('username')
-    .eq('username', username.toLowerCase())
-    .single();
+    .eq('username', username.toLowerCase());
   
-  return !data && !error;
+  // Username is available if no rows found (data is empty array)
+  if (error) {
+    console.error('Error checking username:', error);
+    return false; // Assume taken on error
+  }
+  
+  return data.length === 0; // Available if no matching usernames found
 }
 
 /**
@@ -53,28 +58,42 @@ export async function createUser(
   username: string,
   displayName?: string
 ): Promise<User | null> {
-  // Check if user already exists
-  const existing = await getUserByWallet(walletAddress);
-  if (existing) return existing;
-  
-  // Check if username is taken
-  const available = await isUsernameAvailable(username);
-  if (!available) {
-    throw new Error('Username already taken');
+  try {
+    // Check if user already exists
+    const existing = await getUserByWallet(walletAddress);
+    if (existing) {
+      console.log('User already exists:', existing);
+      return existing;
+    }
+    
+    // Check if username is taken
+    const available = await isUsernameAvailable(username);
+    if (!available) {
+      throw new Error('Username already taken');
+    }
+    
+    // Create new user
+    const { data, error } = await supabase
+      .from('users')
+      .insert({
+        wallet_address: walletAddress.toLowerCase(),
+        username: username.toLowerCase(),
+        display_name: displayName || username,
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error creating user:', error);
+      throw error;
+    }
+    
+    console.log('✅ User created successfully:', data);
+    return data;
+  } catch (error) {
+    console.error('Failed to create user:', error);
+    throw error;
   }
-  
-  const { data, error } = await supabase
-    .from('users')
-    .insert({
-      wallet_address: walletAddress.toLowerCase(),
-      username: username.toLowerCase(),
-      display_name: displayName || username,
-    })
-    .select()
-    .single();
-  
-  if (error) throw error;
-  return data;
 }
 
 /**
