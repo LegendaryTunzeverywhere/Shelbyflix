@@ -21,8 +21,10 @@ export function useWallet(): UseWalletReturn {
     signAndSubmitTransaction,
   } = useAptosWallet();
 
+  const address = account?.address?.toString() || null;
+
   return {
-    address: account?.address || null,
+    address,
     connected,
     disconnect,
     wallet,

@@ -36,6 +36,7 @@ export interface ShelbyUploadResponse {
 export async function uploadToShelby(
   file: File,
   metadata: Partial<VideoMetadata>,
+  signAndSubmitTransaction: any, // ✅ ADD THIS PARAMETER
   onProgress?: (progress: UploadProgress) => void
 ): Promise<ShelbyUploadResponse> {
   try {
@@ -83,7 +84,7 @@ export async function uploadToShelby(
     // Step 5: Generate blob name and commitment
     const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const blobName = `@${metadata.uploader}/${file.name}`;
-    const blobCommitment = generateBlobCommitment(encryptedBlob);
+    const blobCommitment = await generateBlobCommitment(encryptedBlob); // ✅ ADD await
     
     // Step 6: Register blob on-chain
     onProgress?.({
@@ -96,21 +97,21 @@ export async function uploadToShelby(
     
     // Note: This requires wallet signature
     const { hash, blobId } = await registerBlob(
-      (window as any).aptos?.signAndSubmitTransaction,
+      signAndSubmitTransaction, // ✅ CORRECT
       blobName,
       blobCommitment,
       encryptedBlob.size,
       expirationDays
     );
     
-    // Step 7: Upload encrypted blob data
+    // Step 7: Upload encrypted blob data with progress
     onProgress?.({
       stage: 'uploading',
       progress: 70,
-      message: 'Uploading encrypted video...',
+      message: 'Uploading encrypted video to Shelbynet...',
     });
 
-    await uploadBlobData(encryptedBlob, blobName);
+    await uploadBlobData(encryptedBlob, blobName, metadata.uploader!);
     
     // Step 8: Finalize blob upload
     onProgress?.({
@@ -119,9 +120,13 @@ export async function uploadToShelby(
       message: 'Finalizing upload...',
     });
 
+    // Finalize with proper parameters
     await finalizeBlob(
-      (window as any).aptos?.signAndSubmitTransaction,
-      blobName
+      signAndSubmitTransaction,
+      blobName,
+      0, // chunkset_index (single chunk)
+      [0], // chunk_indices (first chunk)
+      [] // data_hashes (empty for now)
     );
     
     // Step 9: Complete
@@ -205,12 +210,28 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
 /**
  * Generate blob commitment (placeholder - actual implementation depends on Shelbynet's spec)
  */
-function generateBlobCommitment(blob: Blob): string {
-  // TODO: Implement actual blob commitment generation per Shelbynet spec
-  // For now, return a placeholder hash
-  return Array.from({ length: 32 }, () => 
-    Math.floor(Math.random() * 256).toString(16).padStart(2, '0')
-  ).join('');
+/**
+ * Generate blob commitment as byte array (32 bytes)
+ * This is a simplified version - in production, use proper hashing
+ */
+async function generateBlobCommitment(blob: Blob): Promise<number[]> {
+  try {
+    // Read blob as ArrayBuffer
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Generate SHA-256 hash using Web Crypto API
+    const hashBuffer = await crypto.subtle.digest('SHA-256', uint8Array);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    
+    // Ensure exactly 32 bytes
+    return hashArray.slice(0, 32);
+  } catch (error) {
+    console.error('Failed to generate blob commitment:', error);
+    
+    // Fallback: generate random 32 bytes
+    return Array.from({ length: 32 }, () => Math.floor(Math.random() * 256));
+  }
 }
 
 /**

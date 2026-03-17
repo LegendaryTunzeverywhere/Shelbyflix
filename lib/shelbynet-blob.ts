@@ -11,7 +11,7 @@ const BLOB_CONTRACT = '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8
 export async function registerBlob(
   signAndSubmitTransaction: any,
   blobName: string,
-  blobCommitment: string,
+  blobCommitment: number[], // ✅ CHANGED FROM string TO number[]
   blobSize: number,
   expirationDays: number
 ): Promise<{ hash: string; blobId: string }> {
@@ -54,17 +54,22 @@ export async function registerBlob(
  */
 export async function finalizeBlob(
   signAndSubmitTransaction: any,
-  blobName: string
+  blobName: string,
+  chunksetIndex: number = 0,
+  chunkIndices: number[] = [0],
+  dataHashes: number[][] = []
 ): Promise<string> {
   try {
-    const payload: InputGenerateTransactionPayloadData = {
-      function: `${BLOB_CONTRACT}::blob_metadata::add_blob_acknowledgements` as `${string}::${string}::${string}`,
-      typeArguments: [],
-      functionArguments: [
-        [blobName], // blob_names: vector<String>
-      ],
-    };
-
+const payload: InputGenerateTransactionPayloadData = {
+  function: `${BLOB_CONTRACT}::blob_metadata::add_blob_acknowledgements` as `${string}::${string}::${string}`,
+  typeArguments: [],
+  functionArguments: [
+    blobName, // blob_name: String
+    chunksetIndex.toString(),
+    chunkIndices[0].toString(), 
+    dataHashes, 
+  ],
+};
     const response = await signAndSubmitTransaction({
       data: payload,
     });
@@ -77,22 +82,81 @@ export async function finalizeBlob(
 }
 
 /**
- * Upload encrypted blob to Shelbynet storage
- * This is a placeholder - actual implementation depends on Shelbynet's upload API
+ * Upload encrypted blob to Shelbynet storage using chunked upload
  */
 export async function uploadBlobData(
   encryptedBlob: Blob,
-  blobName: string
-): Promise<void> {
-  // TODO: Implement actual Shelbynet blob upload
-  // This would use Shelbynet's storage API endpoint
-  
-  console.log(`Uploading ${blobName} (${encryptedBlob.size} bytes)...`);
-  
-  // Simulated upload for now
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  
-  console.log('Upload complete');
+  blobName: string,
+  uploaderAddress: string,
+  onProgress?: (progress: number) => void
+): Promise<{ chunkHashes: number[][] }> {
+  try {
+    console.log(`Uploading ${blobName} (${encryptedBlob.size} bytes)...`);
+    
+    // Shelbynet configuration
+    const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+    const BASE_URL = 'https://api.shelbynet.shelby.xyz/shelby/v1/blobs';
+    
+    // Convert blob to ArrayBuffer
+    const arrayBuffer = await encryptedBlob.arrayBuffer();
+    const totalSize = arrayBuffer.byteLength;
+    const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+    
+    console.log(`📦 Uploading ${totalChunks} chunks of ${CHUNK_SIZE} bytes each`);
+    
+    const chunkHashes: number[][] = [];
+    
+    // Upload each chunk
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalSize);
+      const chunkData = arrayBuffer.slice(start, end);
+      
+      console.log(`📤 Uploading chunk ${i + 1}/${totalChunks} (${start}-${end})`);
+      
+      // Upload chunk via PUT
+      const uploadUrl = `${BASE_URL}/${blobName}`;
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Content-Range': `bytes ${start}-${end - 1}/${totalSize}`,
+          'Content-Length': chunkData.byteLength.toString(),
+        },
+        body: chunkData,
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Chunk ${i} upload failed: ${response.status} - ${errorText}`);
+      }
+      
+      // Generate hash for this chunk
+      const chunkHash = await generateChunkHash(chunkData); // Pass ArrayBuffer directly
+      chunkHashes.push(chunkHash);
+      
+      // Report progress
+      const progress = Math.round(((i + 1) / totalChunks) * 100);
+      onProgress?.(progress);
+      
+      console.log(`✅ Chunk ${i + 1}/${totalChunks} uploaded (hash: ${chunkHash.slice(0, 8).join('')}...)`);
+    }
+    
+    console.log('✅ All chunks uploaded successfully');
+    
+    return { chunkHashes };
+  } catch (error) {
+    console.error('Failed to upload blob data:', error);
+    throw error;
+  }
+}
+
+/**
+ * Generate SHA-256 hash for a chunk
+ */
+async function generateChunkHash(chunkData: ArrayBuffer): Promise<number[]> { // Changed to ArrayBuffer
+  const hashBuffer = await crypto.subtle.digest('SHA-256', chunkData);
+  return Array.from(new Uint8Array(hashBuffer));
 }
 
 /**
@@ -104,15 +168,69 @@ export function getBlobStreamUrl(blobId: string): string {
 }
 
 /**
- * Download blob from Shelbynet
+ * Download blob from Shelbynet with range support
  */
-export async function downloadBlob(blobId: string): Promise<Blob> {
-  const url = getBlobStreamUrl(blobId);
-  
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download blob: ${response.statusText}`);
+export async function downloadBlob(
+  blobName: string,
+  uploaderAddress: string
+): Promise<Blob> {
+  try {
+    const BASE_URL = 'https://api.shelbynet.shelby.xyz/shelby/v1/blobs';
+    const url = `${BASE_URL}/${blobName}`;
+    
+    console.log(`📥 Downloading blob: ${blobName}`);
+    
+    // First, get the total size
+    const headResponse = await fetch(url, {
+      method: 'HEAD',
+    });
+    
+    if (!headResponse.ok) {
+      throw new Error(`Failed to get blob info: ${headResponse.statusText}`);
+    }
+    
+    const totalSize = parseInt(headResponse.headers.get('Content-Length') || '0');
+    console.log(`📦 Total size: ${totalSize} bytes`);
+    
+    // Download in chunks (1MB at a time)
+    const CHUNK_SIZE = 1024 * 1024;
+    const chunks: Uint8Array[] = [];
+    
+    for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
+      const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
+      
+      console.log(`📥 Downloading bytes ${start}-${end}`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Range': `bytes=${start}-${end}`,
+        },
+      });
+      
+      if (!response.ok && response.status !== 206) {
+        throw new Error(`Download failed: ${response.statusText}`);
+      }
+      
+      const chunkData = await response.arrayBuffer();
+      chunks.push(new Uint8Array(chunkData));
+    }
+    
+    // Combine all chunks
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    
+    console.log('✅ Download complete');
+    
+    return new Blob([combined]);
+  } catch (error) {
+    console.error('Failed to download blob:', error);
+    throw error;
   }
-  
-  return await response.blob();
 }

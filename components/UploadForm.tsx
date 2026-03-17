@@ -7,6 +7,7 @@ import { VideoCategory, UploadProgress, VideoMetadata } from '@/types';
 import { uploadToShelby, validateVideoFile } from '@/lib/shelby';
 import { useNotification } from '@/hooks/useNotification';
 import { useWallet } from '@/hooks/useWallet';
+import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import CategorySelector from './CategorySelector';
 import TagInput from './TagInput';
 import ExpirationPicker from './ExpirationPicker';
@@ -16,7 +17,8 @@ import { CloudArrowUpIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 export default function UploadForm() {
   const router = useRouter();
   const { success, error } = useNotification();
-  const { address } = useWallet();
+    const { address, connected } = useWallet();
+    const { signAndSubmitTransaction } = useAptosWallet(); // ✅ ADD THIS
 
   // Form state
   const [file, setFile] = useState<File | null>(null);
@@ -84,6 +86,14 @@ export default function UploadForm() {
 
     try {
       // Upload with progress tracking
+      // Fix: account.address is the correct way to access wallet address
+      if (!address) {
+        error('Please connect your wallet');
+        return;
+      }
+
+      const walletAddress = address;
+
       const result = await uploadToShelby(
         file,
         {
@@ -92,11 +102,12 @@ export default function UploadForm() {
           category,
           tags,
           availabilityPeriod: availabilityDays,
-          uploader: address,
-          channelId: address,
-          channelName: address.slice(0, 6) + '...' + address.slice(-4),
+          uploader: walletAddress,
+          channelId: walletAddress,
+          channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
           price: parseInt(price),
         },
+        signAndSubmitTransaction, // ✅ ADD THIS PARAMETER
         setUploadProgress
       );
 
@@ -107,8 +118,8 @@ export default function UploadForm() {
         videoId: result.videoId,
         blobId: result.blobId,
         blobName: file.name,
-        channelId: address,
-        channelName: address.slice(0, 6) + '...' + address.slice(-4),
+        channelId: walletAddress,
+        channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
         title,
         description,
         category,
@@ -125,7 +136,7 @@ export default function UploadForm() {
         dislikes: 0,
         commentCount: 0,
         isShort: result.duration < 60,
-        uploader: address,
+        uploader: walletAddress,
         timestamp: Date.now(),
         price: parseInt(price),
       };

@@ -5,14 +5,14 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import WalletConnect from './WalletConnect';
 import { FilmIcon } from '@heroicons/react/24/outline';
+import useShelbyAccess from '@/hooks/useShelbyAccess';
 
 const Header: React.FC = () => {
   const pathname = usePathname();
+  const { hasAccess } = useShelbyAccess();
 
   const navLinks = [
     { href: '/', label: 'Home' },
-    { href: '/gallery', label: 'Gallery' },
-    { href: '/upload', label: 'Upload' },
   ];
 
   return (
@@ -50,6 +50,29 @@ const Header: React.FC = () => {
                 {link.label}
               </Link>
             ))}
+            {hasAccess && (
+              <>
+                <Link
+                  href="/gallery"
+                  className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-zinc-600"
+                >
+                  GALLERY
+                </Link>
+                <Link
+                  href="/shorts"
+                  className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-zinc-600"
+                >
+                  SHORTS
+                </Link>
+                <Link
+                  href="/upload"
+                  className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-zinc-600"
+                >
+                  UPLOAD
+                </Link>
+              </>
+            )}
+
           </nav>
 
           {/* Wallet Connect */}

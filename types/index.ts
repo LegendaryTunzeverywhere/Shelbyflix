@@ -106,3 +106,10 @@ export interface ShelbyBlobMetadata {
   expirationMicros: number;
   paymentAmount: number;
 }
+
+export interface Notification {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  message: string;
+  duration?: number; // Optional duration in milliseconds after which the toast auto-closes
+}

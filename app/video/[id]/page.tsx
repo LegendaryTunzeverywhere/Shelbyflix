@@ -42,7 +42,14 @@ export default function VideoPage() {
   async function loadVideo() {
     try {
       setLoading(true);
-      const metadata = await getVideoMetadata(videoId);
+      const { getVideoById } = await import('@/lib/metadata-store');
+      const metadata = getVideoById(videoId);
+      
+      if (!metadata) {
+        setVideo(null);
+        return;
+      }
+      
       setVideo(metadata);
     } catch (error) {
       console.error('Error loading video:', error);
@@ -63,18 +70,17 @@ export default function VideoPage() {
   }
 
   async function handleDelete() {
-    if (!video || !address || !signAndSubmitTransaction) return;
+    if (!video || !address) return;
     if (!confirm('Are you sure you want to delete this video? This action cannot be undone.')) return;
 
     try {
       setDeleting(true);
       
-      // 1. Delete from blockchain
-      await deleteVideoFromChain(address, signAndSubmitTransaction, videoId);
+      // Delete from metadata store
+      const { deleteVideo } = await import('@/lib/metadata-store');
+      deleteVideo(videoId);
       
-      // 2. Delete from Shelby storage (best effort)
-      const blobId = video.shelbyUrl.replace('shelby://', '');
-      await deleteFromShelby(videoId, address);
+      // TODO: Delete from Shelby storage (implement later)
 
       router.push('/gallery');
     } catch (error) {

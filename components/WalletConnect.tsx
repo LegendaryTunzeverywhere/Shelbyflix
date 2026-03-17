@@ -14,7 +14,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 const WalletConnect: React.FC = () => {
-  const { account, connected, disconnect, connect, wallets = [] } = useWallet();
+  const { account, connected, disconnect, connect, wallets } = useWallet();
   const { hasAccess, balance, loading } = useShelbyAccess();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showWalletSelector, setShowWalletSelector] = useState(false);

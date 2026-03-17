@@ -3,8 +3,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { VideoMetadata } from '@/types';
-import { getTrendingVideos, getRecentVideos } from '@/lib/metadata-store';
+import { getTrendingVideos, getRecentVideos, getAllVideos } from '@/lib/metadata-store';
 import VideoCard from '@/components/VideoCard';
 import Header from '@/components/Header';
 import { useWallet } from '@/hooks/useWallet';
@@ -248,10 +249,13 @@ export default function Home() {
 
 // Video Discovery Component
 function VideoDiscoverySection() {
+  const router = useRouter();
+  const [allVideos, setAllVideos] = useState<VideoMetadata[]>([]);
   const [trendingVideos, setTrendingVideos] = useState<VideoMetadata[]>([]);
   const [recentVideos, setRecentVideos] = useState<VideoMetadata[]>([]);
 
   useEffect(() => {
+    setAllVideos(getAllVideos());
     setTrendingVideos(getTrendingVideos(3));
     setRecentVideos(getRecentVideos(3));
   }, []);
@@ -262,6 +266,40 @@ function VideoDiscoverySection() {
 
   return (
     <div className="space-y-16">
+// Category Quick Links
+      {allVideos.length > 0 && (
+        <div className="mb-16">
+          <h2 className="text-3xl font-black mb-6 tracking-tighter text-white">
+            BROWSE BY <span className="text-brand-red">CATEGORY</span>
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {['Entertainment', 'Education', 'Gaming', 'Music', 'Sports'].map((cat) => {
+              const count = allVideos.filter(v => v.category === cat).length;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => router.push(`/category/${cat}`)}
+                  className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-[24px] hover:border-brand-red transition-all group"
+                >
+                  <p className="text-3xl mb-3">
+                    {cat === 'Entertainment' ? '🎬' :
+                     cat === 'Education' ? '📚' :
+                     cat === 'Gaming' ? '🎮' :
+                     cat === 'Music' ? '🎵' : '⚽'}
+                  </p>
+                  <p className="font-black text-white text-sm mb-1 group-hover:text-brand-red transition-colors">
+                    {cat.toUpperCase()}
+                  </p>
+                  <p className="text-zinc-500 text-xs font-bold">
+                    {count} {count === 1 ? 'video' : 'videos'}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Trending */}
       {trendingVideos.length > 0 && (
         <div>
