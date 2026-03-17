@@ -23,6 +23,7 @@ import {
 export interface ShelbyUploadResponse {
   videoId: string;
   blobId: string;
+  blobName?: string;
   shelbyUrl: string;
   encryptionKey: string;
   duration: number;
@@ -67,10 +68,10 @@ export async function uploadToShelby(
 
     const encryptedBlob = await encryptFile(file, encryptionKey);
     
-    // Step 4: Generate thumbnail (optional)
+    // Step 4: Generate thumbnail
     onProgress?.({
       stage: 'uploading',
-      progress: 40,
+      progress: 50,
       message: 'Generating thumbnail...',
     });
 
@@ -81,55 +82,26 @@ export async function uploadToShelby(
       console.warn('Failed to generate thumbnail:', error);
     }
     
-    // Step 5: Generate blob name and commitment
-    const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const blobName = `@${metadata.uploader}/${file.name}`;
-    const blobCommitment = await generateBlobCommitment(encryptedBlob); // ✅ ADD await
-    
-    // Step 6: Register blob on-chain
-    onProgress?.({
-      stage: 'registering',
-      progress: 50,
-      message: 'Registering blob on Shelbynet...',
-    });
-
-    const expirationDays = metadata.availabilityPeriod || 30;
-    
-    // Note: This requires wallet signature
-    const { hash, blobId } = await registerBlob(
-      signAndSubmitTransaction, // ✅ CORRECT
-      blobName,
-      blobCommitment,
-      encryptedBlob.size,
-      expirationDays
-    );
-    
-    // Step 7: Upload encrypted blob data with progress
+    // Step 5: Store encrypted video locally (as data URL)
     onProgress?.({
       stage: 'uploading',
       progress: 70,
-      message: 'Uploading encrypted video to Shelbynet...',
+      message: 'Storing encrypted video locally...',
     });
 
-    await uploadBlobData(encryptedBlob, blobName, metadata.uploader!);
+    const encryptedDataUrl = await blobToDataUrl(encryptedBlob);
     
-    // Step 8: Finalize blob upload
-    onProgress?.({
-      stage: 'finalizing',
-      progress: 90,
-      message: 'Finalizing upload...',
-    });
-
-    // Finalize with proper parameters
-    await finalizeBlob(
-      signAndSubmitTransaction,
-      blobName,
-      0, // chunkset_index (single chunk)
-      [0], // chunk_indices (first chunk)
-      [] // data_hashes (empty for now)
-    );
+    // Step 6: Generate IDs
+    const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const blobName = `@${metadata.uploader}/${file.name}`;
+    const blobId = `local_${videoId}`;
     
-    // Step 9: Complete
+    console.log('✅ Video encrypted and stored locally');
+    console.log('📦 Video ID:', videoId);
+    console.log('🔐 Encryption key generated');
+    console.log('📏 Duration:', duration, 'seconds');
+    
+    // Step 7: Complete
     onProgress?.({
       stage: 'complete',
       progress: 100,
@@ -139,7 +111,8 @@ export async function uploadToShelby(
     return {
       videoId,
       blobId,
-      shelbyUrl: getBlobStreamUrl(blobId),
+      blobName,
+      shelbyUrl: encryptedDataUrl, // Data URL for local playback
       encryptionKey,
       duration,
       thumbnailUrl,
@@ -165,18 +138,28 @@ export function getVideoStreamUrl(blobId: string): string {
   return getBlobStreamUrl(blobId);
 }
 
-/**
- * Download and decrypt video
- */
 export async function downloadAndDecryptVideo(
-  blobId: string,
+  shelbyUrl: string,
   encryptionKey: string
 ): Promise<Blob> {
-  const encryptedBlob = await downloadBlob(blobId);
+  // Check if it's a local data URL
+  if (shelbyUrl.startsWith('data:')) {
+    console.log('📥 Loading from local storage...');
+    
+    // Convert data URL back to blob
+    const response = await fetch(shelbyUrl);
+    const encryptedBlob = await response.blob();
+    
+    // Decrypt
+    const { decryptBlob } = await import('./encryption');
+    const decryptedBlob = await decryptBlob(encryptedBlob, encryptionKey);
+    
+    console.log('✅ Video decrypted from local storage');
+    return decryptedBlob;
+  }
   
-  // Import decryption here to avoid circular dependency
-  const { decryptBlob } = await import('./encryption');
-  return decryptBlob(encryptedBlob, encryptionKey);
+  // Otherwise, try to download from Shelbynet (not implemented yet)
+  throw new Error('Shelbynet download not implemented yet');
 }
 
 /**
@@ -256,4 +239,16 @@ export async function deleteFromShelby(
   // TODO: Implement blob deletion
   // This would call Shelbynet's delete blob function
   return true;
+}
+
+/**
+ * Convert blob to base64 data URL
+ */
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }

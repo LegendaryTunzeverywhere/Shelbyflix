@@ -6,7 +6,7 @@ import { formatDistanceToNow } from 'date-fns';
 import Header from '@/components/Header';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useWallet } from '@/hooks/useWallet';
- 
+import { getVideoById } from '@/lib/video-service';
 import { getVideoMetadata, deleteVideoFromChain } from '@/lib/aptos';
 import { deleteFromShelby } from '@/lib/shelby';
 import { formatAddress } from '@/lib/aptos';
@@ -42,8 +42,8 @@ export default function VideoPage() {
   async function loadVideo() {
     try {
       setLoading(true);
-      const { getVideoById } = await import('@/lib/metadata-store');
-      const metadata = getVideoById(videoId);
+      const { getVideoById } = await import('@/lib/video-service');
+      const metadata = await getVideoById(videoId);
       
       if (!metadata) {
         setVideo(null);
@@ -78,7 +78,7 @@ export default function VideoPage() {
       
       // Delete from metadata store
       const { deleteVideo } = await import('@/lib/metadata-store');
-      deleteVideo(videoId);
+      await deleteVideo(videoId);
       
       // TODO: Delete from Shelby storage (implement later)
 
@@ -171,7 +171,7 @@ export default function VideoPage() {
           )}
           <VideoPlayer
             video={video}
-            walletAddress={address || ''}
+            walletAddress={address?.toString() || ''}
             hasAccess={hasAccess}
           />
         </div>
@@ -245,7 +245,8 @@ export default function VideoPage() {
                   )}
                 </button>
 
-                {address?.toLowerCase() === video.uploader.toLowerCase() && (
+                {/* Delete Button - Only for uploader */}
+                {address?.toString().toLowerCase() === video.uploader.toLowerCase() && (
                   <button
                     onClick={handleDelete}
                     disabled={deleting}

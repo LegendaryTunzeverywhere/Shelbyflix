@@ -5,12 +5,12 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { VideoMetadata } from '@/types';
-import { getTrendingVideos, getRecentVideos, getAllVideos } from '@/lib/metadata-store';
 import VideoCard from '@/components/VideoCard';
 import Header from '@/components/Header';
 import { useWallet } from '@/hooks/useWallet';
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { registerShelbyUSD } from '@/lib/aptos';
+import { getTrendingVideos, getRecentVideos } from '@/lib/video-service';
 import {
   LockClosedIcon,
   CloudIcon,
@@ -250,18 +250,38 @@ export default function Home() {
 // Video Discovery Component
 function VideoDiscoverySection() {
   const router = useRouter();
+  
   const [allVideos, setAllVideos] = useState<VideoMetadata[]>([]);
   const [trendingVideos, setTrendingVideos] = useState<VideoMetadata[]>([]);
   const [recentVideos, setRecentVideos] = useState<VideoMetadata[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setAllVideos(getAllVideos());
-    setTrendingVideos(getTrendingVideos(3));
-    setRecentVideos(getRecentVideos(3));
+    loadVideos();
   }, []);
 
-  if (trendingVideos.length === 0 && recentVideos.length === 0) {
-    return null; // Don't show if no videos
+  const loadVideos = async () => {
+    try {
+      const trending = await getTrendingVideos(3);
+      const recent = await getRecentVideos(3);
+      
+      setTrendingVideos(trending);
+      setRecentVideos(recent);
+      setAllVideos([...trending, ...recent]);
+    } catch (error) {
+      console.error('Failed to load videos:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+    if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="w-16 h-16 border-4 border-brand-red border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-zinc-500 font-medium">Loading videos...</p>
+      </div>
+    );
   }
 
   return (

@@ -13,11 +13,12 @@ import TagInput from './TagInput';
 import ExpirationPicker from './ExpirationPicker';
 import UploadProgressDisplay from './UploadProgress';
 import { CloudArrowUpIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
+import { saveVideo } from '@/lib/video-service';
 
 export default function UploadForm() {
   const router = useRouter();
   const { success, error } = useNotification();
-    const { address, connected } = useWallet();
+    const { address, connected, user } = useWallet();
     const { signAndSubmitTransaction } = useAptosWallet(); // ✅ ADD THIS
 
   // Form state
@@ -92,7 +93,7 @@ export default function UploadForm() {
         return;
       }
 
-      const walletAddress = address;
+      const walletAddress = address.toString();
 
       const result = await uploadToShelby(
         file,
@@ -111,15 +112,14 @@ export default function UploadForm() {
         setUploadProgress
       );
 
-      // Store metadata
-      const { saveVideo } = await import('@/lib/metadata-store');
-
+  
+    // Store metadata in Supabase
       const videoMetadata: VideoMetadata = {
         videoId: result.videoId,
         blobId: result.blobId,
-        blobName: file.name,
+        blobName: `@${walletAddress}/${file.name}`,
         channelId: walletAddress,
-        channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
+        channelName: user?.username || walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4), // Use username!
         title,
         description,
         category,
@@ -141,8 +141,8 @@ export default function UploadForm() {
         price: parseInt(price),
       };
 
-      saveVideo(videoMetadata);
-      console.log('Metadata saved:', videoMetadata);
+      await saveVideo(videoMetadata);
+      console.log('✅ Video saved to database:', videoMetadata);
 
       success('Video uploaded successfully!');
       

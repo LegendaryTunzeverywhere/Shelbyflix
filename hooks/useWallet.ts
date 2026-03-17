@@ -1,35 +1,57 @@
+'use client';
+
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
+import { useState, useEffect } from 'react';
+import { getUserByWallet, type User } from '@/lib/user-service';
 
-interface UseWalletReturn {
-  address: string | null;
-  connected: boolean;
-  disconnect: () => void;
-  wallet: any;
-  signAndSubmitTransaction: any;
-}
+export function useWallet() {
+  const { account, connected, disconnect, signAndSubmitTransaction } = useAptosWallet();
+  const [user, setUser] = useState<User | null>(null);
+  const [needsUsername, setNeedsUsername] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-/**
- * Custom hook wrapping Aptos wallet adapter
- * Provides easy access to wallet connection state
- */
-export function useWallet(): UseWalletReturn {
-  const {
-    account,
-    connected,
-    disconnect,
-    wallet,
-    signAndSubmitTransaction,
-  } = useAptosWallet();
+  useEffect(() => {
+    checkUser();
+  }, [account?.address, connected]);
 
-  const address = account?.address?.toString() || null;
+  const checkUser = async () => {
+    if (!account?.address || !connected) {
+      setUser(null);
+      setNeedsUsername(false);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const existingUser = await getUserByWallet(account.address.toString());
+      
+      if (existingUser) {
+        setUser(existingUser);
+        setNeedsUsername(false);
+      } else {
+        setUser(null);
+        setNeedsUsername(true);
+      }
+    } catch (error) {
+      console.error('Failed to check user:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshUser = async () => {
+    await checkUser();
+  };
 
   return {
-    address,
+    address: account?.address,
     connected,
     disconnect,
-    wallet,
     signAndSubmitTransaction,
+    user,
+    needsUsername,
+    loading,
+    refreshUser,
   };
 }
-
-export default useWallet;

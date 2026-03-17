@@ -17,6 +17,7 @@
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
     "@shelby-protocol/sdk": "*",
+    "@supabase/supabase-js": "^2.99.2",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/postcss": "^4.2.1",
     "@telegram-apps/bridge": "npm:@tma.js/bridge@^2.2.3",

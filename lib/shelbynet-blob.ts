@@ -22,13 +22,13 @@ export async function registerBlob(
       function: `${BLOB_CONTRACT}::blob_metadata::register_multiple_blobs` as `${string}::${string}::${string}`,
       typeArguments: [],
       functionArguments: [
-        [blobName], // names: vector<String>
-        expirationMicros.toString(), // expiration_micros: u64
-        [blobCommitment], // commitments: vector<vector<u8>>
-        ['1'], // chunk_counts: vector<u64>
-        [blobSize.toString()], // sizes: vector<u64>
-        '0', // payment_tier_id: u64
-        '0', // sponsor_address: u64
+        [blobName],
+        expirationMicros.toString(),
+        [blobCommitment],
+        ['1'], // ✅ chunk_counts: 1 chunk (no splitting)
+        [blobSize.toString()],
+        '0',
+        '0',
       ],
     };
 
@@ -55,24 +55,33 @@ export async function registerBlob(
 export async function finalizeBlob(
   signAndSubmitTransaction: any,
   blobName: string,
-  chunksetIndex: number = 0,
-  chunkIndices: number[] = [0],
-  dataHashes: number[][] = []
+  chunksetIndex: number,
+  chunkIndex: number,
+  dataHashes: number[][]
 ): Promise<string> {
   try {
-const payload: InputGenerateTransactionPayloadData = {
-  function: `${BLOB_CONTRACT}::blob_metadata::add_blob_acknowledgements` as `${string}::${string}::${string}`,
-  typeArguments: [],
-  functionArguments: [
-    blobName, // blob_name: String
-    chunksetIndex.toString(),
-    chunkIndices[0].toString(), 
-    dataHashes, 
-  ],
-};
+    console.log(`📝 Finalizing blob: ${blobName}`);
+    console.log(`   Chunkset: ${chunksetIndex}, Chunk: ${chunkIndex}`);
+    console.log(`   Hashes: ${dataHashes.length} chunks`);
+    
+    const payload: InputGenerateTransactionPayloadData = {
+      function: `${BLOB_CONTRACT}::blob_metadata::add_blob_acknowledgements` as `${string}::${string}::${string}`,
+      typeArguments: [],
+      functionArguments: [
+        blobName,                    // blob_name: String
+        chunksetIndex.toString(),    // chunkset_index: u32
+        chunkIndex.toString(),       // chunk_index: u64
+        dataHashes,                  // data_hashes: vector<vector<u8>>
+      ],
+    };
+
+    console.log('📤 Submitting acknowledgement transaction...');
+
     const response = await signAndSubmitTransaction({
       data: payload,
     });
+
+    console.log(`✅ Acknowledgement submitted: ${response.hash}`);
 
     return response.hash;
   } catch (error) {
@@ -82,7 +91,7 @@ const payload: InputGenerateTransactionPayloadData = {
 }
 
 /**
- * Upload encrypted blob to Shelbynet storage using chunked upload
+ * Upload encrypted blob to Shelbynet storage (single request)
  */
 export async function uploadBlobData(
   encryptedBlob: Blob,
@@ -93,68 +102,52 @@ export async function uploadBlobData(
   try {
     console.log(`Uploading ${blobName} (${encryptedBlob.size} bytes)...`);
     
-    // Shelbynet configuration
-    const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
-    const BASE_URL = 'https://api.shelbynet.shelby.xyz/shelby/v1/blobs';
+    // Generate hash for the entire blob
+    const blobArrayBuffer = await encryptedBlob.arrayBuffer();
+    const blobHash = await generateChunkHash(blobArrayBuffer);
     
-    // Convert blob to ArrayBuffer
-    const arrayBuffer = await encryptedBlob.arrayBuffer();
-    const totalSize = arrayBuffer.byteLength;
-    const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+    // Encode blob name for URL
+    const encodedBlobName = encodeURIComponent(blobName);
     
-    console.log(`📦 Uploading ${totalChunks} chunks of ${CHUNK_SIZE} bytes each`);
+    // Ensure address has 0x prefix
+    const formattedAddress = uploaderAddress.startsWith('0x') 
+      ? uploaderAddress 
+      : `0x${uploaderAddress}`;
     
-    const chunkHashes: number[][] = [];
+    console.log(`📤 Uploading entire blob in single request...`);
     
-    // Upload each chunk
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, totalSize);
-      const chunkData = arrayBuffer.slice(start, end);
-      
-      console.log(`📤 Uploading chunk ${i + 1}/${totalChunks} (${start}-${end})`);
-      
-      // Upload chunk via PUT
-      const uploadUrl = `${BASE_URL}/${blobName}`;
-      const response = await fetch(uploadUrl, {
+    const response = await fetch(
+      `https://api.shelbynet.shelby.xyz/shelby/v1/blobs/${encodedBlobName}?account=${formattedAddress}`,
+      {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/octet-stream',
-          'Content-Range': `bytes ${start}-${end - 1}/${totalSize}`,
-          'Content-Length': chunkData.byteLength.toString(),
         },
-        body: chunkData,
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Chunk ${i} upload failed: ${response.status} - ${errorText}`);
+        body: encryptedBlob,
       }
-      
-      // Generate hash for this chunk
-      const chunkHash = await generateChunkHash(chunkData); // Pass ArrayBuffer directly
-      chunkHashes.push(chunkHash);
-      
-      // Report progress
-      const progress = Math.round(((i + 1) / totalChunks) * 100);
-      onProgress?.(progress);
-      
-      console.log(`✅ Chunk ${i + 1}/${totalChunks} uploaded (hash: ${chunkHash.slice(0, 8).join('')}...)`);
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Upload failed:`, response.status, errorText);
+      throw new Error(`Upload failed: ${response.status} - ${errorText}`);
     }
     
-    console.log('✅ All chunks uploaded successfully');
+    console.log(`✅ Blob uploaded successfully`);
+    onProgress?.(100);
     
-    return { chunkHashes };
+    // Return single hash in array format
+    return { chunkHashes: [blobHash] };
+    
   } catch (error) {
     console.error('Failed to upload blob data:', error);
     throw error;
   }
 }
-
 /**
  * Generate SHA-256 hash for a chunk
  */
-async function generateChunkHash(chunkData: ArrayBuffer): Promise<number[]> { // Changed to ArrayBuffer
+async function generateChunkHash(chunkData: ArrayBuffer): Promise<number[]> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', chunkData);
   return Array.from(new Uint8Array(hashBuffer));
 }

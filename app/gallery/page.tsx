@@ -9,8 +9,7 @@ import {
   searchVideos, 
   getVideosByCategory,
   getTrendingVideos,
-  getRecentVideos 
-} from '@/lib/metadata-store';
+} from '@/lib/video-service';
 import type { VideoMetadata, VideoCategory } from '@/types';
 import { 
   MagnifyingGlassIcon, 
@@ -44,48 +43,54 @@ export default function GalleryPage() {
     applyFilters();
   }, [allVideos, searchQuery, selectedCategory, sortBy, showShorts]);
 
-  const loadVideos = () => {
-    const videos = getAllVideos();
-    setAllVideos(videos);
+  const loadVideos = async () => {
+    try {
+      const videos = await getAllVideos();
+      setAllVideos(videos);
+    } catch (error) {
+      console.error('Failed to load videos:', error);
+    }
   };
 
-  const applyFilters = () => {
-    let videos = [...allVideos];
+    const applyFilters = async () => {
+      let videos = [...allVideos];
 
-    // Search filter
-    if (searchQuery.trim()) {
-      videos = searchVideos(searchQuery);
-    }
+      // Search filter
+      if (searchQuery.trim()) {
+        try {
+          videos = await searchVideos(searchQuery);
+        } catch (error) {
+          console.error('Search failed:', error);
+        }
+      }
 
-    // Category filter
-    if (selectedCategory !== 'all') {
-      videos = videos.filter(v => v.category === selectedCategory);
-    }
+      // Category filter
+      if (selectedCategory !== 'all') {
+        videos = videos.filter(v => v.category === selectedCategory);
+      }
 
-    // Shorts filter
-    if (showShorts) {
-      videos = videos.filter(v => v.isShort);
-    }
+      // Shorts filter
+      if (showShorts) {
+        videos = videos.filter(v => v.isShort);
+      }
 
-    // Sort
-    switch (sortBy) {
-      case 'trending':
-        videos = videos.sort((a, b) => b.views - a.views);
-        break;
-      case 'views':
-        videos = videos.sort((a, b) => b.views - a.views);
-        break;
-      case 'recent':
-        videos = videos.sort((a, b) => b.uploadTimestamp - a.uploadTimestamp);
-        break;
-      case 'oldest':
-        videos = videos.sort((a, b) => a.uploadTimestamp - b.uploadTimestamp);
-        break;
-    }
+      // Sort
+      switch (sortBy) {
+        case 'trending':
+        case 'views':
+          videos = videos.sort((a, b) => b.views - a.views);
+          break;
+        case 'recent':
+          videos = videos.sort((a, b) => b.uploadTimestamp - a.uploadTimestamp);
+          break;
+        case 'oldest':
+          videos = videos.sort((a, b) => a.uploadTimestamp - b.uploadTimestamp);
+          break;
+      }
 
-    setFilteredVideos(videos);
-  };
-
+      setFilteredVideos(videos);
+    };
+    
   const categories = [
     { value: 'all', label: 'ALL', icon: SparklesIcon },
     { value: 'Entertainment', label: 'ENTERTAINMENT', icon: VideoCameraIcon },

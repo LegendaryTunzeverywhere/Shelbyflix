@@ -59,10 +59,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
       
       // Download and decrypt video
       const decryptedBlob = await downloadAndDecryptVideo(
-        video.blobId,
-        video.encryptionKey
-      );
-      
+      video.shelbyUrl,
+      video.encryptionKey
+    );
+          
       // Create object URL for player
       const url = URL.createObjectURL(decryptedBlob);
       setStreamUrl(url);

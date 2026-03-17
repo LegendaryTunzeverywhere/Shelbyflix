@@ -8,6 +8,7 @@ import { getVideosByCategory } from '@/lib/metadata-store';
 import type { VideoMetadata, VideoCategory } from '@/types';
 import { ArrowLeftIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 
+
 export default function CategoryPage() {
   const params = useParams();
   const router = useRouter();

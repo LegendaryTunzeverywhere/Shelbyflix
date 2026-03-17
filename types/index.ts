@@ -19,7 +19,7 @@ export interface VideoMetadata {
   
   // Content
   title: string;
-  description: string;
+  description?: string;
   category: VideoCategory;
   tags: string[];
   
