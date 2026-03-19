@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState } from 'react';
@@ -18,8 +17,8 @@ import { saveVideo } from '@/lib/video-service';
 export default function UploadForm() {
   const router = useRouter();
   const { success, error } = useNotification();
-    const { address, connected, user } = useWallet();
-    const { signAndSubmitTransaction } = useAptosWallet(); // ✅ ADD THIS
+  const { address, connected, user } = useWallet();
+  const { signAndSubmitTransaction } = useAptosWallet();
 
   // Form state
   const [file, setFile] = useState<File | null>(null);
@@ -41,7 +40,6 @@ export default function UploadForm() {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    // Validate file
     const validation = validateVideoFile(selectedFile);
     if (!validation.valid) {
       error(validation.error || 'Invalid file');
@@ -50,17 +48,16 @@ export default function UploadForm() {
 
     setFile(selectedFile);
 
-    // Get duration
     try {
       const { getVideoDuration, generateThumbnail } = await import('@/lib/encryption');
       const duration = await getVideoDuration(selectedFile);
       setVideoDuration(duration);
 
-      // Generate thumbnail
+      // generateThumbnail now returns a base64 data URL (not a blob URL)
       const thumbnail = await generateThumbnail(selectedFile, Math.floor(duration / 2));
       setThumbnailPreview(thumbnail);
-    } catch (error) {
-      console.error('Failed to process video:', error);
+    } catch (err) {
+      console.error('Failed to process video:', err);
     }
   };
 
@@ -86,13 +83,6 @@ export default function UploadForm() {
     setIsUploading(true);
 
     try {
-      // Upload with progress tracking
-      // Fix: account.address is the correct way to access wallet address
-      if (!address) {
-        error('Please connect your wallet');
-        return;
-      }
-
       const walletAddress = address.toString();
 
       const result = await uploadToShelby(
@@ -108,19 +98,20 @@ export default function UploadForm() {
           channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
           price: parseInt(price),
         },
-        address, // uploaderAccount
+        address,
         signAndSubmitTransaction,
         setUploadProgress
       );
 
-  
-    // Store metadata in Supabase
+      // BUG FIX: was saving `@${walletAddress}/${file.name}` — must use result.blobName
+      // which is the actual name registered with Shelbynet. Using the wrong name breaks
+      // the cache key in downloadAndDecryptVideo.
       const videoMetadata: VideoMetadata = {
         videoId: result.videoId,
         blobId: result.blobId,
-        blobName: `@${walletAddress}/${file.name}`,
+        blobName: result.blobName, // ✅ use the actual registered blob name
         channelId: walletAddress,
-        channelName: user?.username || walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4), // Use username!
+        channelName: user?.username || walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
         title,
         description,
         category,
@@ -128,7 +119,7 @@ export default function UploadForm() {
         shelbyUrl: result.shelbyUrl,
         encryptionKey: result.encryptionKey,
         duration: result.duration,
-        thumbnailUrl: result.thumbnailUrl,
+        thumbnailUrl: result.thumbnailUrl, // now a base64 data URL — survives page reloads
         uploadTimestamp: Date.now(),
         expirationTimestamp: Date.now() + (availabilityDays * 24 * 60 * 60 * 1000),
         availabilityPeriod: availabilityDays,
@@ -146,7 +137,7 @@ export default function UploadForm() {
       console.log('✅ Video saved to database:', videoMetadata);
 
       success('Video uploaded successfully!');
-      
+
       // Reset form
       setFile(null);
       setTitle('');
@@ -154,8 +145,8 @@ export default function UploadForm() {
       setCategory(VideoCategory.OTHER);
       setTags([]);
       setThumbnailPreview(null);
-      
-      // Redirect to gallery
+      setVideoDuration(0);
+
       setTimeout(() => {
         router.push('/gallery');
       }, 2000);
@@ -177,7 +168,7 @@ export default function UploadForm() {
         <label className="block text-sm font-medium text-gray-200 mb-2">
           Video File *
         </label>
-        
+
         {!file ? (
           <label className="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-700 border-dashed rounded-lg cursor-pointer bg-gray-800 hover:bg-gray-700 transition-colors">
             <div className="flex flex-col items-center justify-center pt-5 pb-6">
@@ -199,7 +190,6 @@ export default function UploadForm() {
           </label>
         ) : (
           <div className="relative border-2 border-blue-600 rounded-lg p-4 bg-gray-800">
-            {/* Thumbnail Preview */}
             {thumbnailPreview ? (
               <img
                 src={thumbnailPreview}
@@ -212,7 +202,6 @@ export default function UploadForm() {
               </div>
             )}
 
-            {/* File Info */}
             <div className="space-y-2">
               <p className="text-white font-medium">{file.name}</p>
               <div className="flex gap-4 text-sm text-gray-400">
@@ -232,7 +221,6 @@ export default function UploadForm() {
               </div>
             </div>
 
-            {/* Change File Button */}
             {!isUploading && (
               <button
                 type="button"

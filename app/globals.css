@@ -2,7 +2,7 @@
 
 @layer base {
   :root {
-    --primary: 355 93% 54%; /* Brand Red #F61B2E */
+    --primary: 355 93% 54%;
     --primary-foreground: 0 0% 100%;
     
     --brand-purple: #7B2BF9;
@@ -26,10 +26,16 @@
     box-sizing: border-box;
   }
 
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     background-color: var(--brand-dark);
     color: white;
     font-feature-settings: "rlig" 1, "calt" 1;
+    overflow-x: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 
@@ -42,25 +48,21 @@
     animation: slideInFromRight 0.3s ease-out;
   }
 
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   @keyframes slideInFromRight {
-    from {
-      opacity: 0;
-      transform: translateX(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
   }
 }

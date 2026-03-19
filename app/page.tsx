@@ -25,7 +25,6 @@ export default function Home() {
   const { connected } = useWallet();
   const { signAndSubmitTransaction } = useAptosWallet();
   
-  // Token access no longer required - fee-based viewing instead
   const hasAccess = true;
   const isLoading = false;
   const isMissingStore = false;
@@ -79,51 +78,51 @@ export default function Home() {
           <div className="absolute -top-[150px] -right-[100px] w-[500px] h-[500px] bg-brand-red rounded-full blur-[100px]" />
         </div>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 relative z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-20 relative z-10">
           {/* Hero Section */}
-          <div className="text-center mb-24">
-            <div className="inline-block mb-8 animate-in">
+          <div className="text-center mb-16 sm:mb-24">
+            <div className="inline-block mb-6 sm:mb-8 animate-in">
               <span className="px-4 py-1.5 bg-zinc-900 border border-zinc-800 text-brand-pink rounded-full 
                 text-[10px] font-black uppercase tracking-[0.2em]">
                 The Future of Streaming is Here
               </span>
             </div>
             
-            <h1 className="text-6xl md:text-8xl font-black mb-8 tracking-tighter leading-[0.9]">
+            <h1 className="text-5xl sm:text-6xl md:text-8xl font-black mb-6 sm:mb-8 tracking-tighter leading-[0.9]">
               SHELBY<span className="text-brand-red">FLIX</span>
             </h1>
 
-            <p className="text-xl text-zinc-400 mb-12 max-w-2xl mx-auto font-medium leading-relaxed">
+            <p className="text-base sm:text-xl text-zinc-400 mb-8 sm:mb-12 max-w-2xl mx-auto font-medium leading-relaxed px-4">
               Experience the next generation of decentralized video. Share, stream, and secure your content with exclusive token-gated access.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center px-4">
               {connected ? (
                 <>
                   <Link
                     href="/upload"
-                    className="px-10 py-5 bg-white text-black hover:bg-zinc-200 
+                    className="w-full sm:w-auto px-10 py-5 bg-white text-black hover:bg-zinc-200 
                       rounded-2xl font-black transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] 
-                      flex items-center gap-2 group"
+                      flex items-center justify-center gap-2 group"
                   >
                     UPLOAD VIDEO
                     <ArrowRightIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </Link>
                   <Link
                     href="/gallery"
-                    className="px-10 py-5 bg-zinc-900 hover:bg-zinc-800 text-white 
-                      border border-zinc-800 rounded-2xl font-black transition-all flex items-center gap-2"
+                    className="w-full sm:w-auto px-10 py-5 bg-zinc-900 hover:bg-zinc-800 text-white 
+                      border border-zinc-800 rounded-2xl font-black transition-all flex items-center justify-center gap-2"
                   >
                     BROWSE GALLERY
                   </Link>
                 </>
               ) : (
-                <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 rounded-3xl p-10 max-w-lg">
-                  <PlayCircleIcon className="w-16 h-16 text-brand-red mx-auto mb-6 opacity-80" />
-                  <p className="text-2xl font-black text-white mb-3">
+                <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 rounded-3xl p-8 sm:p-10 max-w-lg w-full">
+                  <PlayCircleIcon className="w-14 sm:w-16 h-14 sm:h-16 text-brand-red mx-auto mb-5 sm:mb-6 opacity-80" />
+                  <p className="text-xl sm:text-2xl font-black text-white mb-3">
                     READY TO WATCH?
                   </p>
-                  <p className="text-zinc-500 font-medium mb-8">
+                  <p className="text-zinc-500 font-medium mb-6 sm:mb-8 text-sm sm:text-base">
                     Connect your wallet to access the decentralized gallery and start streaming.
                   </p>
                   <div className="inline-flex items-center gap-2 text-brand-pink font-bold text-sm bg-brand-pink/10 px-4 py-2 rounded-full">
@@ -135,61 +134,60 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Video Discovery Section - NEW */}
+          {/* Video Discovery Section */}
           {connected && (
-            <div className="mt-32">
-              {/* Trending Videos */}
+            <div className="mt-16 sm:mt-32">
               <VideoDiscoverySection />
             </div>
           )}
 
           {/* Features Grid */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-32">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-16 sm:mb-32">
             {features.map((feature, index) => (
               <div
                 key={index}
-                className="bg-zinc-900/40 backdrop-blur-sm rounded-3xl p-8 
+                className="bg-zinc-900/40 backdrop-blur-sm rounded-3xl p-6 sm:p-8 
                   hover:bg-zinc-800/40 transition-all border border-zinc-800 group"
               >
-                <div className="w-14 h-14 bg-zinc-900 rounded-2xl flex items-center 
-                  justify-center mb-6 border border-zinc-800 group-hover:border-brand-pink/50 transition-colors">
+                <div className="w-12 sm:w-14 h-12 sm:h-14 bg-zinc-900 rounded-2xl flex items-center 
+                  justify-center mb-5 sm:mb-6 border border-zinc-800 group-hover:border-brand-pink/50 transition-colors">
                   <feature.icon className="w-6 h-6 text-brand-red group-hover:text-brand-pink transition-colors" />
                 </div>
-                <h3 className="font-black text-white mb-3 tracking-tighter text-lg">{feature.title}</h3>
+                <h3 className="font-black text-white mb-3 tracking-tighter text-base sm:text-lg">{feature.title}</h3>
                 <p className="text-zinc-500 text-sm leading-relaxed font-medium">{feature.description}</p>
               </div>
             ))}
           </div>
 
           {/* How It Works */}
-          <div className="relative rounded-[40px] overflow-hidden bg-gradient-to-b from-zinc-900 to-black p-12 md:p-20 border border-zinc-800">
+          <div className="relative rounded-[32px] sm:rounded-[40px] overflow-hidden bg-gradient-to-b from-zinc-900 to-black p-8 sm:p-12 md:p-20 border border-zinc-800">
             <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-brand-purple/10 blur-[100px] -z-10" />
             
-            <h2 className="text-4xl md:text-5xl font-black text-white mb-16 text-center tracking-tighter">
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-white mb-10 sm:mb-16 text-center tracking-tighter">
               THREE STEPS TO <span className="text-brand-red">STREAMING</span>
             </h2>
             
-            <div className="grid md:grid-cols-3 gap-12">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 sm:gap-12">
               <div className="relative">
-                <div className="text-[120px] font-black text-white/5 absolute -top-20 -left-10 leading-none">01</div>
-                <h3 className="text-2xl font-black text-white mb-4 relative z-10">CONNECT</h3>
-                <p className="text-zinc-500 font-medium relative z-10">
-                  Connect your Aptos wallet to identify yourself on the .
+                <div className="text-[80px] sm:text-[120px] font-black text-white/5 absolute -top-14 sm:-top-20 -left-6 sm:-left-10 leading-none select-none">01</div>
+                <h3 className="text-xl sm:text-2xl font-black text-white mb-3 sm:mb-4 relative z-10">CONNECT</h3>
+                <p className="text-zinc-500 font-medium relative z-10 text-sm sm:text-base">
+                  Connect your Aptos wallet to identify yourself on the network.
                 </p>
               </div>
 
               <div className="relative">
-                <div className="text-[120px] font-black text-white/5 absolute -top-20 -left-10 leading-none">02</div>
-                <h3 className="text-2xl font-black text-white mb-4 relative z-10">UPLOAD</h3>
-                <p className="text-zinc-500 font-medium relative z-10">
+                <div className="text-[80px] sm:text-[120px] font-black text-white/5 absolute -top-14 sm:-top-20 -left-6 sm:-left-10 leading-none select-none">02</div>
+                <h3 className="text-xl sm:text-2xl font-black text-white mb-3 sm:mb-4 relative z-10">UPLOAD</h3>
+                <p className="text-zinc-500 font-medium relative z-10 text-sm sm:text-base">
                   Submit your content to the Shelby decentralized protocol.
                 </p>
               </div>
 
               <div className="relative">
-                <div className="text-[120px] font-black text-white/5 absolute -top-20 -left-10 leading-none">03</div>
-                <h3 className="text-2xl font-black text-white mb-4 relative z-10">STREAM</h3>
-                <p className="text-zinc-500 font-medium relative z-10">
+                <div className="text-[80px] sm:text-[120px] font-black text-white/5 absolute -top-14 sm:-top-20 -left-6 sm:-left-10 leading-none select-none">03</div>
+                <h3 className="text-xl sm:text-2xl font-black text-white mb-3 sm:mb-4 relative z-10">STREAM</h3>
+                <p className="text-zinc-500 font-medium relative z-10 text-sm sm:text-base">
                   Instantly watch content with sub-second load times globally.
                 </p>
               </div>
@@ -197,7 +195,7 @@ export default function Home() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mt-32">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8 mt-16 sm:mt-32">
             {[
               { label: 'DECENTRALIZED', value: '100%' },
               { label: 'LATENCY', value: '<1.0s' },
@@ -205,23 +203,23 @@ export default function Home() {
               { label: 'PROTOCOL', value: 'SHELBY' },
             ].map((stat, index) => (
               <div key={index} className="text-center group">
-                <p className="text-4xl md:text-5xl font-black text-white mb-2 group-hover:text-brand-red transition-colors">{stat.value}</p>
-                <p className="text-xs font-black text-zinc-500 uppercase tracking-widest">{stat.label}</p>
+                <p className="text-3xl sm:text-4xl md:text-5xl font-black text-white mb-2 group-hover:text-brand-red transition-colors">{stat.value}</p>
+                <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{stat.label}</p>
               </div>
             ))}
           </div>
         </div>
       </main>
 
-      <footer className="border-t border-zinc-900 bg-black py-20 mt-32 relative z-10">
+      <footer className="border-t border-zinc-900 bg-black py-16 sm:py-20 mt-16 sm:mt-32 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col items-center">
-          <div className="flex items-center gap-3 mb-10">
+          <div className="flex items-center gap-3 mb-8 sm:mb-10">
             <h1 className="font-black text-2xl tracking-tighter text-white">
               SHELBY<span className="text-brand-red">FLIX</span>
             </h1>
           </div>
           
-          <div className="flex flex-wrap justify-center gap-10 mb-12">
+          <div className="flex flex-wrap justify-center gap-6 sm:gap-10 mb-10 sm:mb-12">
             <a href="https://aptoslabs.com" target="_blank" rel="noopener noreferrer" 
               className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
               Aptos
@@ -247,7 +245,6 @@ export default function Home() {
   );
 }
 
-// Video Discovery Component
 function VideoDiscoverySection() {
   const router = useRouter();
   
@@ -264,7 +261,6 @@ function VideoDiscoverySection() {
     try {
       const trending = await getTrendingVideos(3);
       const recent = await getRecentVideos(3);
-      
       setTrendingVideos(trending);
       setRecentVideos(recent);
       setAllVideos([...trending, ...recent]);
@@ -275,7 +271,7 @@ function VideoDiscoverySection() {
     }
   };
 
-    if (loading) {
+  if (loading) {
     return (
       <div className="text-center py-12">
         <div className="w-16 h-16 border-4 border-brand-red border-t-transparent rounded-full animate-spin mx-auto mb-4" />
@@ -285,32 +281,32 @@ function VideoDiscoverySection() {
   }
 
   return (
-    <div className="space-y-16">
-// Category Quick Links
+    <div className="space-y-12 sm:space-y-16">
+      {/* Category Quick Links */}
       {allVideos.length > 0 && (
-        <div className="mb-16">
-          <h2 className="text-3xl font-black mb-6 tracking-tighter text-white">
+        <div className="mb-12 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl font-black mb-5 sm:mb-6 tracking-tighter text-white">
             BROWSE BY <span className="text-brand-red">CATEGORY</span>
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4">
             {['Entertainment', 'Education', 'Gaming', 'Music', 'Sports'].map((cat) => {
               const count = allVideos.filter(v => v.category === cat).length;
               return (
                 <button
                   key={cat}
                   onClick={() => router.push(`/category/${cat}`)}
-                  className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-[24px] hover:border-brand-red transition-all group"
+                  className="p-4 sm:p-6 bg-zinc-900/50 border border-zinc-800 rounded-[20px] sm:rounded-[24px] hover:border-brand-red transition-all group"
                 >
-                  <p className="text-3xl mb-3">
+                  <p className="text-2xl sm:text-3xl mb-2 sm:mb-3">
                     {cat === 'Entertainment' ? '🎬' :
                      cat === 'Education' ? '📚' :
                      cat === 'Gaming' ? '🎮' :
                      cat === 'Music' ? '🎵' : '⚽'}
                   </p>
-                  <p className="font-black text-white text-sm mb-1 group-hover:text-brand-red transition-colors">
+                  <p className="font-black text-white text-[10px] sm:text-sm mb-1 group-hover:text-brand-red transition-colors">
                     {cat.toUpperCase()}
                   </p>
-                  <p className="text-zinc-500 text-xs font-bold">
+                  <p className="text-zinc-500 text-[9px] sm:text-xs font-bold">
                     {count} {count === 1 ? 'video' : 'videos'}
                   </p>
                 </button>
@@ -320,13 +316,12 @@ function VideoDiscoverySection() {
         </div>
       )}
 
-      {/* Trending */}
       {trendingVideos.length > 0 && (
         <div>
-          <h2 className="text-3xl font-black mb-8 tracking-tighter text-white">
+          <h2 className="text-2xl sm:text-3xl font-black mb-6 sm:mb-8 tracking-tighter text-white">
             TRENDING <span className="text-brand-red">NOW</span>
           </h2>
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {trendingVideos.map((video) => (
               <VideoCard key={video.videoId} video={video} hasAccess={true} />
             ))}
@@ -334,13 +329,12 @@ function VideoDiscoverySection() {
         </div>
       )}
 
-      {/* Recent */}
       {recentVideos.length > 0 && (
         <div>
-          <h2 className="text-3xl font-black mb-8 tracking-tighter text-white">
+          <h2 className="text-2xl sm:text-3xl font-black mb-6 sm:mb-8 tracking-tighter text-white">
             RECENT <span className="text-brand-red">UPLOADS</span>
           </h2>
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {recentVideos.map((video) => (
               <VideoCard key={video.videoId} video={video} hasAccess={true} />
             ))}
@@ -350,4 +344,3 @@ function VideoDiscoverySection() {
     </div>
   );
 }
-

@@ -172,21 +172,29 @@ export async function uploadToShelby(
 export async function downloadAndDecryptVideo(
   shelbyUrl: string,
   encryptionKey: string,
-  blobName: string
+  blobName: string,
+  signal?: AbortSignal
 ): Promise<Blob> {
-  try {
+  const cacheKey = `video_${blobName}`;
+
+  // Check cache first — this short-circuits the double-invoke
+  const cached = getCachedVideo(cacheKey);
+  if (cached) {
+    console.log('✅ Using cached video');
+    return cached;
+  }
+
+  // Deduplicate in-flight requests for the same blob
+  if (inFlightRequests.has(cacheKey)) {
+    console.log('⏳ Waiting for in-flight download...');
+    return inFlightRequests.get(cacheKey)!;
+  }
+
+  const promise = (async () => {
     console.log('📥 Downloading from Shelbynet...');
     console.log('   URL:', shelbyUrl);
 
-    const cacheKey = `video_${blobName}`;
-    const cached = getCachedVideo(cacheKey);
-    if (cached) {
-      console.log('✅ Using cached video');
-      return cached;
-    }
-
-    const response = await fetch(shelbyUrl);
-
+    const response = await fetch(shelbyUrl, { signal });
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status} ${response.statusText}`);
     }
@@ -199,12 +207,39 @@ export async function downloadAndDecryptVideo(
     console.log('✅ Video decrypted:', decryptedBlob.size, 'bytes');
 
     cacheVideo(cacheKey, decryptedBlob);
-
     return decryptedBlob;
-  } catch (error) {
-    console.error('❌ Failed to download/decrypt video:', error);
-    throw error;
+  })();
+
+  inFlightRequests.set(cacheKey, promise);
+  promise.finally(() => inFlightRequests.delete(cacheKey));
+
+  return promise;
+}
+
+const inFlightRequests = new Map<string, Promise<Blob>>();
+
+// Video caching
+const videoCache = new Map<string, Blob>();
+const MAX_CACHE_SIZE = 5;
+
+function getCachedVideo(key: string): Blob | null {
+  return videoCache.get(key) || null;
+}
+
+function cacheVideo(key: string, blob: Blob): void {
+  if (videoCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = videoCache.keys().next().value;
+    videoCache.delete(firstKey!);
+    console.log("🗑️ Removed oldest cached video");
   }
+
+  videoCache.set(key, blob);
+  console.log(`💾 Cached video (${videoCache.size}/${MAX_CACHE_SIZE})`);
+}
+
+export function clearVideoCache(): void {
+  videoCache.clear();
+  console.log("🗑️ Video cache cleared");
 }
 
 /**
@@ -262,26 +297,3 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
   return { valid: true };
 }
 
-// Video caching
-const videoCache = new Map<string, Blob>();
-const MAX_CACHE_SIZE = 5;
-
-function getCachedVideo(key: string): Blob | null {
-  return videoCache.get(key) || null;
-}
-
-function cacheVideo(key: string, blob: Blob): void {
-  if (videoCache.size >= MAX_CACHE_SIZE) {
-    const firstKey = videoCache.keys().next().value;
-    videoCache.delete(firstKey!);
-    console.log('🗑️ Removed oldest cached video');
-  }
-
-  videoCache.set(key, blob);
-  console.log(`💾 Cached video (${videoCache.size}/${MAX_CACHE_SIZE})`);
-}
-
-export function clearVideoCache(): void {
-  videoCache.clear();
-  console.log('🗑️ Video cache cleared');
-}

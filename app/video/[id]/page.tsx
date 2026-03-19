@@ -2,9 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import Header from '@/components/Header';
 import VideoPlayer from '@/components/VideoPlayer';
+import EngagementBar from '@/components/EngagementBar';
+import CommentSection from '@/components/CommentSection';
+import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress } from '@/lib/aptos';
@@ -12,22 +16,51 @@ import type { VideoMetadata } from '@/types';
 import {
   ArrowLeftIcon,
   ShareIcon,
-  EyeIcon,
-  ClockIcon,
   CheckIcon,
   TrashIcon,
-  ArrowDownTrayIcon,
-  ShieldCheckIcon,
+  EyeIcon,
+  ClockIcon,
+  PlayCircleIcon,
 } from '@heroicons/react/24/outline';
+
+function RelatedVideoCard({ video }: { video: VideoMetadata }) {
+  return (
+    <Link href={`/video/${video.videoId}`} className="flex gap-3 group">
+      <div className="relative w-40 aspect-video bg-zinc-900 rounded-xl overflow-hidden flex-shrink-0">
+        {video.thumbnailUrl ? (
+          <img src={video.thumbnailUrl} alt={video.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <PlayCircleIcon className="w-8 h-8 text-zinc-700" />
+          </div>
+        )}
+        {video.duration > 0 && (
+          <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/80 text-white text-[10px] font-black rounded">
+            {Math.floor(video.duration / 60)}:{(video.duration % 60).toString().padStart(2, '0')}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <h4 className="text-white text-sm font-bold line-clamp-2 group-hover:text-brand-red transition-colors leading-snug mb-1">
+          {video.title}
+        </h4>
+        <p className="text-zinc-500 text-xs">{video.channelName}</p>
+        <p className="text-zinc-600 text-xs mt-0.5">
+          {video.views.toLocaleString()} views · {formatDistanceToNow(video.uploadTimestamp, { addSuffix: true })}
+        </p>
+      </div>
+    </Link>
+  );
+}
 
 export default function VideoPage() {
   const params = useParams();
   const router = useRouter();
-  const { address, connected } = useWallet();
+  const { address } = useWallet();
   const { signAndSubmitTransaction } = useAptosWallet();
-  const hasAccess = true; // Fee-based access, not token-gated
-  
+
   const [video, setVideo] = useState<VideoMetadata | null>(null);
+  const [related, setRelated] = useState<VideoMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -39,74 +72,61 @@ export default function VideoPage() {
   }, [videoId]);
 
   async function loadVideo() {
+    setLoading(true);
     try {
-      setLoading(true);
-      const { getVideoById } = await import('@/lib/video-service');
-      const metadata = await getVideoById(videoId);
-      
-      if (!metadata) {
-        setVideo(null);
-        return;
-      }
-      
+      const { getVideoById, getAllVideos } = await import('@/lib/video-service');
+      const [metadata, all] = await Promise.all([getVideoById(videoId), getAllVideos()]);
+
+      if (!metadata) { setVideo(null); return; }
       setVideo(metadata);
-    } catch (error) {
-      console.error('Error loading video:', error);
+
+      // Related: same category, exclude current
+      const rel = all
+        .filter(v => v.videoId !== videoId)
+        .sort((a, b) => {
+          const sameCategory = (a.category === metadata.category ? 1 : 0) - (b.category === metadata.category ? 1 : 0);
+          if (sameCategory !== 0) return -sameCategory;
+          return b.views - a.views;
+        })
+        .slice(0, 12);
+      setRelated(rel);
+    } catch (e) {
+      console.error('Error loading video:', e);
     } finally {
       setLoading(false);
     }
   }
 
   async function handleShare() {
-    const url = window.location.href;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error('Failed to copy:', error);
-    }
+    } catch {}
   }
 
   async function handleDelete() {
     if (!video || !address) return;
-    if (!confirm('Are you sure you want to delete this video? This action cannot be undone.')) return;
-
+    if (!confirm('Delete this video? This cannot be undone.')) return;
+    setDeleting(true);
     try {
-      setDeleting(true);
-      
-      console.log("🗑️ Deleting video...");
-      console.log("   Video ID:", video.videoId);
-      console.log("   Blob name:", video.blobName);
-      
-      // Delete from database and Shelbynet
       const { deleteVideo } = await import('@/lib/video-service');
-      await deleteVideo(video.videoId, video.blobName, signAndSubmitTransaction);
-      
-      console.log('✅ Video deleted successfully');
+      await deleteVideo(video.videoId, video.blobName, signAndSubmitTransaction, video.shelbyUrl);
       router.push('/gallery');
-    } catch (error) {
-      console.error('❌ Error deleting video:', error);
-      alert('Failed to delete video. Please try again.');
+    } catch (e) {
+      alert('Failed to delete. Please try again.');
     } finally {
       setDeleting(false);
     }
-  }
-
-  function handleDownload() {
-    if (!video || !hasAccess) return;
-    const blobId = video.shelbyUrl.replace('shelby://', '');
-    window.open(`https://api.shelbynet.shelby.xyz/v1/blob/download/${blobId}?uploader=${video.uploader}`, '_blank');
   }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-brand-dark">
         <Header />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-brand-red mx-auto mb-8"></div>
-          <p className="text-zinc-500 font-black uppercase tracking-widest text-sm">Deciphering Archive</p>
-        </main>
+        <div className="max-w-7xl mx-auto px-4 py-16 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-red" />
+        </div>
       </div>
     );
   }
@@ -115,171 +135,128 @@ export default function VideoPage() {
     return (
       <div className="min-h-screen bg-brand-dark text-white">
         <Header />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
-          <div className="text-center bg-zinc-900/50 backdrop-blur-xl rounded-[40px] border border-zinc-800 p-20">
-            <h1 className="text-4xl font-black tracking-tighter mb-4 uppercase">
-              ARCHIVE <span className="text-brand-red">PURGED</span>
-            </h1>
-            <p className="text-zinc-500 font-medium mb-12 max-w-sm mx-auto">
-              The data you are attempting to access has been permanently deleted from the network.
-            </p>
-            <button
-              onClick={() => router.push('/gallery')}
-              className="inline-flex items-center gap-2 px-10 py-5 bg-white text-black 
-                rounded-2xl font-black text-xs tracking-widest transition-all hover:bg-zinc-200"
-            >
-              <ArrowLeftIcon className="w-5 h-5" />
-              RETURN TO BASE
-            </button>
-          </div>
-        </main>
+        <div className="max-w-3xl mx-auto px-4 py-24 text-center">
+          <h1 className="text-4xl font-black tracking-tighter mb-4">VIDEO NOT FOUND</h1>
+          <p className="text-zinc-500 mb-8">This video may have expired or been removed.</p>
+          <button onClick={() => router.push('/')} className="px-8 py-4 bg-brand-red text-white rounded-2xl font-black text-sm tracking-widest hover:bg-brand-red/90 transition-colors">
+            GO HOME
+          </button>
+        </div>
       </div>
     );
   }
+
+  const isOwner = address?.toString().toLowerCase() === video.uploader.toLowerCase();
 
   return (
     <div className="min-h-screen bg-brand-dark text-white">
       <Header />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Back Button */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Back button */}
         <button
-          onClick={() => router.push('/gallery')}
-          className="flex items-center gap-2 text-zinc-500 hover:text-white 
-            mb-10 transition-all font-black text-[10px] uppercase tracking-[0.3em] group"
+          onClick={() => router.back()}
+          className="flex items-center gap-2 text-zinc-500 hover:text-white mb-5 transition-colors text-sm font-bold group"
         >
-          <ArrowLeftIcon className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-          <span>Exit Vault</span>
+          <ArrowLeftIcon className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+          Back
         </button>
 
-        {/* Video Player Section */}
-        <div className="mb-12 rounded-[40px] overflow-hidden border border-zinc-800 bg-black shadow-2xl relative group">
-          {!hasAccess && (
-             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
-                <div className="w-20 h-20 bg-brand-red/10 rounded-[32px] border border-brand-red/20 flex items-center justify-center mb-6">
-                  <ShieldCheckIcon className="w-10 h-10 text-brand-red" />
-                </div>
-                <h2 className="text-2xl font-black tracking-tighter mb-2">ENCRYPTED STREAM</h2>
-                <p className="text-zinc-500 font-medium mb-8">Access level insufficient</p>
-                <a
-                  href="https://docs.shelby.xyz/apis/faucet/shelbyusd"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-8 py-4 bg-brand-red text-white rounded-2xl font-black text-xs tracking-widest hover:bg-brand-red/90 transition-all"
-                >
-                  AUTHORIZE ACCESS
-                </a>
-             </div>
-          )}
-          <VideoPlayer
-            video={video}
-            walletAddress={address?.toString() || ''}
-            hasAccess={hasAccess}
-          />
-        </div>
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Main content */}
+          <div className="flex-1 min-w-0">
+            {/* Video player */}
+            <div className="rounded-2xl overflow-hidden bg-black mb-4 shadow-2xl">
+              <VideoPlayer video={video} walletAddress={address?.toString()} />
+            </div>
 
-        {/* Video Info Container */}
-        <div className="grid lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
-            <div className="bg-zinc-900/30 backdrop-blur-md rounded-[40px] border border-zinc-800 p-8 md:p-12">
-              <div className="flex items-center gap-3 mb-6">
-                 <div className="w-2 h-2 rounded-full bg-brand-pink" />
-                 <span className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Video Manifest</span>
-              </div>
-              
-              <h1 className="text-4xl md:text-5xl font-black text-white mb-6 tracking-tighter leading-tight">
-                {video.title}
-              </h1>
-              
-              <div className="flex flex-wrap items-center gap-8 mb-10 pt-6 border-t border-zinc-800/50">
-                <div className="flex items-center gap-2 text-zinc-400">
-                  <ClockIcon className="w-4 h-4 text-brand-red" />
-                  <span className="text-xs font-black uppercase tracking-widest">
-                    {formatDistanceToNow(video.timestamp, { addSuffix: true })}
-                  </span>
-                </div>
-                
-                {video.views !== undefined && (
-                  <div className="flex items-center gap-2 text-zinc-400">
-                    <EyeIcon className="w-4 h-4 text-brand-purple" />
-                    <span className="text-xs font-black uppercase tracking-widest">{video.views.toLocaleString()} ARCHIVED VIEWS</span>
+            {/* Title + actions row */}
+            <div className="mb-4">
+              <h1 className="text-2xl font-black tracking-tight mb-3 leading-tight">{video.title}</h1>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-zinc-800">
+                {/* Channel info */}
+                <div className="flex items-center gap-3">
+                  <Link href={`/channel/${video.channelId}`}>
+                    <div className="w-10 h-10 bg-gradient-to-br from-brand-purple to-brand-red rounded-full flex items-center justify-center text-white font-black text-sm">
+                      {video.channelName.slice(0, 2).toUpperCase()}
+                    </div>
+                  </Link>
+                  <div>
+                    <Link href={`/channel/${video.channelId}`} className="text-white font-bold text-sm hover:text-brand-red transition-colors">
+                      {video.channelName}
+                    </Link>
+                    <p className="text-zinc-500 text-xs">{formatAddress(video.uploader)}</p>
                   </div>
+                  <SubscribeButton channelId={video.channelId} />
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-2">
+                  <EngagementBar videoId={video.videoId} />
+
+                  <button
+                    onClick={handleShare}
+                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-sm font-bold transition-colors"
+                  >
+                    {copied ? <CheckIcon className="w-4 h-4 text-green-400" /> : <ShareIcon className="w-4 h-4" />}
+                    {copied ? 'Copied!' : 'Share'}
+                  </button>
+
+                  {isOwner && (
+                    <button
+                      onClick={handleDelete}
+                      disabled={deleting}
+                      className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-red-900/50 hover:text-brand-red rounded-xl text-sm font-bold transition-colors disabled:opacity-50"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                      {deleting ? 'Deleting...' : 'Delete'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Video description */}
+            <div className="bg-zinc-900/50 rounded-2xl p-4 mb-6">
+              <div className="flex items-center gap-4 text-zinc-400 text-xs mb-3">
+                <div className="flex items-center gap-1">
+                  <EyeIcon className="w-3.5 h-3.5" />
+                  <span className="font-bold">{video.views.toLocaleString()} views</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <ClockIcon className="w-3.5 h-3.5" />
+                  <span>{formatDistanceToNow(video.uploadTimestamp, { addSuffix: true })}</span>
+                </div>
+                {video.category && (
+                  <span className="px-2 py-0.5 bg-zinc-800 rounded-full">{video.category}</span>
                 )}
               </div>
-
               {video.description && (
-                <div className="bg-black/20 rounded-[32px] p-8 border border-zinc-800/50">
-                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-4">Transmission Data</h3>
-                  <p className="text-zinc-400 font-medium leading-relaxed whitespace-pre-wrap">{video.description}</p>
+                <p className="text-zinc-300 text-sm leading-relaxed whitespace-pre-wrap">{video.description}</p>
+              )}
+              {video.tags?.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {video.tags.map(tag => (
+                    <span key={tag} className="px-2 py-0.5 bg-zinc-800 text-brand-purple text-xs rounded-full">#{tag}</span>
+                  ))}
                 </div>
               )}
             </div>
+
+            {/* Comments */}
+            <CommentSection videoId={video.videoId} />
           </div>
 
-          <div className="space-y-6">
-            {/* Actions Panel */}
-            <div className="bg-zinc-900/30 backdrop-blur-md rounded-[40px] border border-zinc-800 p-8">
-              <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-6 text-center">Operations</h3>
-              <div className="space-y-3">
-                {hasAccess && (
-                  <button
-                    onClick={handleDownload}
-                    className="w-full flex items-center justify-between px-6 py-4 bg-zinc-800/50 
-                      text-white hover:bg-zinc-800 rounded-2xl font-black text-xs tracking-widest 
-                      transition-all group border border-zinc-800/50"
-                  >
-                    <span>EXTRACT DATA</span>
-                    <ArrowDownTrayIcon className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
-                  </button>
-                )}
-
-                <button
-                  onClick={handleShare}
-                  className="w-full flex items-center justify-between px-6 py-4 bg-zinc-800/50 
-                    text-white hover:bg-zinc-800 rounded-2xl font-black text-xs tracking-widest 
-                    transition-all group border border-zinc-800/50"
-                >
-                  <span>{copied ? 'LINK COPIED' : 'SHARE SIGNAL'}</span>
-                  {copied ? (
-                    <CheckIcon className="w-5 h-5 text-green-500" />
-                  ) : (
-                    <ShareIcon className="w-5 h-5 group-hover:-translate-y-1 group-hover:translate-x-1 transition-all" />
-                  )}
-                </button>
-
-                {/* Delete Button - Only for uploader */}
-                {address?.toString().toLowerCase() === video.uploader.toLowerCase() && (
-                  <button
-                    onClick={handleDelete}
-                    disabled={deleting}
-                    className="w-full flex items-center justify-between px-6 py-4 bg-brand-red/10 
-                      text-brand-red hover:bg-brand-red hover:text-white rounded-2xl font-black text-xs tracking-widest 
-                      transition-all group border border-brand-red/20"
-                  >
-                    <span>{deleting ? 'PURGING...' : 'PURGE ARCHIVE'}</span>
-                    <TrashIcon className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Uploader Card */}
-            <div className="bg-zinc-900/30 backdrop-blur-md rounded-[40px] border border-zinc-800 p-8">
-              <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-6">Source Origin</h3>
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-gradient-to-br from-brand-purple to-brand-red 
-                  rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-lg shadow-brand-red/20">
-                  {video.uploader.slice(2, 4).toUpperCase()}
-                </div>
-                <div className="overflow-hidden">
-                  <p className="font-black text-white text-sm tracking-tight mb-1">
-                    {formatAddress(video.uploader)}
-                  </p>
-                  <p className="text-[10px] text-zinc-500 font-mono truncate">
-                    {video.uploader}
-                  </p>
-                </div>
-              </div>
+          {/* Related videos sidebar */}
+          <div className="lg:w-96 flex-shrink-0">
+            <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-4">Up Next</h3>
+            <div className="space-y-3">
+              {related.length === 0 ? (
+                <p className="text-zinc-600 text-sm">No related videos yet.</p>
+              ) : (
+                related.map(v => <RelatedVideoCard key={v.videoId} video={v} />)
+              )}
             </div>
           </div>
         </div>

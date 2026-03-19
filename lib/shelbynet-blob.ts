@@ -25,9 +25,6 @@ export async function computeBlobCommitments(data: ArrayBuffer): Promise<BlobCom
 
 /**
  * Register a blob on Shelbynet blockchain using the official SDK payload builder.
- *
- * Uses ShelbyBlobClient.createRegisterBlobPayload() to ensure correct field
- * mapping (blob_merkle_root, numChunksets, etc.)
  */
 export async function registerBlob(
   signAndSubmitTransaction: any,
@@ -65,9 +62,6 @@ export async function registerBlob(
 
 /**
  * Upload encrypted blob to Shelbynet storage using the official SDK RPC client.
- *
- * shelbyClient.rpc.putBlob() handles Content-Length and all header requirements.
- * The RPC validates the upload against the on-chain Merkle root before accepting.
  */
 export async function uploadBlobToShelbynet(
   encryptedBlob: Blob,
@@ -100,14 +94,13 @@ export async function uploadBlobToShelbynet(
 }
 
 /**
- * Get Shelbynet blob download URL
+ * Get Shelbynet blob download URL.
+ * BUG FIX: Was using api.shelbynet.shelby.xyz (wrong) — testnet domain is api.testnet.shelby.xyz
  */
 export function getBlobStreamUrl(blobName: string, accountAddress: string): string {
   const encodedBlobName = encodeURIComponent(blobName);
-  // ✅ testnet domain — matches Shelby explorer
   return `https://api.testnet.shelby.xyz/shelby/v1/blobs/${accountAddress}/${encodedBlobName}`;
 }
-
 
 /**
  * Download blob from Shelbynet

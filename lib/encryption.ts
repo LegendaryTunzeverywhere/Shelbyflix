@@ -51,15 +51,14 @@ async function importAesKey(hex: string, usage: KeyUsage[]): Promise<CryptoKey> 
 
 /**
  * Encrypt a file using AES-256-GCM.
+ * Stores the original MIME type in the first bytes so decryption can restore it.
  *
- * Returns a raw binary Blob: [12-byte IV | ciphertext + 16-byte GCM auth tag].
- * There is NO Base64 layer — the bytes written to storage are pure ciphertext,
- * so SHA-256(blob) on the client matches SHA-256(received bytes) on the server.
+ * Blob layout: [1 byte: mime length | N bytes: mime string | 12-byte IV | ciphertext]
  */
 export async function encryptFile(file: File, key: string): Promise<Blob> {
   const fileData = await file.arrayBuffer();
   const cryptoKey = await importAesKey(key, ['encrypt']);
-  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for GCM
+  const iv = crypto.getRandomValues(new Uint8Array(12));
 
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
@@ -67,25 +66,54 @@ export async function encryptFile(file: File, key: string): Promise<Blob> {
     fileData
   );
 
-  // Prepend IV so decryption can recover it without out-of-band storage.
-  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), iv.byteLength);
+  // Encode MIME type so decryption can restore the correct type
+  const mimeBytes = new TextEncoder().encode(file.type || 'video/mp4');
+  const mimeLength = new Uint8Array([mimeBytes.length]);
+
+  const combined = new Uint8Array(
+    mimeLength.byteLength + mimeBytes.byteLength + iv.byteLength + ciphertext.byteLength
+  );
+  let offset = 0;
+  combined.set(mimeLength, offset); offset += mimeLength.byteLength;
+  combined.set(mimeBytes, offset);  offset += mimeBytes.byteLength;
+  combined.set(iv, offset);         offset += iv.byteLength;
+  combined.set(new Uint8Array(ciphertext), offset);
 
   return new Blob([combined], { type: 'application/octet-stream' });
 }
 
 /**
  * Decrypt a blob produced by encryptFile.
- * Reads the 12-byte IV prefix, then decrypts and verifies the GCM auth tag.
+ * Reads the MIME type prefix, then decrypts AES-GCM and returns the correct video type.
+ *
+ * Also supports legacy blobs (no MIME prefix) — falls back to video/mp4.
  */
 export async function decryptBlob(encryptedBlob: Blob, key: string): Promise<Blob> {
   const data = await encryptedBlob.arrayBuffer();
   const bytes = new Uint8Array(data);
 
+  let mimeType = 'video/mp4';
+  let offset = 0;
+
+  // Detect new format: first byte is MIME length (must be < 50 to distinguish from old IV)
+  const possibleMimeLength = bytes[0];
+  if (possibleMimeLength > 0 && possibleMimeLength < 50) {
+    offset = 1;
+    const mimeBytes = bytes.slice(offset, offset + possibleMimeLength);
+    const decoded = new TextDecoder().decode(mimeBytes);
+    // Sanity check it looks like a MIME type
+    if (decoded.startsWith('video/') || decoded.startsWith('application/')) {
+      mimeType = decoded;
+      offset += possibleMimeLength;
+    } else {
+      // Not the new format — reset to legacy mode
+      offset = 0;
+    }
+  }
+
   const IV_LENGTH = 12;
-  const iv = bytes.slice(0, IV_LENGTH);
-  const ciphertext = bytes.slice(IV_LENGTH);
+  const iv = bytes.slice(offset, offset + IV_LENGTH);
+  const ciphertext = bytes.slice(offset + IV_LENGTH);
 
   const cryptoKey = await importAesKey(key, ['decrypt']);
 
@@ -95,7 +123,7 @@ export async function decryptBlob(encryptedBlob: Blob, key: string): Promise<Blo
     ciphertext
   );
 
-  return new Blob([plaintext], { type: 'video/mp4' });
+  return new Blob([plaintext], { type: mimeType });
 }
 
 /**
@@ -105,57 +133,59 @@ export async function getVideoDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
-    
+
     video.onloadedmetadata = () => {
       window.URL.revokeObjectURL(video.src);
       resolve(Math.floor(video.duration));
     };
-    
+
     video.onerror = () => {
       reject(new Error('Failed to load video metadata'));
     };
-    
+
     video.src = URL.createObjectURL(file);
   });
 }
 
 /**
- * Generate thumbnail from video
+ * Generate thumbnail from video.
+ * BUG FIX: Was returning a temporary blob URL (URL.createObjectURL) which dies on
+ * page reload. Now returns a base64 data URL that survives storage in Supabase.
  */
 export async function generateThumbnail(file: File, timeInSeconds: number = 0): Promise<string> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
-    
+    const objectUrl = URL.createObjectURL(file);
+
     video.onloadedmetadata = () => {
-      video.currentTime = timeInSeconds;
+      video.currentTime = Math.min(timeInSeconds, video.duration - 0.1);
     };
-    
+
     video.onseeked = () => {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
+      canvas.width = Math.min(video.videoWidth, 1280);
+      canvas.height = Math.min(video.videoHeight, 720);
+
       const ctx = canvas.getContext('2d');
       if (!ctx) {
+        URL.revokeObjectURL(objectUrl);
         reject(new Error('Failed to get canvas context'));
         return;
       }
-      
+
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const thumbnailUrl = URL.createObjectURL(blob);
-          resolve(thumbnailUrl);
-        } else {
-          reject(new Error('Failed to generate thumbnail'));
-        }
-      }, 'image/jpeg', 0.8);
-      
-      window.URL.revokeObjectURL(video.src);
+
+      // Return as base64 data URL — persists across page reloads
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      URL.revokeObjectURL(objectUrl);
+      resolve(dataUrl);
     };
-    
-    video.onerror = () => reject(new Error('Failed to load video'));
-    video.src = URL.createObjectURL(file);
+
+    video.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Failed to load video'));
+    };
+
+    video.src = objectUrl;
   });
 }

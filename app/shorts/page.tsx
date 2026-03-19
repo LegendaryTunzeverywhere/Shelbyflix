@@ -1,74 +1,224 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Header from '@/components/Header';
-import VideoPlayer from '@/components/VideoPlayer';
 import EngagementBar from '@/components/EngagementBar';
 import SubscribeButton from '@/components/SubscribeButton';
-import { getShortVideos } from '@/lib/metadata-store';
 import { useWallet } from '@/hooks/useWallet';
 import type { VideoMetadata } from '@/types';
-import { 
-  ChevronUpIcon, 
+import {
+  ChevronUpIcon,
   ChevronDownIcon,
   EyeIcon,
-  ChatBubbleLeftIcon 
+  ChatBubbleLeftIcon,
+  SpeakerWaveIcon,
+  SpeakerXMarkIcon,
+  PlayIcon,
+  PauseIcon,
 } from '@heroicons/react/24/outline';
 import { formatDistanceToNow } from 'date-fns';
 
+// Single short — handles its own download + playback
+function ShortPlayer({
+  video,
+  isActive,
+  isMuted,
+}: {
+  video: VideoMetadata;
+  isActive: boolean;
+  isMuted: boolean;
+}) {
+  const [streamUrl, setStreamUrl] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [isPaused, setIsPaused] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const loadedRef = useRef(false);
+
+  // Load when this short becomes active (lazy load)
+  useEffect(() => {
+    if (!isActive || loadedRef.current) return;
+    loadedRef.current = true;
+
+    (async () => {
+      try {
+        const { downloadAndDecryptVideo } = await import('@/lib/shelby');
+        const blob = await downloadAndDecryptVideo(video.shelbyUrl, video.encryptionKey, video.blobName);
+        const url = URL.createObjectURL(blob);
+        objectUrlRef.current = url;
+        setStreamUrl(url);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load');
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      // Don't revoke — parent sliding window will remount us if we come back into view
+    };
+  }, [isActive]);
+
+  // Play/pause based on whether this slide is active
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || !streamUrl) return;
+    vid.src = streamUrl;
+    vid.load();
+
+    if (isActive) {
+      vid.muted = isMuted;
+      vid.play().catch(() => {
+        // Autoplay blocked — user will tap to play
+      });
+    } else {
+      vid.pause();
+      vid.currentTime = 0;
+    }
+  }, [streamUrl, isActive]);
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = isMuted;
+  }, [isMuted]);
+
+  function togglePause() {
+    const vid = videoRef.current;
+    if (!vid || !streamUrl) return;
+    if (vid.paused) {
+      vid.play();
+      setIsPaused(false);
+    } else {
+      vid.pause();
+      setIsPaused(true);
+    }
+  }
+
+  return (
+    <div className="relative w-full h-full bg-black flex items-center justify-center" onClick={togglePause}>
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white" />
+        </div>
+      )}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black">
+          <p className="text-zinc-400 text-sm px-8 text-center">{error}</p>
+        </div>
+      )}
+      <video
+        ref={videoRef}
+        loop
+        playsInline
+        className="w-full h-full object-cover"
+        onPlay={() => setIsPaused(false)}
+        onPause={() => setIsPaused(true)}
+      />
+      {/* Tap-to-pause indicator */}
+      {isPaused && streamUrl && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-20 h-20 bg-black/50 rounded-full flex items-center justify-center">
+            <PlayIcon className="w-10 h-10 text-white" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ShortsPage() {
   const router = useRouter();
-    const { address } = useWallet();
+  const { address } = useWallet();
   const [shorts, setShorts] = useState<VideoMetadata[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Touch swipe state
+  const touchStartY = useRef(0);
+  const touchStartTime = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadShorts();
+    (async () => {
+      try {
+        const { getAllVideos } = await import('@/lib/video-service');
+        const all = await getAllVideos();
+        // Shorts = videos under 60 seconds
+        setShorts(all.filter(v => v.isShort || v.duration < 60));
+      } catch (e) {
+        console.error('Failed to load shorts:', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const loadShorts = () => {
-    const shortVideos = getShortVideos();
-    setShorts(shortVideos);
-  };
+  const goNext = useCallback(() => {
+    setCurrentIndex(i => Math.min(i + 1, shorts.length - 1));
+  }, [shorts.length]);
 
-  const handleNext = () => {
-    if (currentIndex < shorts.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
-  };
+  const goPrev = useCallback(() => {
+    setCurrentIndex(i => Math.max(i - 1, 0));
+  }, []);
 
-  const handlePrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    }
-  };
-
+  // Keyboard navigation
   useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp') handlePrevious();
-      if (e.key === 'ArrowDown') handleNext();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') goNext();
+      if (e.key === 'ArrowUp') goPrev();
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [goNext, goPrev]);
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [currentIndex, shorts.length]);
+  // Touch swipe
+  function onTouchStart(e: React.TouchEvent) {
+    touchStartY.current = e.touches[0].clientY;
+    touchStartTime.current = Date.now();
+  }
+
+  function onTouchEnd(e: React.TouchEvent) {
+    const dy = touchStartY.current - e.changedTouches[0].clientY;
+    const dt = Date.now() - touchStartTime.current;
+    // Swipe: >60px or fast flick
+    if (Math.abs(dy) > 60 || (Math.abs(dy) > 30 && dt < 300)) {
+      if (dy > 0) goNext();
+      else goPrev();
+    }
+  }
+
+  // Wheel scroll
+  const wheelLock = useRef(false);
+  function onWheel(e: React.WheelEvent) {
+    if (wheelLock.current) return;
+    wheelLock.current = true;
+    if (e.deltaY > 0) goNext();
+    else goPrev();
+    setTimeout(() => { wheelLock.current = false; }, 600);
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white" />
+      </div>
+    );
+  }
 
   if (shorts.length === 0) {
     return (
-      <div className="min-h-screen bg-brand-dark">
+      <div className="min-h-screen bg-black">
         <Header />
         <main className="flex items-center justify-center h-[80vh]">
           <div className="text-center">
-            <h2 className="text-3xl font-black text-white mb-4 tracking-tighter">
-              NO SHORTS YET
-            </h2>
-            <p className="text-zinc-500 font-medium mb-8">
-              Upload videos under 60 seconds to see them here
-            </p>
+            <h2 className="text-3xl font-black text-white mb-4 tracking-tighter">NO SHORTS YET</h2>
+            <p className="text-zinc-500 mb-8">Upload videos under 60 seconds to see them here</p>
             <button
               onClick={() => router.push('/upload')}
-              className="px-8 py-4 bg-brand-red hover:bg-brand-red/90 text-white rounded-2xl font-black text-sm tracking-widest transition-colors"
+              className="px-8 py-4 bg-brand-red text-white rounded-2xl font-black text-sm tracking-widest hover:bg-brand-red/90 transition-colors"
             >
               UPLOAD SHORT
             </button>
@@ -78,154 +228,121 @@ export default function ShortsPage() {
     );
   }
 
-  const currentShort = shorts[currentIndex];
+  const current = shorts[currentIndex];
 
   return (
-    <div className="min-h-screen bg-black">
-      <Header />
+    <div className="h-screen bg-black overflow-hidden flex flex-col">
+      {/* Minimal header - just logo + back */}
+      <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 pt-4">
+        <Link href="/" className="text-white font-black text-xl tracking-tighter">
+          SHELBY<span className="text-brand-red">FLIX</span>
+        </Link>
+        <button
+          onClick={() => setIsMuted(m => !m)}
+          className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white"
+        >
+          {isMuted
+            ? <SpeakerXMarkIcon className="w-5 h-5" />
+            : <SpeakerWaveIcon className="w-5 h-5" />
+          }
+        </button>
+      </div>
 
-      <main className="relative h-[calc(100vh-80px)] flex items-center justify-center overflow-hidden">
-        {/* Video Container */}
-        <div className="relative max-w-[500px] w-full h-full bg-black">
-          {/* Video Player */}
-          <div className="absolute inset-0">
-            <VideoPlayer
-              video={currentShort}
-              walletAddress={address || ''}
-              hasAccess={true}
-            />
-          </div>
+      {/* Main short viewer */}
+      <div
+        ref={containerRef}
+        className="flex-1 relative"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onWheel={onWheel}
+      >
+        {/* Progress bars — like Instagram Stories */}
+        <div className="absolute top-14 left-4 right-16 z-20 flex gap-1">
+          {shorts.map((_, idx) => (
+            <div key={idx} className="flex-1 h-0.5 rounded-full bg-white/20 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  idx < currentIndex ? 'bg-white w-full' :
+                  idx === currentIndex ? 'bg-white w-full' : 'bg-transparent w-0'
+                }`}
+              />
+            </div>
+          ))}
+        </div>
 
-          {/* Overlay Info */}
-          <div className="absolute inset-0 pointer-events-none">
-            {/* Top Gradient */}
-            <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-black/60 to-transparent" />
-            
-            {/* Bottom Info */}
-            <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 via-black/50 to-transparent pointer-events-auto">
-              {/* Channel Info */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-gradient-to-br from-brand-purple to-brand-red rounded-full flex items-center justify-center text-white font-black">
-                  {currentShort.channelName.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="flex-1">
-                  <p className="text-white font-bold text-sm">
-                    {currentShort.channelName}
-                  </p>
-                  <p className="text-zinc-400 text-xs">
-                    {formatDistanceToNow(currentShort.uploadTimestamp, { addSuffix: true })}
-                  </p>
-                </div>
-                <SubscribeButton channelId={currentShort.channelId} />
+        {/* Video — only render current ± 1 for memory */}
+        {shorts.map((short, idx) => {
+          if (Math.abs(idx - currentIndex) > 1) return null;
+          return (
+            <div
+              key={short.videoId}
+              className="absolute inset-0 transition-transform duration-300 ease-out"
+              style={{ transform: `translateY(${(idx - currentIndex) * 100}%)` }}
+            >
+              <ShortPlayer
+                video={short}
+                isActive={idx === currentIndex}
+                isMuted={isMuted}
+              />
+            </div>
+          );
+        })}
+
+        {/* Overlay: bottom info */}
+        <div className="absolute bottom-0 left-0 right-16 p-5 z-20 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none">
+          <div className="flex items-center gap-3 mb-3 pointer-events-auto">
+            <Link href={`/channel/${current.channelId}`}>
+              <div className="w-10 h-10 bg-gradient-to-br from-brand-purple to-brand-red rounded-full flex items-center justify-center text-white font-black text-sm flex-shrink-0">
+                {current.channelName.slice(0, 2).toUpperCase()}
               </div>
-
-              {/* Title & Description */}
-              <div className="mb-4">
-                <h2 className="text-white font-black text-lg mb-1 line-clamp-2">
-                  {currentShort.title}
-                </h2>
-                {currentShort.description && (
-                  <p className="text-zinc-300 text-sm line-clamp-2">
-                    {currentShort.description}
-                  </p>
-                )}
-              </div>
-
-              {/* Stats */}
-              <div className="flex items-center gap-4 text-white text-sm mb-4">
-                <div className="flex items-center gap-1">
-                  <EyeIcon className="w-4 h-4" />
-                  <span className="font-bold">{currentShort.views.toLocaleString()}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <ChatBubbleLeftIcon className="w-4 h-4" />
-                  <span className="font-bold">{currentShort.commentCount || 0}</span>
-                </div>
-              </div>
-
-              {/* Engagement */}
-              <EngagementBar videoId={currentShort.videoId} />
+            </Link>
+            <div className="flex-1 min-w-0">
+              <p className="text-white font-black text-sm truncate">{current.channelName}</p>
+              <p className="text-zinc-400 text-xs">{formatDistanceToNow(current.uploadTimestamp, { addSuffix: true })}</p>
+            </div>
+            <div className="pointer-events-auto">
+              <SubscribeButton channelId={current.channelId} />
             </div>
           </div>
 
-          {/* Navigation Buttons */}
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-4 pointer-events-auto">
-            <button
-              onClick={handlePrevious}
-              disabled={currentIndex === 0}
-              className="w-12 h-12 bg-black/50 backdrop-blur-md border border-white/20 rounded-full flex items-center justify-center text-white hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              <ChevronUpIcon className="w-6 h-6" />
-            </button>
-            
-            <button
-              onClick={handleNext}
-              disabled={currentIndex === shorts.length - 1}
-              className="w-12 h-12 bg-black/50 backdrop-blur-md border border-white/20 rounded-full flex items-center justify-center text-white hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              <ChevronDownIcon className="w-6 h-6" />
-            </button>
-          </div>
+          <h2 className="text-white font-black text-base mb-1 line-clamp-2 leading-tight">{current.title}</h2>
+          {current.description && (
+            <p className="text-zinc-300 text-sm line-clamp-2 mb-3">{current.description}</p>
+          )}
 
-          {/* Progress Indicator */}
-          <div className="absolute top-4 left-0 right-0 px-6 pointer-events-none">
-            <div className="flex gap-1">
-              {shorts.map((_, idx) => (
-                <div
-                  key={idx}
-                  className={`flex-1 h-1 rounded-full transition-all ${
-                    idx === currentIndex
-                      ? 'bg-white'
-                      : idx < currentIndex
-                      ? 'bg-white/50'
-                      : 'bg-white/20'
-                  }`}
-                />
-              ))}
+          <div className="flex items-center gap-4 text-white text-xs pointer-events-none">
+            <div className="flex items-center gap-1">
+              <EyeIcon className="w-3.5 h-3.5" />
+              <span className="font-bold">{current.views.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
+              <span className="font-bold">{current.commentCount || 0}</span>
             </div>
           </div>
         </div>
 
-        {/* Side Info Panel (Desktop) */}
-        <div className="hidden lg:block absolute right-8 top-1/2 -translate-y-1/2 w-80 space-y-4">
-          <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6">
-            <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-4">
-              UP NEXT
-            </h3>
-            <div className="space-y-3">
-              {shorts.slice(currentIndex + 1, currentIndex + 4).map((short, idx) => (
-                <div
-                  key={short.videoId}
-                  onClick={() => setCurrentIndex(currentIndex + idx + 1)}
-                  className="flex gap-3 cursor-pointer group"
-                >
-                  <div className="relative w-20 aspect-[9/16] bg-zinc-800 rounded-xl overflow-hidden flex-shrink-0">
-                    {short.thumbnailUrl ? (
-                      <img
-                        src={short.thumbnailUrl}
-                        alt={short.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <EyeIcon className="w-6 h-6 text-zinc-600" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-sm font-bold line-clamp-2 group-hover:text-brand-red transition-colors">
-                      {short.title}
-                    </p>
-                    <p className="text-zinc-500 text-xs mt-1">
-                      {short.views.toLocaleString()} views
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* Overlay: right side action buttons (TikTok-style) */}
+        <div className="absolute right-3 bottom-24 z-20 flex flex-col items-center gap-5">
+          <EngagementBar videoId={current.videoId} vertical />
+
+          {/* Nav arrows */}
+          <button
+            onClick={goPrev}
+            disabled={currentIndex === 0}
+            className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronUpIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={goNext}
+            disabled={currentIndex === shorts.length - 1}
+            className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronDownIcon className="w-5 h-5" />
+          </button>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
