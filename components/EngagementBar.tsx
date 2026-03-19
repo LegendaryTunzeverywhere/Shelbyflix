@@ -16,95 +16,114 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   const [disliked, setDisliked] = useState(false);
   const [likes, setLikes] = useState(0);
   const [dislikes, setDislikes] = useState(0);
+  // One-way lock — once engaged, cannot undo
+  const [hasLiked, setHasLiked] = useState(false);
+  const [hasDisliked, setHasDisliked] = useState(false);
 
   useEffect(() => {
     loadEngagement();
-  }, [videoId]);
+  }, [videoId, address]);
 
   async function loadEngagement() {
     try {
       const { supabase } = await import('@/lib/supabase');
+
+      // Load counts from videos table
       const { data } = await supabase
-        .from('videos').select('likes, dislikes').eq('video_id', videoId).single();
+        .from('videos')
+        .select('likes, dislikes')
+        .eq('video_id', videoId)
+        .single();
       if (data) {
         setLikes(data.likes ?? 0);
         setDislikes(data.dislikes ?? 0);
       }
 
+      // Load this user's engagement
       if (address) {
         const { data: eng } = await supabase
           .from('video_engagement')
           .select('liked, disliked')
           .eq('video_id', videoId)
           .eq('wallet_address', address.toString())
-          .single();
+          .maybeSingle();
+
         if (eng) {
           setLiked(eng.liked);
           setDisliked(eng.disliked);
+          setHasLiked(eng.liked);
+          setHasDisliked(eng.disliked);
         }
       }
     } catch {}
   }
 
   async function handleLike() {
-    if (!address) return;
-    const newLiked = !liked;
-    const delta = newLiked ? 1 : -1;
+    if (!address || hasLiked) return; // locked
 
-    setLiked(newLiked);
-    setLikes(l => l + delta);
-    if (disliked && newLiked) {
+    setLiked(true);
+    setHasLiked(true);
+    setLikes(l => l + 1);
+    if (disliked) {
       setDisliked(false);
+      setHasDisliked(false);
       setDislikes(d => Math.max(0, d - 1));
     }
 
     try {
       const { supabase } = await import('@/lib/supabase');
-      const fn = newLiked ? 'increment_likes' : 'decrement_likes';
-      await supabase.rpc(fn, { video_id_param: videoId });
-
-      await supabase.from('video_engagement').upsert({
-        video_id: videoId,
-        wallet_address: address.toString(),
-        liked: newLiked,
-        disliked: disliked && newLiked ? false : disliked,
-        updated_at: new Date().toISOString(),
-      });
+      await supabase.rpc('increment_likes', { video_id_param: videoId });
+      await supabase.from('video_engagement').upsert(
+        {
+          video_id: videoId,
+          wallet_address: address.toString(),
+          liked: true,
+          disliked: false,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'video_id,wallet_address' }
+      );
     } catch {}
   }
 
   async function handleDislike() {
-    if (!address) return;
-    const newDisliked = !disliked;
-    const delta = newDisliked ? 1 : -1;
+    if (!address || hasDisliked) return; // locked
 
-    setDisliked(newDisliked);
-    setDislikes(d => d + delta);
-    if (liked && newDisliked) {
+    setDisliked(true);
+    setHasDisliked(true);
+    setDislikes(d => d + 1);
+    if (liked) {
       setLiked(false);
+      setHasLiked(false);
       setLikes(l => Math.max(0, l - 1));
     }
 
     try {
       const { supabase } = await import('@/lib/supabase');
-      const fn = newDisliked ? 'increment_dislikes' : 'decrement_dislikes';
-      await supabase.rpc(fn, { video_id_param: videoId });
-
-      await supabase.from('video_engagement').upsert({
-        video_id: videoId,
-        wallet_address: address.toString(),
-        liked: liked && newDisliked ? false : liked,
-        disliked: newDisliked,
-        updated_at: new Date().toISOString(),
-      });
+      await supabase.rpc('increment_dislikes', { video_id_param: videoId });
+      await supabase.from('video_engagement').upsert(
+        {
+          video_id: videoId,
+          wallet_address: address.toString(),
+          liked: false,
+          disliked: true,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'video_id,wallet_address' }
+      );
     } catch {}
   }
 
   if (vertical) {
     return (
       <div className="flex flex-col items-center gap-4">
-        <button onClick={handleLike} className="flex flex-col items-center gap-1 group">
-          <div className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center">
+        <button
+          onClick={handleLike}
+          disabled={hasLiked}
+          className="flex flex-col items-center gap-1 group disabled:cursor-not-allowed"
+        >
+          <div className={`w-10 h-10 backdrop-blur-md rounded-full flex items-center justify-center transition-colors
+            ${hasLiked ? 'bg-brand-red/30' : 'bg-black/50 group-hover:bg-black/70'}`}>
             {liked
               ? <HandThumbUpSolid className="w-5 h-5 text-brand-red" />
               : <HandThumbUpIcon className="w-5 h-5 text-white group-hover:text-brand-red transition-colors" />
@@ -112,8 +131,14 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
           </div>
           <span className="text-white text-xs font-bold">{likes.toLocaleString()}</span>
         </button>
-        <button onClick={handleDislike} className="flex flex-col items-center gap-1 group">
-          <div className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center">
+
+        <button
+          onClick={handleDislike}
+          disabled={hasDisliked}
+          className="flex flex-col items-center gap-1 group disabled:cursor-not-allowed"
+        >
+          <div className={`w-10 h-10 backdrop-blur-md rounded-full flex items-center justify-center transition-colors
+            ${hasDisliked ? 'bg-zinc-600/50' : 'bg-black/50 group-hover:bg-black/70'}`}>
             {disliked
               ? <HandThumbDownSolid className="w-5 h-5 text-zinc-400" />
               : <HandThumbDownIcon className="w-5 h-5 text-white group-hover:text-zinc-400 transition-colors" />
@@ -129,7 +154,10 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
     <div className="flex items-center gap-1 bg-zinc-800 rounded-xl overflow-hidden">
       <button
         onClick={handleLike}
-        className="flex items-center gap-2 px-4 py-2 hover:bg-zinc-700 transition-colors"
+        disabled={hasLiked}
+        title={hasLiked ? 'Already liked' : 'Like'}
+        className={`flex items-center gap-2 px-4 py-2 transition-colors disabled:cursor-not-allowed
+          ${hasLiked ? 'text-brand-red bg-brand-red/10' : 'hover:bg-zinc-700'}`}
       >
         {liked
           ? <HandThumbUpSolid className="w-4 h-4 text-brand-red" />
@@ -137,10 +165,15 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
         }
         <span className="text-sm font-bold">{likes.toLocaleString()}</span>
       </button>
+
       <div className="w-px h-5 bg-zinc-700" />
+
       <button
         onClick={handleDislike}
-        className="flex items-center gap-2 px-4 py-2 hover:bg-zinc-700 transition-colors"
+        disabled={hasDisliked}
+        title={hasDisliked ? 'Already disliked' : 'Dislike'}
+        className={`flex items-center gap-2 px-4 py-2 transition-colors disabled:cursor-not-allowed
+          ${hasDisliked ? 'text-zinc-400 bg-zinc-700/50' : 'hover:bg-zinc-700'}`}
       >
         {disliked
           ? <HandThumbDownSolid className="w-4 h-4 text-zinc-400" />

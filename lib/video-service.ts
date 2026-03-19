@@ -18,6 +18,7 @@ export async function saveVideo(metadata: VideoMetadata): Promise<void> {
     thumbnail_url: metadata.thumbnailUrl,
     duration: metadata.duration,
     is_short: metadata.isShort,
+    video_type: metadata.videoType ?? 'long',   // ← persist explicit type
     upload_timestamp: metadata.uploadTimestamp,
     expiration_timestamp: metadata.expirationTimestamp,
     availability_period: metadata.availabilityPeriod,
@@ -32,12 +33,16 @@ export async function saveVideo(metadata: VideoMetadata): Promise<void> {
 
 export async function getAllVideos(): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
-    .from('videos').select('*').order('upload_timestamp', { ascending: false });
+    .from('videos')
+    .select('*')
+    .order('upload_timestamp', { ascending: false });
   if (error) throw error;
   return data.map(recordToMetadata);
 }
 
 export async function getVideoById(videoId: string): Promise<VideoMetadata | null> {
+  // Sanitise — video IDs are alphanumeric + underscores only
+  if (!/^[\w-]+$/.test(videoId)) return null;
   const { data, error } = await supabase
     .from('videos').select('*').eq('video_id', videoId).single();
   if (error) return null;
@@ -46,16 +51,16 @@ export async function getVideoById(videoId: string): Promise<VideoMetadata | nul
 
 export async function getVideosByCategory(category: string): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
-    .from('videos').select('*').eq('category', category).order('upload_timestamp', { ascending: false });
+    .from('videos').select('*').eq('category', category)
+    .order('upload_timestamp', { ascending: false });
   if (error) throw error;
   return data.map(recordToMetadata);
 }
 
-// Shorts: videos flagged as short OR under 60 seconds — fetched from Supabase
 export async function getShortVideos(): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
     .from('videos').select('*')
-    .or('is_short.eq.true,duration.lt.60')
+    .or('is_short.eq.true,video_type.eq.short,duration.lt.60')
     .order('upload_timestamp', { ascending: false });
   if (error) throw error;
   return data.map(recordToMetadata);
@@ -71,32 +76,68 @@ export async function getVideosByUploader(uploaderWallet: string): Promise<Video
 }
 
 export async function searchVideos(query: string): Promise<VideoMetadata[]> {
+  // Sanitise: escape SQL LIKE wildcards, cap length, strip control chars
+  const sanitised = query
+    .replace(/[%_\\]/g, '\\$&')
+    .replace(/[^\w\s\-.,!?]/g, '')
+    .slice(0, 100)
+    .trim();
+
+  if (!sanitised) return [];
+
   const { data, error } = await supabase
     .from('videos').select('*')
-    .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
+    .or(`title.ilike.%${sanitised}%,description.ilike.%${sanitised}%`)
     .order('upload_timestamp', { ascending: false });
   if (error) throw error;
   return data.map(recordToMetadata);
 }
 
 export async function getTrendingVideos(limit: number = 10): Promise<VideoMetadata[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 50);
   const { data, error } = await supabase
-    .from('videos').select('*').order('views', { ascending: false }).limit(limit);
+    .from('videos').select('*').order('views', { ascending: false }).limit(safeLimit);
   if (error) throw error;
   return data.map(recordToMetadata);
 }
 
 export async function getRecentVideos(limit: number = 10): Promise<VideoMetadata[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 50);
   const { data, error } = await supabase
-    .from('videos').select('*').order('upload_timestamp', { ascending: false }).limit(limit);
+    .from('videos').select('*').order('upload_timestamp', { ascending: false }).limit(safeLimit);
   if (error) throw error;
   return data.map(recordToMetadata);
 }
 
-// Non-throwing — call with .catch() to never block the UI
-export async function incrementViews(videoId: string): Promise<void> {
+// Per-user view deduplication — one view per wallet per video, stored in video_engagement
+export async function incrementViews(videoId: string, walletAddress?: string): Promise<void> {
+  if (walletAddress) {
+    // Check if this wallet already viewed this video
+    const { data: existing } = await supabase
+      .from('video_engagement')
+      .select('viewed')
+      .eq('video_id', videoId)
+      .eq('wallet_address', walletAddress)
+      .maybeSingle();
+
+    if (existing?.viewed) return; // Already counted — do nothing
+
+    // Mark as viewed
+    await supabase.from('video_engagement').upsert(
+      {
+        video_id: videoId,
+        wallet_address: walletAddress,
+        viewed: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'video_id,wallet_address' }
+    );
+  }
+
+  // Increment the counter
   const { error } = await supabase.rpc('increment_views', { video_id_param: videoId });
   if (error) {
+    // Fallback if RPC doesn't exist
     const { data } = await supabase.from('videos').select('views').eq('video_id', videoId).single();
     if (data) {
       await supabase.from('videos').update({ views: (data.views || 0) + 1 }).eq('video_id', videoId);
@@ -127,6 +168,7 @@ function recordToMetadata(record: VideoRecord): VideoMetadata {
     dislikes: record.dislikes,
     commentCount: record.comment_count,
     isShort: record.is_short,
+    videoType: (record as any).video_type ?? 'long',
     uploader: record.uploader_wallet,
     timestamp: record.upload_timestamp,
     price: record.price,
@@ -139,6 +181,8 @@ export async function deleteVideo(
   signAndSubmitTransaction: any,
   shelbyUrl?: string
 ): Promise<void> {
+  if (!/^[\w-]+$/.test(videoId)) throw new Error('Invalid video ID');
+
   let resolvedShelbyUrl = shelbyUrl;
   if (!resolvedShelbyUrl) {
     const video = await getVideoById(videoId);
