@@ -27,6 +27,8 @@ import {
 } from '@heroicons/react/24/outline';
 
 function RelatedVideoCard({ video }: { video: VideoMetadata }) {
+  const router = useRouter();
+
   return (
     <Link href={`/video/${video.videoId}`} className="flex gap-3 group">
       <div className="relative w-36 sm:w-40 aspect-video bg-zinc-900 rounded-xl overflow-hidden flex-shrink-0">
@@ -47,13 +49,12 @@ function RelatedVideoCard({ video }: { video: VideoMetadata }) {
         <h4 className="text-white text-sm font-bold line-clamp-2 group-hover:text-brand-red transition-colors leading-snug mb-1">
           {video.title}
         </h4>
-        <Link
-          href={`/channel/${video.channelId}`}
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/channel/${video.channelId}`); }}
           className="text-zinc-500 text-xs hover:text-brand-red transition-colors"
-          onClick={e => e.stopPropagation()}
         >
           {video.channelName}
-        </Link>
+        </button>
         <p className="text-zinc-600 text-xs mt-0.5">
           {video.views.toLocaleString()} views · {formatDistanceToNow(video.uploadTimestamp, { addSuffix: true })}
         </p>

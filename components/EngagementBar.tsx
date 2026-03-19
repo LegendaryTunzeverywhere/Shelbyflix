@@ -7,7 +7,7 @@ import { useWallet } from '@/hooks/useWallet';
 
 interface EngagementBarProps {
   videoId: string;
-  vertical?: boolean; // TikTok-style stacked layout
+  vertical?: boolean;
 }
 
 export default function EngagementBar({ videoId, vertical = false }: EngagementBarProps) {
@@ -36,7 +36,7 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
           .from('video_engagement')
           .select('liked, disliked')
           .eq('video_id', videoId)
-          .eq('user_id', address.toString())
+          .eq('wallet_address', address.toString())
           .single();
         if (eng) {
           setLiked(eng.liked);
@@ -65,10 +65,10 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
 
       await supabase.from('video_engagement').upsert({
         video_id: videoId,
-        user_id: address.toString(),
+        wallet_address: address.toString(),
         liked: newLiked,
         disliked: disliked && newLiked ? false : disliked,
-        timestamp: Date.now(),
+        updated_at: new Date().toISOString(),
       });
     } catch {}
   }
@@ -92,16 +92,15 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
 
       await supabase.from('video_engagement').upsert({
         video_id: videoId,
-        user_id: address.toString(),
+        wallet_address: address.toString(),
         liked: liked && newDisliked ? false : liked,
         disliked: newDisliked,
-        timestamp: Date.now(),
+        updated_at: new Date().toISOString(),
       });
     } catch {}
   }
 
   if (vertical) {
-    // TikTok-style: stacked icons on the right side
     return (
       <div className="flex flex-col items-center gap-4">
         <button onClick={handleLike} className="flex flex-col items-center gap-1 group">
@@ -113,7 +112,6 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
           </div>
           <span className="text-white text-xs font-bold">{likes.toLocaleString()}</span>
         </button>
-
         <button onClick={handleDislike} className="flex flex-col items-center gap-1 group">
           <div className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center">
             {disliked
@@ -127,7 +125,6 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
     );
   }
 
-  // Horizontal layout (video page)
   return (
     <div className="flex items-center gap-1 bg-zinc-800 rounded-xl overflow-hidden">
       <button

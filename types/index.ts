@@ -11,41 +11,31 @@ export enum VideoCategory {
   OTHER = "Other"
 }
 
+export type VideoType = 'short' | 'long';
+
 export interface VideoMetadata {
-  // Identity
   videoId: string;
-  channelId: string; // Uploader's wallet address
+  channelId: string;
   channelName: string;
-  
-  // Content
   title: string;
   description?: string;
   category: VideoCategory;
   tags: string[];
-  
-  // Storage
-  blobId: string; // Shelbynet blob ID
+  blobId: string;
   blobName: string;
   shelbyUrl: string;
-  encryptionKey: string; // Symmetric key for ACE decryption
+  encryptionKey: string;
   thumbnailUrl?: string;
-  
-  // Metadata
-  duration: number; // Video duration in seconds
+  duration: number;
   uploadTimestamp: number;
   expirationTimestamp: number;
-  availabilityPeriod: number; // Days until expiration
-  
-  // Engagement
+  availabilityPeriod: number;
   views: number;
   likes: number;
   dislikes: number;
   commentCount: number;
-  
-  // Video type
-  isShort: boolean; // Videos under 60 seconds
-  
-  // Legacy (keep for backwards compatibility)
+  isShort: boolean;
+  videoType: VideoType;
   uploader: string;
   timestamp: number;
   requiredToken?: string;
@@ -93,7 +83,7 @@ export interface Subscription {
 
 export interface UploadProgress {
   stage: 'preparing' | 'encrypting' | 'uploading' | 'registering' | 'finalizing' | 'complete' | 'error' | 'processing';
-  progress: number; // 0-100
+  progress: number;
   message: string;
 }
 
@@ -111,5 +101,5 @@ export interface Notification {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
   message: string;
-  duration?: number; // Optional duration in milliseconds after which the toast auto-closes
+  duration?: number;
 }
