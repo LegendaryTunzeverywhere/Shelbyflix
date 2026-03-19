@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import VideoCard from '@/components/VideoCard';
 import { 
@@ -25,7 +25,6 @@ type SortOption = 'recent' | 'trending' | 'views' | 'oldest';
 
 export default function GalleryPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   
   const [allVideos, setAllVideos] = useState<VideoMetadata[]>([]);
   const [filteredVideos, setFilteredVideos] = useState<VideoMetadata[]>([]);
