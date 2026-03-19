@@ -11,9 +11,10 @@ import { BellIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 interface SubscribeButtonProps {
   channelId: string;
+  onSubscribe?: () => void;
 }
 
-export default function SubscribeButton({ channelId }: SubscribeButtonProps) {
+export default function SubscribeButton({ channelId, onSubscribe }: SubscribeButtonProps) {
   const { address } = useWallet();
   const [subscribed, setSubscribed] = useState(false);
   const [subscriberCount, setSubscriberCount] = useState(0);
@@ -35,6 +36,9 @@ export default function SubscribeButton({ channelId }: SubscribeButtonProps) {
     const newStatus = toggleSubscription(address.toString(), channelId);
     setSubscribed(newStatus);
     loadSubscriptionStatus();
+    if (onSubscribe) {
+      onSubscribe();
+    }
   };
 
   // Don't show if viewing own channel

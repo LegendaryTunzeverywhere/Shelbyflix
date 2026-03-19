@@ -8,10 +8,14 @@ import Header from '@/components/Header';
 import VideoCard from '@/components/VideoCard';
 import EditVideoModal from '@/components/EditVideoModal';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
+import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress } from '@/lib/aptos';
+import { getSubscriberCount } from '@/lib/engagement-store';
+import { getUserByWallet } from '@/lib/user-service';
 import type { VideoMetadata } from '@/types';
+import type { User } from '@/lib/user-service';
 import {
   PlayCircleIcon,
   FilmIcon,
@@ -23,6 +27,7 @@ import {
   Squares2X2Icon,
   ClockIcon,
   BoltIcon,
+  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 
 type Tab = 'videos' | 'shorts';
@@ -54,7 +59,6 @@ function ChannelVideoRow({
 }) {
   return (
     <div className="flex gap-4 group p-3 rounded-2xl hover:bg-zinc-900/50 transition-colors">
-      {/* Thumbnail */}
       <Link href={`/video/${video.videoId}`} className="relative flex-shrink-0 w-40 aspect-video bg-zinc-900 rounded-xl overflow-hidden">
         {video.thumbnailUrl ? (
           <img src={video.thumbnailUrl} alt={video.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
@@ -71,7 +75,6 @@ function ChannelVideoRow({
         )}
       </Link>
 
-      {/* Info */}
       <div className="flex-1 min-w-0 py-1">
         <Link href={`/video/${video.videoId}`}>
           <h3 className="text-white font-bold text-sm line-clamp-2 hover:text-brand-red transition-colors mb-1 leading-snug">
@@ -96,7 +99,6 @@ function ChannelVideoRow({
         </div>
       </div>
 
-      {/* Owner actions */}
       {isOwner && (
         <div className="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
@@ -132,13 +134,20 @@ export default function ChannelPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('videos');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
-
+  const [subscriberCount, setSubscriberCount] = useState(0);
   const [editingVideo, setEditingVideo] = useState<VideoMetadata | null>(null);
   const [deletingVideo, setDeletingVideo] = useState<VideoMetadata | null>(null);
+  const [publicUser, setPublicUser] = useState<User | null>(null);
 
   useEffect(() => {
     loadVideos();
+    refreshSubCount();
+    getUserByWallet(channelAddress).then(u => setPublicUser(u));
   }, [channelAddress]);
+
+  function refreshSubCount() {
+    setSubscriberCount(getSubscriberCount(channelAddress));
+  }
 
   async function loadVideos() {
     setLoading(true);
@@ -170,7 +179,9 @@ export default function ChannelPage() {
   const totalViews = videos.reduce((s, v) => s + v.views, 0);
   const totalLikes = videos.reduce((s, v) => s + v.likes, 0);
 
-  const displayName = isOwner
+  const displayName = publicUser?.display_name || publicUser?.username
+    ? (publicUser.display_name || publicUser.username!)
+    : isOwner
     ? (user?.display_name || user?.username || formatAddress(channelAddress))
     : formatAddress(channelAddress);
 
@@ -180,31 +191,35 @@ export default function ChannelPage() {
     <div className="min-h-screen bg-brand-dark text-white">
       <Header />
 
-      {/* Channel banner */}
-      <div className="relative h-40 bg-gradient-to-br from-brand-purple/30 via-zinc-900 to-brand-red/20 border-b border-zinc-800">
+      <div className="relative h-36 sm:h-44 bg-gradient-to-br from-brand-purple/30 via-zinc-900 to-brand-red/20 border-b border-zinc-800">
         <div className="absolute inset-0 opacity-10"
           style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7B2BF9 0%, transparent 50%), radial-gradient(circle at 80% 50%, #F61B2E 0%, transparent 50%)' }}
         />
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Channel identity */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-5 -mt-12 mb-8 relative z-10">
-          <div className="w-24 h-24 bg-gradient-to-br from-brand-purple to-brand-red rounded-3xl flex items-center justify-center text-white font-black text-3xl shadow-2xl border-4 border-brand-dark flex-shrink-0">
+        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4 sm:gap-5 -mt-12 mb-8 relative z-10">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 bg-gradient-to-br from-brand-purple to-brand-red rounded-3xl flex items-center justify-center text-white font-black text-2xl sm:text-3xl shadow-2xl border-4 border-brand-dark flex-shrink-0">
             {initials}
           </div>
 
           <div className="flex-1 min-w-0 pb-1">
-            <h1 className="text-2xl font-black tracking-tight text-white">{displayName}</h1>
-            <p className="text-zinc-500 text-sm font-mono mt-0.5">{channelAddress}</p>
-            <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">{displayName}</h1>
+            <p className="text-zinc-500 text-xs sm:text-sm font-mono mt-0.5 truncate">{channelAddress}</p>
+
+            <div className="flex flex-wrap items-center gap-3 sm:gap-5 mt-2 text-xs text-zinc-500">
               <span><span className="text-white font-bold">{videos.length}</span> videos</span>
-              <span><span className="text-white font-bold">{formatViews(totalViews)}</span> total views</span>
+              <span><span className="text-white font-bold">{formatViews(totalViews)}</span> views</span>
+              <span className="flex items-center gap-1">
+                <UserGroupIcon className="w-3.5 h-3.5" />
+                <span className="text-white font-bold">{formatViews(subscriberCount)}</span>
+                {' '}{subscriberCount === 1 ? 'subscriber' : 'subscribers'}
+              </span>
             </div>
           </div>
 
-          {isOwner && (
-            <div className="flex gap-2 pb-1">
+          <div className="flex items-center gap-3 pb-1">
+            {isOwner ? (
               <Link
                 href="/upload"
                 className="flex items-center gap-2 px-4 py-2.5 bg-brand-red hover:bg-brand-red/90 text-white rounded-xl font-black text-xs tracking-widest transition-colors"
@@ -212,21 +227,21 @@ export default function ChannelPage() {
                 <PlusCircleIcon className="w-4 h-4" />
                 UPLOAD
               </Link>
-            </div>
-          )}
+            ) : (
+              <SubscribeButton channelId={channelAddress} onSubscribe={refreshSubCount} />
+            )}
+          </div>
         </div>
 
-        {/* Stats row — owner only */}
         {isOwner && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
             <StatCard icon={FilmIcon} label="Total Videos" value={videos.length.toString()} />
             <StatCard icon={BoltIcon} label="Shorts" value={shorts.length.toString()} />
             <StatCard icon={EyeIcon} label="Total Views" value={formatViews(totalViews)} />
-            <StatCard icon={HandThumbUpIcon} label="Total Likes" value={formatViews(totalLikes)} />
+            <StatCard icon={UserGroupIcon} label="Subscribers" value={formatViews(subscriberCount)} />
           </div>
         )}
 
-        {/* Tabs + view toggle */}
         <div className="flex items-center justify-between mb-6 border-b border-zinc-800 pb-0">
           <div className="flex gap-1">
             {(['videos', 'shorts'] as Tab[]).map(t => (
@@ -234,9 +249,7 @@ export default function ChannelPage() {
                 key={t}
                 onClick={() => setTab(t)}
                 className={`px-5 py-3 text-sm font-black uppercase tracking-widest transition-all border-b-2 -mb-px ${
-                  tab === t
-                    ? 'text-white border-brand-red'
-                    : 'text-zinc-500 border-transparent hover:text-white'
+                  tab === t ? 'text-white border-brand-red' : 'text-zinc-500 border-transparent hover:text-white'
                 }`}
               >
                 {t} {t === 'videos' ? `(${allVideos.length})` : `(${shorts.length})`}
@@ -260,7 +273,6 @@ export default function ChannelPage() {
           </div>
         </div>
 
-        {/* Content */}
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-red" />
@@ -294,9 +306,9 @@ export default function ChannelPage() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 pb-16">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-16 w-full">
             {displayed.map(video => (
-              <div key={video.videoId} className="relative group">
+              <div key={video.videoId} className="relative group min-w-0">
                 <VideoCard video={video} />
                 {isOwner && (
                   <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -320,7 +332,6 @@ export default function ChannelPage() {
         )}
       </div>
 
-      {/* Modals */}
       {editingVideo && (
         <EditVideoModal
           video={editingVideo}
@@ -328,7 +339,6 @@ export default function ChannelPage() {
           onSuccess={handleEditSuccess}
         />
       )}
-
       {deletingVideo && (
         <DeleteVideoModal
           video={deletingVideo}

@@ -24,12 +24,8 @@ import {
 export default function Home() {
   const { connected } = useWallet();
   const { signAndSubmitTransaction } = useAptosWallet();
-  
-  const hasAccess = true;
-  const isLoading = false;
-  const isMissingStore = false;
-  const refetch = async () => {};
 
+  const refetch = async () => {};
   const [registering, setRegistering] = useState(false);
 
   const handleRegister = async () => {
@@ -82,12 +78,12 @@ export default function Home() {
           {/* Hero Section */}
           <div className="text-center mb-16 sm:mb-24">
             <div className="inline-block mb-6 sm:mb-8 animate-in">
-              <span className="px-4 py-1.5 bg-zinc-900 border border-zinc-800 text-brand-pink rounded-full 
+              <span className="px-4 py-1.5 bg-zinc-900 border border-zinc-800 text-brand-pink rounded-full
                 text-[10px] font-black uppercase tracking-[0.2em]">
                 The Future of Streaming is Here
               </span>
             </div>
-            
+
             <h1 className="text-5xl sm:text-6xl md:text-8xl font-black mb-6 sm:mb-8 tracking-tighter leading-[0.9]">
               SHELBY<span className="text-brand-red">FLIX</span>
             </h1>
@@ -101,8 +97,8 @@ export default function Home() {
                 <>
                   <Link
                     href="/upload"
-                    className="w-full sm:w-auto px-10 py-5 bg-white text-black hover:bg-zinc-200 
-                      rounded-2xl font-black transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] 
+                    className="w-full sm:w-auto px-10 py-5 bg-white text-black hover:bg-zinc-200
+                      rounded-2xl font-black transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)]
                       flex items-center justify-center gap-2 group"
                   >
                     UPLOAD VIDEO
@@ -110,7 +106,7 @@ export default function Home() {
                   </Link>
                   <Link
                     href="/gallery"
-                    className="w-full sm:w-auto px-10 py-5 bg-zinc-900 hover:bg-zinc-800 text-white 
+                    className="w-full sm:w-auto px-10 py-5 bg-zinc-900 hover:bg-zinc-800 text-white
                       border border-zinc-800 rounded-2xl font-black transition-all flex items-center justify-center gap-2"
                   >
                     BROWSE GALLERY
@@ -142,14 +138,14 @@ export default function Home() {
           )}
 
           {/* Features Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-16 sm:mb-32">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-16 sm:mb-32 mt-16 sm:mt-32">
             {features.map((feature, index) => (
               <div
                 key={index}
-                className="bg-zinc-900/40 backdrop-blur-sm rounded-3xl p-6 sm:p-8 
+                className="bg-zinc-900/40 backdrop-blur-sm rounded-3xl p-6 sm:p-8
                   hover:bg-zinc-800/40 transition-all border border-zinc-800 group"
               >
-                <div className="w-12 sm:w-14 h-12 sm:h-14 bg-zinc-900 rounded-2xl flex items-center 
+                <div className="w-12 sm:w-14 h-12 sm:h-14 bg-zinc-900 rounded-2xl flex items-center
                   justify-center mb-5 sm:mb-6 border border-zinc-800 group-hover:border-brand-pink/50 transition-colors">
                   <feature.icon className="w-6 h-6 text-brand-red group-hover:text-brand-pink transition-colors" />
                 </div>
@@ -162,11 +158,11 @@ export default function Home() {
           {/* How It Works */}
           <div className="relative rounded-[32px] sm:rounded-[40px] overflow-hidden bg-gradient-to-b from-zinc-900 to-black p-8 sm:p-12 md:p-20 border border-zinc-800">
             <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-brand-purple/10 blur-[100px] -z-10" />
-            
+
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-white mb-10 sm:mb-16 text-center tracking-tighter">
               THREE STEPS TO <span className="text-brand-red">STREAMING</span>
             </h2>
-            
+
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 sm:gap-12">
               <div className="relative">
                 <div className="text-[80px] sm:text-[120px] font-black text-white/5 absolute -top-14 sm:-top-20 -left-6 sm:-left-10 leading-none select-none">01</div>
@@ -175,7 +171,6 @@ export default function Home() {
                   Connect your Aptos wallet to identify yourself on the network.
                 </p>
               </div>
-
               <div className="relative">
                 <div className="text-[80px] sm:text-[120px] font-black text-white/5 absolute -top-14 sm:-top-20 -left-6 sm:-left-10 leading-none select-none">02</div>
                 <h3 className="text-xl sm:text-2xl font-black text-white mb-3 sm:mb-4 relative z-10">UPLOAD</h3>
@@ -183,7 +178,6 @@ export default function Home() {
                   Submit your content to the Shelby decentralized protocol.
                 </p>
               </div>
-
               <div className="relative">
                 <div className="text-[80px] sm:text-[120px] font-black text-white/5 absolute -top-14 sm:-top-20 -left-6 sm:-left-10 leading-none select-none">03</div>
                 <h3 className="text-xl sm:text-2xl font-black text-white mb-3 sm:mb-4 relative z-10">STREAM</h3>
@@ -218,13 +212,13 @@ export default function Home() {
               SHELBY<span className="text-brand-red">FLIX</span>
             </h1>
           </div>
-          
+
           <div className="flex flex-wrap justify-center gap-6 sm:gap-10 mb-10 sm:mb-12">
-            <a href="https://aptoslabs.com" target="_blank" rel="noopener noreferrer" 
+            <a href="https://aptoslabs.com" target="_blank" rel="noopener noreferrer"
               className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
               Aptos
             </a>
-            <a href="https://shelby.xyz" target="_blank" rel="noopener noreferrer" 
+            <a href="https://shelby.xyz" target="_blank" rel="noopener noreferrer"
               className="text-zinc-500 hover:text-white font-bold text-sm transition-colors uppercase tracking-widest">
               Shelby
             </a>
@@ -247,7 +241,7 @@ export default function Home() {
 
 function VideoDiscoverySection() {
   const router = useRouter();
-  
+
   const [allVideos, setAllVideos] = useState<VideoMetadata[]>([]);
   const [trendingVideos, setTrendingVideos] = useState<VideoMetadata[]>([]);
   const [recentVideos, setRecentVideos] = useState<VideoMetadata[]>([]);
@@ -282,9 +276,8 @@ function VideoDiscoverySection() {
 
   return (
     <div className="space-y-12 sm:space-y-16">
-      {/* Category Quick Links */}
       {allVideos.length > 0 && (
-        <div className="mb-12 sm:mb-16">
+        <div>
           <h2 className="text-2xl sm:text-3xl font-black mb-5 sm:mb-6 tracking-tighter text-white">
             BROWSE BY <span className="text-brand-red">CATEGORY</span>
           </h2>
@@ -321,7 +314,7 @@ function VideoDiscoverySection() {
           <h2 className="text-2xl sm:text-3xl font-black mb-6 sm:mb-8 tracking-tighter text-white">
             TRENDING <span className="text-brand-red">NOW</span>
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 w-full">
             {trendingVideos.map((video) => (
               <VideoCard key={video.videoId} video={video} hasAccess={true} />
             ))}
@@ -334,7 +327,7 @@ function VideoDiscoverySection() {
           <h2 className="text-2xl sm:text-3xl font-black mb-6 sm:mb-8 tracking-tighter text-white">
             RECENT <span className="text-brand-red">UPLOADS</span>
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 w-full">
             {recentVideos.map((video) => (
               <VideoCard key={video.videoId} video={video} hasAccess={true} />
             ))}

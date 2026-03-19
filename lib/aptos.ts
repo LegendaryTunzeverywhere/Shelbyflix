@@ -1,11 +1,5 @@
 import { Aptos, AptosConfig, Network, InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 
-// ============================================================================
-// SHELBYNET NETWORK CONFIGURATION
-// ============================================================================
-// Shelbynet is a custom Aptos network for Shelby Protocol
-// Official Docs: https://docs.shelby.xyz
-
 // Shelbynet Network Details
 export const SHELBYNET_CONFIG = {
   name: process.env.NEXT_PUBLIC_NETWORK_NAME || 'TESTNET',

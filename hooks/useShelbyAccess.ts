@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from './useWallet';
 import { checkTokenOwnership } from '@/lib/aptos';
+import { AccountAddress } from '@aptos-labs/ts-sdk';
 
 interface UseShelbyAccessReturn {
   hasAccess: boolean;
@@ -25,7 +26,7 @@ export function useShelbyAccess(): UseShelbyAccessReturn {
 
       setLoading(true);
       try {
-        const result = await checkTokenOwnership(address);
+        const result = await checkTokenOwnership(address.toString());
         setHasAccess(result.hasAccess);
         setBalance(result.balance);
       } catch (error) {

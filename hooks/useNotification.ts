@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
-import type { Notification, NotificationType } from '@/types';
+import type { Notification } from '@/types';
+
+type NotificationType = Notification['type'];
 
 /**
  * Custom hook for managing toast notifications
