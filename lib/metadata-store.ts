@@ -70,7 +70,7 @@ export function searchVideos(query: string): VideoMetadata[] {
   const lowerQuery = query.toLowerCase();
   return getAllVideos().filter(v =>
     v.title.toLowerCase().includes(lowerQuery) ||
-    v.description.toLowerCase().includes(lowerQuery) ||
+    v.description?.toLowerCase().includes(lowerQuery) ||
     v.tags.some(tag => tag.includes(lowerQuery))
   );
 }

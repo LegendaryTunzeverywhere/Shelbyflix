@@ -6,9 +6,7 @@ import { formatDistanceToNow } from 'date-fns';
 import Header from '@/components/Header';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useWallet } from '@/hooks/useWallet';
-import { getVideoById } from '@/lib/video-service';
-import { getVideoMetadata, deleteVideoFromChain } from '@/lib/aptos';
-import { deleteFromShelby } from '@/lib/shelby';
+import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress } from '@/lib/aptos';
 import type { VideoMetadata } from '@/types';
 import {
@@ -25,7 +23,8 @@ import {
 export default function VideoPage() {
   const params = useParams();
   const router = useRouter();
-  const { address, signAndSubmitTransaction } = useWallet();
+  const { address, connected } = useWallet();
+  const { signAndSubmitTransaction } = useAptosWallet();
   const hasAccess = true; // Fee-based access, not token-gated
   
   const [video, setVideo] = useState<VideoMetadata | null>(null);
@@ -76,15 +75,18 @@ export default function VideoPage() {
     try {
       setDeleting(true);
       
-      // Delete from metadata store
-      const { deleteVideo } = await import('@/lib/metadata-store');
-      await deleteVideo(videoId);
+      console.log("🗑️ Deleting video...");
+      console.log("   Video ID:", video.videoId);
+      console.log("   Blob name:", video.blobName);
       
-      // TODO: Delete from Shelby storage (implement later)
-
+      // Delete from database and Shelbynet
+      const { deleteVideo } = await import('@/lib/video-service');
+      await deleteVideo(video.videoId, video.blobName, signAndSubmitTransaction);
+      
+      console.log('✅ Video deleted successfully');
       router.push('/gallery');
     } catch (error) {
-      console.error('Error deleting video:', error);
+      console.error('❌ Error deleting video:', error);
       alert('Failed to delete video. Please try again.');
     } finally {
       setDeleting(false);

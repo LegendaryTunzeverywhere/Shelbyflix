@@ -173,3 +173,34 @@ function recordToMetadata(record: VideoRecord): VideoMetadata {
     price: record.price,
   };
 }
+
+/**
+ * Delete video from database
+ */
+export async function deleteVideo(
+  videoId: string,
+  blobName: string,
+  signAndSubmitTransaction: any
+): Promise<void> {
+  // Delete from database
+  const { error: dbError } = await supabase
+    .from('videos')
+    .delete()
+    .eq('video_id', videoId);
+  
+  if (dbError) {
+    console.error('Failed to delete from database:', dbError);
+    throw dbError;
+  }
+  
+  console.log('✅ Deleted from database');
+  
+  // Delete from Shelbynet (optional - will expire anyway)
+  try {
+    const { deleteFromShelby } = await import('./shelby');
+    await deleteFromShelby(videoId, blobName, signAndSubmitTransaction);
+  } catch (error) {
+    console.warn('Failed to delete from Shelbynet:', error);
+    // Don't throw - database deletion succeeded
+  }
+}

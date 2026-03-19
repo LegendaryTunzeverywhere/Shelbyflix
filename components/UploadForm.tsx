@@ -108,7 +108,8 @@ export default function UploadForm() {
           channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
           price: parseInt(price),
         },
-        signAndSubmitTransaction, // ✅ ADD THIS PARAMETER
+        address, // uploaderAccount
+        signAndSubmitTransaction,
         setUploadProgress
       );
 

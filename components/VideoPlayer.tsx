@@ -55,13 +55,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, walletAddress, hasAcce
     try {
       // Import decryption function
       const { downloadAndDecryptVideo } = await import("@/lib/shelby");
-      const { incrementViews } = await import("@/lib/metadata-store");
+      const { incrementViews } = await import("@/lib/video-service");
       
-      // Download and decrypt video
+      console.log("🎬 Loading video stream...");
+      console.log("   Video ID:", video.videoId);
+      console.log("   Shelbynet URL:", video.shelbyUrl);
+      
+      // Download and decrypt video from Shelbynet
       const decryptedBlob = await downloadAndDecryptVideo(
-      video.shelbyUrl,
-      video.encryptionKey
-    );
+        video.shelbyUrl,
+        video.encryptionKey,
+        video.blobName
+      );
+      
+      console.log("✅ Video ready for playback");
           
       // Create object URL for player
       const url = URL.createObjectURL(decryptedBlob);

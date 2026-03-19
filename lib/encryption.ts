@@ -1,78 +1,101 @@
-import CryptoJS from 'crypto-js';
+/**
+ * ENCRYPTION UTILITIES
+ *
+ * Uses the browser's native Web Crypto API (AES-256-GCM) for raw binary output.
+ * CryptoJS was removed because CryptoJS.AES.encrypt() with a string key outputs a
+ * Base64-encoded OpenSSL string blob, NOT raw binary data. This caused the Shelbynet
+ * "Merkle Root does not match onchain registration" error because:
+ *   1. The server computes SHA-256 over raw ciphertext bytes it receives.
+ *   2. Our commitment was SHA-256 of Base64 text bytes — a completely different hash.
+ *
+ * Encrypted blob layout: [12-byte random IV | AES-GCM ciphertext + 16-byte auth tag]
+ */
+
+// ---------------------------------------------------------------------------
+// KEY HELPERS
+// ---------------------------------------------------------------------------
 
 /**
- * Generate a random encryption key
+ * Generate a random 256-bit encryption key returned as a hex string.
  */
 export function generateEncryptionKey(): string {
-  return CryptoJS.lib.WordArray.random(32).toString(CryptoJS.enc.Hex);
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
+/** Convert a hex string to a Uint8Array. */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+/** Import a raw 32-byte hex key as a Web Crypto CryptoKey. */
+async function importAesKey(hex: string, usage: KeyUsage[]): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    hexToBytes(hex).slice(),
+    { name: 'AES-GCM', length: 256 },
+    false,
+    usage
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ENCRYPT / DECRYPT
+// ---------------------------------------------------------------------------
+
 /**
- * Encrypt a file using AES-256
- * @param file - Video file to encrypt
- * @param key - Encryption key
- * @returns Encrypted blob
+ * Encrypt a file using AES-256-GCM.
+ *
+ * Returns a raw binary Blob: [12-byte IV | ciphertext + 16-byte GCM auth tag].
+ * There is NO Base64 layer — the bytes written to storage are pure ciphertext,
+ * so SHA-256(blob) on the client matches SHA-256(received bytes) on the server.
  */
 export async function encryptFile(file: File, key: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = async (e) => {
-      try {
-        const arrayBuffer = e.target?.result as ArrayBuffer;
-        const wordArray = CryptoJS.lib.WordArray.create(arrayBuffer);
-        
-        // Encrypt using AES
-        const encrypted = CryptoJS.AES.encrypt(wordArray, key);
-        
-        // Convert to blob
-        const encryptedString = encrypted.toString();
-        const blob = new Blob([encryptedString], { type: 'application/octet-stream' });
-        
-        resolve(blob);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsArrayBuffer(file);
-  });
+  const fileData = await file.arrayBuffer();
+  const cryptoKey = await importAesKey(key, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for GCM
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    fileData
+  );
+
+  // Prepend IV so decryption can recover it without out-of-band storage.
+  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ciphertext), iv.byteLength);
+
+  return new Blob([combined], { type: 'application/octet-stream' });
 }
 
 /**
- * Decrypt a blob using AES-256
- * @param encryptedBlob - Encrypted blob
- * @param key - Decryption key
- * @returns Decrypted blob
+ * Decrypt a blob produced by encryptFile.
+ * Reads the 12-byte IV prefix, then decrypts and verifies the GCM auth tag.
  */
 export async function decryptBlob(encryptedBlob: Blob, key: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = async (e) => {
-      try {
-        const encryptedString = e.target?.result as string;
-        
-        // Decrypt using AES
-        const decrypted = CryptoJS.AES.decrypt(encryptedString, key);
-        
-        // Convert back to ArrayBuffer
-        const typedArray = new Uint8Array(decrypted.sigBytes);
-        for (let i = 0; i < decrypted.sigBytes; i++) {
-          typedArray[i] = (decrypted.words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
-        }
-        
-        const blob = new Blob([typedArray], { type: 'video/mp4' });
-        resolve(blob);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    
-    reader.onerror = () => reject(new Error('Failed to read encrypted blob'));
-    reader.readAsText(encryptedBlob);
-  });
+  const data = await encryptedBlob.arrayBuffer();
+  const bytes = new Uint8Array(data);
+
+  const IV_LENGTH = 12;
+  const iv = bytes.slice(0, IV_LENGTH);
+  const ciphertext = bytes.slice(IV_LENGTH);
+
+  const cryptoKey = await importAesKey(key, ['decrypt']);
+
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    ciphertext
+  );
+
+  return new Blob([plaintext], { type: 'video/mp4' });
 }
 
 /**

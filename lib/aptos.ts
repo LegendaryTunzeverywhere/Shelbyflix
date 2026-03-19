@@ -9,9 +9,9 @@ import { Aptos, AptosConfig, Network, InputGenerateTransactionPayloadData } from
 // Shelbynet Network Details
 export const SHELBYNET_CONFIG = {
   name: process.env.NEXT_PUBLIC_NETWORK_NAME || 'TESTNET',
-  nodeUrl: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL || 'https://api.shelbynet.shelby.xyz/v1',
-  indexerUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL || 'https://api.shelbynet.shelby.xyz/v1/graphql',
-  faucetUrl: process.env.NEXT_PUBLIC_SHELBYNET_FAUCET_URL || 'https://faucet.shelbynet.shelby.xyz',
+  nodeUrl: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL!,
+  indexerUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL!,
+  faucetUrl: process.env.NEXT_PUBLIC_SHELBYNET_FAUCET_URL!,
 };
 
 // Configure Aptos client for Shelbynet
@@ -175,8 +175,8 @@ export async function waitForTransaction(txnHash: string): Promise<boolean> {
   try {
     console.log('⏳ Transaction submitted:', txnHash);
     
-    // Shelbynet is slower to index - just wait 3 seconds instead
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Use the Aptos client to wait for transaction confirmation
+    await aptos.waitForTransaction({ transactionHash: txnHash });
     
     console.log('✅ Transaction completed');
     return true;
