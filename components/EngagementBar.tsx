@@ -16,7 +16,6 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   const [disliked, setDisliked] = useState(false);
   const [likes, setLikes] = useState(0);
   const [dislikes, setDislikes] = useState(0);
-  // One-way lock — once engaged, cannot undo
   const [hasLiked, setHasLiked] = useState(false);
   const [hasDisliked, setHasDisliked] = useState(false);
 
@@ -45,7 +44,7 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
           .from('video_engagement')
           .select('liked, disliked')
           .eq('video_id', videoId)
-          .eq('wallet_address', address.toString())
+          .eq('user_wallet', address.toString().toLowerCase()) // ✅ FIXED: user_wallet + lowercase
           .maybeSingle();
 
         if (eng) {
@@ -55,15 +54,19 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
           setHasDisliked(eng.disliked);
         }
       }
-    } catch {}
+    } catch (err) {
+      console.error('Failed to load engagement:', err);
+    }
   }
 
   async function handleLike() {
-    if (!address || hasLiked) return; // locked
+    if (!address || hasLiked) return;
 
     setLiked(true);
     setHasLiked(true);
     setLikes(l => l + 1);
+    
+    // If switching from dislike to like
     if (disliked) {
       setDisliked(false);
       setHasDisliked(false);
@@ -72,26 +75,47 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
 
     try {
       const { supabase } = await import('@/lib/supabase');
+      
+      // Update counts
+      if (disliked) {
+        await supabase.rpc('decrement_dislikes', { video_id_param: videoId });
+      }
       await supabase.rpc('increment_likes', { video_id_param: videoId });
+      
+      // Update user engagement
       await supabase.from('video_engagement').upsert(
         {
           video_id: videoId,
-          wallet_address: address.toString(),
+          user_wallet: address.toString().toLowerCase(), // ✅ FIXED: user_wallet + lowercase
           liked: true,
           disliked: false,
+          timestamp: Date.now(),
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'video_id,wallet_address' }
+        { onConflict: 'video_id,user_wallet' } // ✅ FIXED: correct conflict columns
       );
-    } catch {}
+    } catch (err) {
+      console.error('Failed to like:', err);
+      // Rollback on error
+      setLiked(false);
+      setHasLiked(false);
+      setLikes(l => Math.max(0, l - 1));
+      if (disliked) {
+        setDisliked(true);
+        setHasDisliked(true);
+        setDislikes(d => d + 1);
+      }
+    }
   }
 
   async function handleDislike() {
-    if (!address || hasDisliked) return; // locked
+    if (!address || hasDisliked) return;
 
     setDisliked(true);
     setHasDisliked(true);
     setDislikes(d => d + 1);
+    
+    // If switching from like to dislike
     if (liked) {
       setLiked(false);
       setHasLiked(false);
@@ -100,18 +124,37 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
 
     try {
       const { supabase } = await import('@/lib/supabase');
+      
+      // Update counts
+      if (liked) {
+        await supabase.rpc('decrement_likes', { video_id_param: videoId });
+      }
       await supabase.rpc('increment_dislikes', { video_id_param: videoId });
+      
+      // Update user engagement
       await supabase.from('video_engagement').upsert(
         {
           video_id: videoId,
-          wallet_address: address.toString(),
+          user_wallet: address.toString().toLowerCase(), // ✅ FIXED: user_wallet + lowercase
           liked: false,
           disliked: true,
+          timestamp: Date.now(),
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'video_id,wallet_address' }
+        { onConflict: 'video_id,user_wallet' } // ✅ FIXED: correct conflict columns
       );
-    } catch {}
+    } catch (err) {
+      console.error('Failed to dislike:', err);
+      // Rollback on error
+      setDisliked(false);
+      setHasDisliked(false);
+      setDislikes(d => Math.max(0, d - 1));
+      if (liked) {
+        setLiked(true);
+        setHasLiked(true);
+        setLikes(l => l + 1);
+      }
+    }
   }
 
   if (vertical) {
