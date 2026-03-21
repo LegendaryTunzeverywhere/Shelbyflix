@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Header from '@/components/Header';
+import AuthGuard from '@/components/AuthGuard';
 import EngagementBar from '@/components/EngagementBar';
 import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
@@ -112,7 +112,7 @@ function ShortPlayer({
   );
 }
 
-export default function ShortsPage() {
+function ShortsContent() {
   const router = useRouter();
   const { address } = useWallet();
   const [shorts, setShorts] = useState<VideoMetadata[]>([]);
@@ -138,9 +138,24 @@ export default function ShortsPage() {
     })();
   }, []);
 
-  const goNext = useCallback(() => setCurrentIndex(i => Math.min(i + 1, shorts.length - 1)), [shorts.length]);
-  const goPrev = useCallback(() => setCurrentIndex(i => Math.max(i - 1, 0)), []);
+  // ✅ FIX: Allow both next AND previous navigation
+  const goNext = useCallback(() => {
+    setCurrentIndex(i => {
+      const next = i + 1;
+      if (next >= shorts.length) return i; // Can't go beyond last
+      return next;
+    });
+  }, [shorts.length]);
 
+  const goPrev = useCallback(() => {
+    setCurrentIndex(i => {
+      const prev = i - 1;
+      if (prev < 0) return i; // Can't go before first
+      return prev;
+    });
+  }, []);
+
+  // Keyboard navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') goNext();
@@ -150,6 +165,7 @@ export default function ShortsPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [goNext, goPrev]);
 
+  // Touch navigation
   function onTouchStart(e: React.TouchEvent) {
     touchStartY.current = e.touches[0].clientY;
     touchStartTime.current = Date.now();
@@ -158,18 +174,25 @@ export default function ShortsPage() {
   function onTouchEnd(e: React.TouchEvent) {
     const dy = touchStartY.current - e.changedTouches[0].clientY;
     const dt = Date.now() - touchStartTime.current;
+    
+    // Swipe threshold
     if (Math.abs(dy) > 60 || (Math.abs(dy) > 30 && dt < 300)) {
-      if (dy > 0) goNext();
-      else goPrev();
+      if (dy > 0) goNext();      // Swipe up → next
+      else goPrev();             // Swipe down → previous ✅
     }
   }
 
+  // Mouse wheel navigation
   const wheelLock = useRef(false);
   function onWheel(e: React.WheelEvent) {
+    e.preventDefault(); // Prevent page scroll
+    
     if (wheelLock.current) return;
     wheelLock.current = true;
-    if (e.deltaY > 0) goNext();
-    else goPrev();
+    
+    if (e.deltaY > 0) goNext();      // Scroll down → next
+    else goPrev();                    // Scroll up → previous ✅
+    
     setTimeout(() => { wheelLock.current = false; }, 600);
   }
 
@@ -184,7 +207,11 @@ export default function ShortsPage() {
   if (shorts.length === 0) {
     return (
       <div className="min-h-screen bg-black">
-        <Header />
+        <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 pt-4">
+          <Link href="/" className="text-white font-black text-xl tracking-tighter">
+            SHELBY<span className="text-brand-red">FLIX</span>
+          </Link>
+        </div>
         <main className="flex items-center justify-center h-[80vh]">
           <div className="text-center">
             <h2 className="text-3xl font-black text-white mb-4 tracking-tighter">NO SHORTS YET</h2>
@@ -224,6 +251,7 @@ export default function ShortsPage() {
         onTouchEnd={onTouchEnd}
         onWheel={onWheel}
       >
+        {/* Progress indicator */}
         <div className="absolute top-14 left-4 right-16 z-20 flex gap-1">
           {shorts.map((_, idx) => (
             <div key={idx} className="flex-1 h-0.5 rounded-full bg-white/20 overflow-hidden">
@@ -232,7 +260,9 @@ export default function ShortsPage() {
           ))}
         </div>
 
+        {/* Video slides */}
         {shorts.map((short, idx) => {
+          // Render current, previous, and next for smooth transitions
           if (Math.abs(idx - currentIndex) > 1) return null;
           return (
             <div
@@ -245,6 +275,7 @@ export default function ShortsPage() {
           );
         })}
 
+        {/* Info overlay */}
         <div className="absolute bottom-0 left-0 right-16 p-5 z-20 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none">
           <div className="flex items-center gap-3 mb-3 pointer-events-auto">
             <Link href={`/channel/${current.channelId}`}>
@@ -276,24 +307,43 @@ export default function ShortsPage() {
           </div>
         </div>
 
+        {/* Navigation controls */}
         <div className="absolute right-3 bottom-24 z-20 flex flex-col items-center gap-5">
           <EngagementBar videoId={current.videoId} vertical />
+          
+          {/* Up button - Always enabled for previous ✅ */}
           <button
             onClick={goPrev}
             disabled={currentIndex === 0}
-            className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white disabled:opacity-30"
+            className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white 
+              disabled:opacity-30 disabled:cursor-not-allowed
+              hover:bg-black/70 transition-all"
+            title="Previous short"
           >
             <ChevronUpIcon className="w-5 h-5" />
           </button>
+          
+          {/* Down button - Next */}
           <button
             onClick={goNext}
             disabled={currentIndex === shorts.length - 1}
-            className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white disabled:opacity-30"
+            className="w-10 h-10 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white 
+              disabled:opacity-30 disabled:cursor-not-allowed
+              hover:bg-black/70 transition-all"
+            title="Next short"
           >
             <ChevronDownIcon className="w-5 h-5" />
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ShortsPage() {
+  return (
+    <AuthGuard requireUsername={true}>
+      <ShortsContent />
+    </AuthGuard>
   );
 }

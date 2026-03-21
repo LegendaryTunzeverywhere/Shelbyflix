@@ -3,295 +3,204 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
+import AuthGuard from '@/components/AuthGuard';
 import VideoCard from '@/components/VideoCard';
-import { 
-  getAllVideos, 
-  searchVideos, 
-  getVideosByCategory,
-  getTrendingVideos,
-} from '@/lib/video-service';
-import type { VideoMetadata, VideoCategory } from '@/types';
-import { 
-  MagnifyingGlassIcon, 
-  FunnelIcon,
-  SparklesIcon,
-  ClockIcon,
-  FireIcon,
-  VideoCameraIcon,
-  XMarkIcon 
-} from '@heroicons/react/24/outline';
+import type { VideoMetadata } from '@/types';
+import { MagnifyingGlassIcon, FunnelIcon } from '@heroicons/react/24/outline';
 
-type SortOption = 'recent' | 'trending' | 'views' | 'oldest';
+const CATEGORIES = ['All', 'Music', 'Gaming', 'Education', 'Entertainment', 'Sports', 'Technology', 'Other'];
 
-export default function GalleryPage() {
+function GalleryContent() {
   const router = useRouter();
-  
-  const [allVideos, setAllVideos] = useState<VideoMetadata[]>([]);
+  const [videos, setVideos] = useState<VideoMetadata[]>([]);
   const [filteredVideos, setFilteredVideos] = useState<VideoMetadata[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<SortOption>('recent');
-  const [showShorts, setShowShorts] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const [sortBy, setSortBy] = useState<'recent' | 'popular' | 'oldest'>('recent');
 
   useEffect(() => {
     loadVideos();
   }, []);
 
-  useEffect(() => {
-    applyFilters();
-  }, [allVideos, searchQuery, selectedCategory, sortBy, showShorts]);
-
-  const loadVideos = async () => {
+  async function loadVideos() {
     try {
-      const videos = await getAllVideos();
-      setAllVideos(videos);
+      const { getAllVideos } = await import('@/lib/video-service');
+      const allVideos = await getAllVideos();
+      
+      // Filter out shorts (duration < 60 seconds)
+      const regularVideos = allVideos.filter(v => 
+        v.videoType !== 'short' && !v.isShort && v.duration >= 60
+      );
+      
+      setVideos(regularVideos);
+      setFilteredVideos(regularVideos);
     } catch (error) {
       console.error('Failed to load videos:', error);
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
-    const applyFilters = async () => {
-      let videos = [...allVideos];
+  // Apply filters whenever videos, category, search, or sort changes
+  useEffect(() => {
+    let result = [...videos];
 
-      // Search filter
-      if (searchQuery.trim()) {
-        try {
-          videos = await searchVideos(searchQuery);
-        } catch (error) {
-          console.error('Search failed:', error);
-        }
-      }
+    // Filter by category
+    if (selectedCategory !== 'All') {
+      result = result.filter(v => v.category === selectedCategory);
+    }
 
-      // Category filter
-      if (selectedCategory !== 'all') {
-        videos = videos.filter(v => v.category === selectedCategory);
-      }
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(v =>
+        v.title.toLowerCase().includes(query) ||
+        v.description?.toLowerCase().includes(query) ||
+        v.channelName.toLowerCase().includes(query) ||
+        v.tags?.some(tag => tag.toLowerCase().includes(query))
+      );
+    }
 
-      // Shorts filter
-      if (showShorts) {
-        videos = videos.filter(v => v.isShort);
-      }
+    // Sort
+    if (sortBy === 'recent') {
+      result.sort((a, b) => b.uploadTimestamp - a.uploadTimestamp);
+    } else if (sortBy === 'popular') {
+      result.sort((a, b) => b.views - a.views);
+    } else if (sortBy === 'oldest') {
+      result.sort((a, b) => a.uploadTimestamp - b.uploadTimestamp);
+    }
 
-      // Sort
-      switch (sortBy) {
-        case 'trending':
-        case 'views':
-          videos = videos.sort((a, b) => b.views - a.views);
-          break;
-        case 'recent':
-          videos = videos.sort((a, b) => b.uploadTimestamp - a.uploadTimestamp);
-          break;
-        case 'oldest':
-          videos = videos.sort((a, b) => a.uploadTimestamp - b.uploadTimestamp);
-          break;
-      }
+    setFilteredVideos(result);
+  }, [videos, selectedCategory, searchQuery, sortBy]);
 
-      setFilteredVideos(videos);
-    };
-    
-  const categories = [
-    { value: 'all', label: 'ALL', icon: SparklesIcon },
-    { value: 'Entertainment', label: 'ENTERTAINMENT', icon: VideoCameraIcon },
-    { value: 'Education', label: 'EDUCATION', icon: SparklesIcon },
-    { value: 'Gaming', label: 'GAMING', icon: VideoCameraIcon },
-    { value: 'Music', label: 'MUSIC', icon: SparklesIcon },
-    { value: 'Sports', label: 'SPORTS', icon: VideoCameraIcon },
-    { value: 'News', label: 'NEWS', icon: SparklesIcon },
-    { value: 'Technology', label: 'TECH', icon: VideoCameraIcon },
-    { value: 'Lifestyle', label: 'LIFESTYLE', icon: SparklesIcon },
-    { value: 'Comedy', label: 'COMEDY', icon: VideoCameraIcon },
-  ];
-
-  const sortOptions = [
-    { value: 'recent', label: 'LATEST', icon: ClockIcon },
-    { value: 'trending', label: 'TRENDING', icon: FireIcon },
-    { value: 'views', label: 'MOST VIEWED', icon: FireIcon },
-    { value: 'oldest', label: 'OLDEST', icon: ClockIcon },
-  ];
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-brand-dark">
+        <Header />
+        <main className="max-w-7xl mx-auto px-4 py-8">
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="text-center">
+              <div className="w-16 h-16 border-4 border-zinc-700 border-t-brand-red rounded-full animate-spin mx-auto mb-4" />
+              <p className="text-zinc-500">Loading videos...</p>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-brand-dark">
       <Header />
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      
+      <main className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
         {/* Header */}
-        <div className="mb-12">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-5xl font-black tracking-tighter text-white mb-2">
-                VIDEO <span className="text-brand-red">ARCHIVE</span>
-              </h1>
-              <p className="text-zinc-500 font-medium">
-                {filteredVideos.length} {filteredVideos.length === 1 ? 'transmission' : 'transmissions'} available
-              </p>
-            </div>
+        <div className="mb-6 sm:mb-8">
+          <h1 className="text-3xl sm:text-4xl font-black text-white mb-2">Video Gallery</h1>
+          <p className="text-zinc-500">Browse all videos</p>
+        </div>
 
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className="lg:hidden px-6 py-3 bg-zinc-900/50 border border-zinc-800 text-white rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-zinc-800 transition-colors"
-            >
-              <FunnelIcon className="w-5 h-5" />
-              FILTERS
-            </button>
-          </div>
-
-          {/* Search Bar */}
+        {/* Filters */}
+        <div className="mb-6 space-y-4">
+          {/* Search bar */}
           <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+            <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
             <input
               type="text"
+              placeholder="Search videos, channels, tags..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search videos, tags, or channels..."
-              className="w-full pl-14 pr-12 py-5 bg-zinc-900/50 border border-zinc-800 rounded-[24px] text-white placeholder-zinc-600 focus:ring-2 focus:ring-brand-red focus:border-transparent font-medium"
+              className="w-full pl-12 pr-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder:text-zinc-500 focus:outline-none focus:border-brand-red transition-colors"
             />
-            {searchQuery && (
+          </div>
+
+          {/* Category tabs */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            {CATEGORIES.map((category) => (
               <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-6 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                key={category}
+                onClick={() => setSelectedCategory(category)}
+                className={`px-4 py-2 rounded-lg font-bold text-sm whitespace-nowrap transition-all ${
+                  selectedCategory === category
+                    ? 'bg-brand-red text-white'
+                    : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                }`}
               >
-                <XMarkIcon className="w-5 h-5" />
+                {category}
               </button>
-            )}
-          </div>
-        </div>
-
-        {/* Filters - Desktop */}
-        <div className={`mb-8 space-y-6 ${showFilters ? 'block' : 'hidden lg:block'}`}>
-          {/* Categories */}
-          <div>
-            <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em] mb-4">
-              CATEGORIES
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {categories.map((cat) => (
-                <button
-                  key={cat.value}
-                  onClick={() => setSelectedCategory(cat.value)}
-                  className={`px-6 py-3 rounded-2xl font-black text-xs tracking-widest transition-all ${
-                    selectedCategory === cat.value
-                      ? 'bg-brand-red text-white shadow-[0_0_20px_rgba(246,27,46,0.3)]'
-                      : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 border border-zinc-800'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
 
-          {/* Sort & Filters */}
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Sort Options */}
+          {/* Sort options */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-zinc-500">
+              {filteredVideos.length} {filteredVideos.length === 1 ? 'video' : 'videos'}
+            </p>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">
-                SORT BY:
-              </span>
-              {sortOptions.map((sort) => (
-                <button
-                  key={sort.value}
-                  onClick={() => setSortBy(sort.value as SortOption)}
-                  className={`px-5 py-2.5 rounded-xl font-black text-xs tracking-widest transition-all ${
-                    sortBy === sort.value
-                      ? 'bg-white text-black'
-                      : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 border border-zinc-800'
-                  }`}
-                >
-                  {sort.label}
-                </button>
-              ))}
+              <FunnelIcon className="w-4 h-4 text-zinc-500" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-brand-red cursor-pointer"
+              >
+                <option value="recent">Most Recent</option>
+                <option value="popular">Most Popular</option>
+                <option value="oldest">Oldest First</option>
+              </select>
             </div>
-
-            {/* Shorts Toggle */}
-            <button
-              onClick={() => setShowShorts(!showShorts)}
-              className={`ml-auto px-6 py-3 rounded-2xl font-black text-xs tracking-widest transition-all ${
-                showShorts
-                  ? 'bg-brand-purple text-white shadow-[0_0_20px_rgba(168,85,247,0.3)]'
-                  : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 border border-zinc-800'
-              }`}
-            >
-              <VideoCameraIcon className="w-4 h-4 inline mr-2" />
-              {showShorts ? 'SHOWING SHORTS' : 'SHORTS ONLY'}
-            </button>
           </div>
         </div>
 
-        {/* Videos Grid */}
+        {/* Videos grid */}
         {filteredVideos.length > 0 ? (
-          <div className={`grid gap-6 ${
-            showShorts 
-              ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6' 
-              : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
-          }`}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredVideos.map((video) => (
-              showShorts ? (
-                // Shorts Card (Vertical)
-                <div
-                  key={video.videoId}
-                  onClick={() => router.push(`/video/${video.videoId}`)}
-                  className="cursor-pointer group"
-                >
-                  <div className="relative aspect-[9/16] rounded-2xl overflow-hidden bg-zinc-900/50 border border-zinc-800 group-hover:border-brand-purple transition-all">
-                    {video.thumbnailUrl ? (
-                      <img
-                        src={video.thumbnailUrl}
-                        alt={video.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <VideoCameraIcon className="w-12 h-12 text-zinc-700" />
-                      </div>
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                    <div className="absolute bottom-0 left-0 right-0 p-4">
-                      <p className="text-white text-sm font-bold line-clamp-2 mb-1">
-                        {video.title}
-                      </p>
-                      <p className="text-zinc-300 text-xs">
-                        {video.views.toLocaleString()} views
-                      </p>
-                    </div>
-                    <div className="absolute top-3 right-3 px-2 py-1 bg-brand-purple rounded-lg text-white text-[10px] font-black">
-                      SHORT
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                // Regular Card (Horizontal)
-                <VideoCard key={video.videoId} video={video} />
-              )
+              <VideoCard key={video.videoId} video={video} />
             ))}
           </div>
         ) : (
-          // Empty State
           <div className="text-center py-20">
-            <div className="w-24 h-24 bg-zinc-900/50 rounded-[32px] border border-zinc-800 flex items-center justify-center mx-auto mb-6">
-              <MagnifyingGlassIcon className="w-12 h-12 text-zinc-700" />
+            <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-4">
+              <MagnifyingGlassIcon className="w-10 h-10 text-zinc-600" />
             </div>
-            <h2 className="text-2xl font-black text-white mb-2 tracking-tighter">
-              NO RESULTS FOUND
-            </h2>
-            <p className="text-zinc-500 font-medium mb-8 max-w-md mx-auto">
-              {searchQuery 
-                ? `No videos found for "${searchQuery}". Try different keywords.`
-                : 'No videos match your current filters. Try adjusting your selection.'}
+            <h3 className="text-xl font-bold text-white mb-2">No videos found</h3>
+            <p className="text-zinc-500 mb-6">
+              {searchQuery
+                ? `No results for "${searchQuery}"`
+                : selectedCategory !== 'All'
+                ? `No videos in ${selectedCategory} category`
+                : 'No videos available'}
             </p>
-            <button
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedCategory('all');
-                setShowShorts(false);
-              }}
-              className="px-8 py-4 bg-brand-red hover:bg-brand-red/90 text-white rounded-2xl font-black text-sm tracking-widest transition-colors"
-            >
-              CLEAR FILTERS
-            </button>
+            {searchQuery || selectedCategory !== 'All' ? (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('All');
+                }}
+                className="px-6 py-3 bg-brand-red text-white rounded-xl font-bold hover:bg-brand-red/90 transition-colors"
+              >
+                Clear Filters
+              </button>
+            ) : (
+              <button
+                onClick={() => router.push('/upload')}
+                className="px-6 py-3 bg-brand-red text-white rounded-xl font-bold hover:bg-brand-red/90 transition-colors"
+              >
+                Upload First Video
+              </button>
+            )}
           </div>
         )}
       </main>
     </div>
+  );
+}
+
+export default function GalleryPage() {
+  return (
+    <AuthGuard requireUsername={true}>
+      <GalleryContent />
+    </AuthGuard>
   );
 }
