@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress, sanitizeUrl } from '@/lib/utils';
 import { useShelbyAccess } from '@/hooks/useShelbyAccess';
-import { initiateGoogleLogin, getUserInfo, logout as logoutGoogle, isLoggedIn } from '@/lib/keyless-auth';
 
 import { 
   WalletIcon, 
@@ -29,12 +28,23 @@ const WalletConnect: React.FC = () => {
   
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Check for Google login on mount
+  // Check for Google login on mount - with error handling
   useEffect(() => {
-    const userInfo = getUserInfo();
-    if (userInfo) {
-      setGoogleUser(userInfo);
-      setActiveMethod('google');
+    try {
+      // Dynamically import to avoid build errors
+      import('@/lib/keyless-auth')
+        .then(({ getUserInfo }) => {
+          const userInfo = getUserInfo();
+          if (userInfo) {
+            setGoogleUser(userInfo);
+            setActiveMethod('google');
+          }
+        })
+        .catch((err) => {
+          console.log('Google auth not available:', err.message);
+        });
+    } catch (error) {
+      console.log('Google auth module not found');
     }
   }, []);
 
@@ -81,22 +91,28 @@ const WalletConnect: React.FC = () => {
     }
   };
 
-  // Handle Google login
-  const handleGoogleLogin = () => {
+  // Handle Google login - with error handling
+  const handleGoogleLogin = async () => {
     try {
+      const { initiateGoogleLogin } = await import('@/lib/keyless-auth');
       initiateGoogleLogin();
     } catch (error) {
       console.error('Google login failed:', error);
-      alert('Failed to initiate Google login. Please check your configuration.');
+      alert('Google Sign-In is not fully configured yet. Please use a wallet to connect.');
     }
   };
 
   // Handle logout
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (confirm('Are you sure you want to logout?')) {
       if (activeMethod === 'google') {
-        logoutGoogle();
-        setGoogleUser(null);
+        try {
+          const { logout: logoutGoogle } = await import('@/lib/keyless-auth');
+          logoutGoogle();
+          setGoogleUser(null);
+        } catch (error) {
+          console.error('Google logout failed:', error);
+        }
       } else if (activeMethod === 'wallet') {
         disconnect();
       }
@@ -107,7 +123,7 @@ const WalletConnect: React.FC = () => {
   };
 
   // Determine if user is authenticated
-  const isAuthenticated = (connected && account) || (googleUser && isLoggedIn());
+  const isAuthenticated = (connected && account) || googleUser;
   const userAddress = googleUser?.accountAddress || account?.address.toString();
 
   // NOT AUTHENTICATED - Show connect button
@@ -124,7 +140,7 @@ const WalletConnect: React.FC = () => {
           Connect Wallet
         </button>
 
-        {/* AUTH MODAL - SUPER COMPACT */}
+        {/* AUTH MODAL */}
         {showAuthModal && (
           <>
             {/* Backdrop */}
@@ -161,14 +177,15 @@ const WalletConnect: React.FC = () => {
 
               {/* Content - Scrollable */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {/* GOOGLE SIGN-IN - Compact */}
+                
+                {/* GOOGLE SIGN-IN - Always shown */}
                 <button
                   onClick={handleGoogleLogin}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 
                     bg-white hover:bg-zinc-100 text-zinc-900 rounded-xl transition-all 
                     shadow-sm hover:shadow-md font-bold text-sm"
                 >
-                  {/* Google logo - Compact */}
+                  {/* Google logo */}
                   <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -178,14 +195,14 @@ const WalletConnect: React.FC = () => {
                   <span>Continue with Google</span>
                 </button>
 
-                {/* DIVIDER - Compact */}
+                {/* DIVIDER */}
                 <div className="flex items-center gap-2 py-1">
                   <div className="flex-1 h-px bg-zinc-800" />
                   <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Or</span>
                   <div className="flex-1 h-px bg-zinc-800" />
                 </div>
 
-                {/* WALLET OPTIONS - Compact List */}
+                {/* WALLET OPTIONS */}
                 <div className="space-y-2">
                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1">
                     Connect Wallet
@@ -224,14 +241,17 @@ const WalletConnect: React.FC = () => {
                       ))}
                     </div>
                   ) : (
-                    <div className="text-center py-6 text-zinc-500">
+                    <div className="text-center py-6 text-zinc-500 bg-zinc-950 rounded-lg border border-zinc-800">
                       <WalletIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                      <p className="text-xs mb-1">No wallets detected</p>
+                      <p className="text-xs mb-1 font-bold">No Wallets Found</p>
+                      <p className="text-[10px] text-zinc-600 mb-3 px-4">
+                        Install a wallet extension or use Google Sign-In above
+                      </p>
                       <a 
                         href="https://petra.app/" 
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-brand-pink hover:text-brand-red font-bold"
+                        className="inline-block text-xs text-brand-pink hover:text-brand-red font-bold"
                       >
                         Get Petra Wallet →
                       </a>
@@ -240,10 +260,10 @@ const WalletConnect: React.FC = () => {
                 </div>
               </div>
 
-              {/* Footer - Optional help text */}
+              {/* Footer */}
               <div className="flex-shrink-0 p-3 bg-zinc-950 border-t border-zinc-800">
                 <p className="text-[10px] text-zinc-500 text-center">
-                  New to crypto?{' '}
+                  New to Web3?{' '}
                   <a
                     href="https://aptos.dev/"
                     target="_blank"
@@ -273,7 +293,7 @@ const WalletConnect: React.FC = () => {
         <div className="flex-shrink-0">
           {googleUser?.picture ? (
             <img 
-              src={sanitizeUrl(googleUser.picture)} 
+              src={googleUser.picture} 
               alt={googleUser.name || googleUser.email}
               className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
             />
@@ -317,7 +337,7 @@ const WalletConnect: React.FC = () => {
                   <div className="flex items-center gap-3 mb-3">
                     {googleUser.picture && (
                       <img 
-                        src={sanitizeUrl(googleUser.picture)} 
+                        src={googleUser.picture} 
                         alt={googleUser.name}
                         className="w-12 h-12 rounded-full"
                       />

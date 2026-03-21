@@ -227,16 +227,32 @@ export default function VideoPage() {
     } catch {}
   }
 
-  async function handleDeleteConfirm() {
+    async function handleDeleteConfirm() {
     if (!video || !address) return;
     setDeleting(true);
+    
     try {
       const { deleteVideo } = await import('@/lib/video-service');
       await deleteVideo(video.videoId, video.blobName, signAndSubmitTransaction, video.shelbyUrl);
+      
+      // Clear local state
+      setVideo(null);
+      setShowDeleteModal(false);
+      
+      // Navigate to gallery
       router.push('/gallery');
-    } catch (e) {
+      
+      // ✅ CRITICAL FIX: Force refresh to get fresh data
+      setTimeout(() => {
+        router.refresh();           // Tell Next.js to refetch
+        window.location.reload();   // Force full reload
+      }, 100);
+      
+    } catch (e: any) {
+      console.error('Delete failed:', e);
       setDeleting(false);
       setShowDeleteModal(false);
+      alert(`Failed to delete: ${e.message || 'Unknown error'}`);
     }
   }
 
