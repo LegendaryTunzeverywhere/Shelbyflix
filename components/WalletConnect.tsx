@@ -9,9 +9,56 @@ import {
   WalletIcon, 
   CheckCircleIcon,
   ArrowRightStartOnRectangleIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 
 type AuthMethod = 'google' | 'wallet';
+
+// Logout Confirmation Modal Component
+function LogoutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl">
+        {/* Icon */}
+        <div className="w-16 h-16 bg-yellow-500/10 border border-yellow-500/20 rounded-full
+          flex items-center justify-center mx-auto mb-4">
+          <ExclamationTriangleIcon className="w-8 h-8 text-yellow-500" />
+        </div>
+
+        {/* Heading */}
+        <h3 className="text-white font-black text-xl text-center mb-2">
+          Sign Out?
+        </h3>
+        <p className="text-zinc-400 text-sm text-center mb-6">
+          Are you sure you want to disconnect your wallet?
+        </p>
+
+        {/* Buttons */}
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 px-4 py-3 bg-brand-red hover:bg-brand-red/90 text-white rounded-xl font-bold transition-colors"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const WalletConnect: React.FC = () => {
   // Wallet state
@@ -24,6 +71,7 @@ const WalletConnect: React.FC = () => {
   // UI state
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [activeMethod, setActiveMethod] = useState<AuthMethod | null>(null);
   
   const modalRef = useRef<HTMLDivElement>(null);
@@ -31,7 +79,6 @@ const WalletConnect: React.FC = () => {
   // Check for Google login on mount - with error handling
   useEffect(() => {
     try {
-      // Dynamically import to avoid build errors
       import('@/lib/keyless-auth')
         .then(({ getUserInfo }) => {
           const userInfo = getUserInfo();
@@ -68,6 +115,7 @@ const WalletConnect: React.FC = () => {
       if (event.key === 'Escape') {
         setShowAuthModal(false);
         setShowDropdown(false);
+        setShowLogoutModal(false);
       }
     }
 
@@ -102,24 +150,28 @@ const WalletConnect: React.FC = () => {
     }
   };
 
-  // Handle logout
-  const handleLogout = async () => {
-    if (confirm('Are you sure you want to logout?')) {
-      if (activeMethod === 'google') {
-        try {
-          const { logout: logoutGoogle } = await import('@/lib/keyless-auth');
-          logoutGoogle();
-          setGoogleUser(null);
-        } catch (error) {
-          console.error('Google logout failed:', error);
-        }
-      } else if (activeMethod === 'wallet') {
-        disconnect();
+  // Handle logout - show confirmation modal
+  const handleLogoutClick = () => {
+    setShowDropdown(false);
+    setShowLogoutModal(true);
+  };
+
+  // Confirm logout
+  const confirmLogout = async () => {
+    if (activeMethod === 'google') {
+      try {
+        const { logout: logoutGoogle } = await import('@/lib/keyless-auth');
+        logoutGoogle();
+        setGoogleUser(null);
+      } catch (error) {
+        console.error('Google logout failed:', error);
       }
-      setActiveMethod(null);
-      setShowDropdown(false);
-      window.location.href = '/';
+    } else if (activeMethod === 'wallet') {
+      disconnect();
     }
+    setActiveMethod(null);
+    setShowLogoutModal(false);
+    window.location.href = '/';
   };
 
   // Determine if user is authenticated
@@ -149,7 +201,7 @@ const WalletConnect: React.FC = () => {
               onClick={() => setShowAuthModal(false)}
             />
             
-            {/* Modal - Compact with scroll */}
+            {/* Modal */}
             <div 
               ref={modalRef}
               className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
@@ -158,7 +210,7 @@ const WalletConnect: React.FC = () => {
                 bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 
                 z-[60] overflow-hidden flex flex-col"
             >
-              {/* Header - Sticky */}
+              {/* Header */}
               <div className="flex-shrink-0 p-4 border-b border-zinc-800 bg-zinc-900">
                 <div className="flex items-center justify-between">
                   <h3 className="text-base sm:text-lg font-black text-white">
@@ -175,10 +227,10 @@ const WalletConnect: React.FC = () => {
                 </div>
               </div>
 
-              {/* Content - Scrollable */}
+              {/* Content */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 
-                {/* GOOGLE SIGN-IN - Always shown */}
+                {/* GOOGLE SIGN-IN - ALWAYS VISIBLE */}
                 <button
                   onClick={handleGoogleLogin}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 
@@ -283,125 +335,135 @@ const WalletConnect: React.FC = () => {
 
   // AUTHENTICATED - Show user info
   return (
-    <div className="relative">
-      <button
-        onClick={() => setShowDropdown(!showDropdown)}
-        className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 
-          rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
-      >
-        {/* User avatar/icon */}
-        <div className="flex-shrink-0">
-          {googleUser?.picture ? (
-            <img 
-              src={googleUser.picture} 
-              alt={googleUser.name || googleUser.email}
-              className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
+    <>
+      <div className="relative">
+        <button
+          onClick={() => setShowDropdown(!showDropdown)}
+          className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 
+            rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
+        >
+          {/* User avatar/icon */}
+          <div className="flex-shrink-0">
+            {googleUser?.picture ? (
+              <img 
+                src={googleUser.picture} 
+                alt={googleUser.name || googleUser.email}
+                className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
+              />
+            ) : (
+              <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors">
+                <WalletIcon className="w-4 h-4 text-brand-pink" />
+              </div>
+            )}
+          </div>
+
+          {/* User info */}
+          <div className="flex flex-col items-start min-w-0">
+            <span className="text-xs font-bold text-white truncate max-w-[120px]">
+              {googleUser?.name?.split(' ')[0] || formatAddress(userAddress)}
+            </span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">
+              {activeMethod === 'google' ? 'Google' : balanceLoading ? 'Loading...' : `${balance} SUSD`}
+            </span>
+          </div>
+
+          {/* Status dot */}
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+            googleUser || hasAccess ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-brand-red'
+          }`} />
+        </button>
+
+        {/* DROPDOWN MENU */}
+        {showDropdown && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowDropdown(false)}
             />
-          ) : (
-            <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors">
-              <WalletIcon className="w-4 h-4 text-brand-pink" />
-            </div>
-          )}
-        </div>
+            <div className="absolute right-0 mt-2 w-72 bg-zinc-900 rounded-2xl shadow-2xl 
+              border border-zinc-800 z-50 overflow-hidden">
+              
+              {/* User info section */}
+              <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
+                {googleUser ? (
+                  <>
+                    <div className="flex items-center gap-3 mb-3">
+                      {googleUser.picture && (
+                        <img 
+                          src={googleUser.picture} 
+                          alt={googleUser.name}
+                          className="w-12 h-12 rounded-full"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-white truncate">
+                          {googleUser.name || googleUser.email}
+                        </p>
+                        <p className="text-xs text-zinc-500 truncate">
+                          {googleUser.email}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+                
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
+                  Blockchain Address
+                </p>
+                <p className="text-xs font-mono text-white break-all bg-black/30 p-2 rounded-lg border border-zinc-800">
+                  {userAddress}
+                </p>
+              </div>
 
-        {/* User info */}
-        <div className="flex flex-col items-start min-w-0">
-          <span className="text-xs font-bold text-white truncate max-w-[120px]">
-            {googleUser?.name?.split(' ')[0] || formatAddress(userAddress)}
-          </span>
-          <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">
-            {activeMethod === 'google' ? 'Google' : balanceLoading ? 'Loading...' : `${balance} SUSD`}
-          </span>
-        </div>
-
-        {/* Status dot */}
-        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-          googleUser || hasAccess ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-brand-red'
-        }`} />
-      </button>
-
-      {/* DROPDOWN MENU */}
-      {showDropdown && (
-        <>
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setShowDropdown(false)}
-          />
-          <div className="absolute right-0 mt-2 w-72 bg-zinc-900 rounded-2xl shadow-2xl 
-            border border-zinc-800 z-50 overflow-hidden animate-in slide-in-from-top-2">
-            
-            {/* User info section */}
-            <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
-              {googleUser ? (
-                <>
-                  <div className="flex items-center gap-3 mb-3">
-                    {googleUser.picture && (
-                      <img 
-                        src={googleUser.picture} 
-                        alt={googleUser.name}
-                        className="w-12 h-12 rounded-full"
-                      />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-white truncate">
-                        {googleUser.name || googleUser.email}
+              {/* Status section */}
+              <div className="p-5 border-b border-zinc-800">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">
+                  Status
+                </p>
+                <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-500/10 rounded-lg">
+                      <CheckCircleIcon className="w-5 h-5 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-green-500">
+                        {activeMethod === 'google' ? 'Google Account' : 'PRO Access'}
                       </p>
-                      <p className="text-xs text-zinc-500 truncate">
-                        {googleUser.email}
+                      <p className="text-xs text-zinc-500">
+                        {activeMethod === 'google' ? 'Keyless Auth' : 'Wallet Connected'}
                       </p>
                     </div>
                   </div>
-                </>
-              ) : null}
-              
-              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
-                Blockchain Address
-              </p>
-              <p className="text-xs font-mono text-white break-all bg-black/30 p-2 rounded-lg border border-zinc-800">
-                {userAddress}
-              </p>
-            </div>
-
-            {/* Status section */}
-            <div className="p-5 border-b border-zinc-800">
-              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">
-                Status
-              </p>
-              <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-green-500/10 rounded-lg">
-                    <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-green-500">
-                      {activeMethod === 'google' ? 'Google Account' : 'PRO Access'}
-                    </p>
-                    <p className="text-xs text-zinc-500">
-                      {activeMethod === 'google' ? 'Keyless Auth' : 'Wallet Connected'}
-                    </p>
-                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Logout button */}
-            <div className="p-2">
-              <button
-                onClick={handleLogout}
-                className="w-full px-4 py-3 text-left text-sm font-bold text-zinc-400 
-                  hover:text-white hover:bg-brand-red/10 rounded-xl transition-all 
-                  flex items-center justify-between group"
-              >
-                <div className="flex items-center gap-2">
-                  <ArrowRightStartOnRectangleIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  <span>Sign Out</span>
-                </div>
-              </button>
+              {/* Logout button */}
+              <div className="p-2">
+                <button
+                  onClick={handleLogoutClick}
+                  className="w-full px-4 py-3 text-left text-sm font-bold text-zinc-400 
+                    hover:text-white hover:bg-brand-red/10 rounded-xl transition-all 
+                    flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-2">
+                    <ArrowRightStartOnRectangleIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    <span>Sign Out</span>
+                  </div>
+                </button>
+              </div>
             </div>
-          </div>
-        </>
+          </>
+        )}
+      </div>
+
+      {/* LOGOUT CONFIRMATION MODAL */}
+      {showLogoutModal && (
+        <LogoutModal
+          onConfirm={confirmLogout}
+          onCancel={() => setShowLogoutModal(false)}
+        />
       )}
-    </div>
+    </>
   );
 };
 
