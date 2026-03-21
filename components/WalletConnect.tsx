@@ -10,12 +10,11 @@ import {
   WalletIcon, 
   CheckCircleIcon,
   ArrowRightStartOnRectangleIcon,
-  UserCircleIcon
 } from '@heroicons/react/24/outline';
 
 type AuthMethod = 'google' | 'wallet';
 
-const UnifiedAuth: React.FC = () => {
+const WalletConnect: React.FC = () => {
   // Wallet state
   const { account, connected, disconnect, connect, wallets } = useWallet();
   const { hasAccess, balance, loading: balanceLoading } = useShelbyAccess();
@@ -117,58 +116,60 @@ const UnifiedAuth: React.FC = () => {
       <div className="relative">
         <button
           onClick={() => setShowAuthModal(true)}
-          className="px-4 py-2 sm:px-6 sm:py-3 bg-gradient-to-r from-brand-purple via-brand-pink to-brand-red 
-            hover:opacity-90 text-white rounded-xl font-bold transition-all shadow-lg 
-            flex items-center gap-2 text-sm sm:text-base"
+          className="px-4 py-2 bg-gradient-to-r from-brand-purple via-brand-pink to-brand-red 
+            hover:opacity-90 text-white rounded-lg font-bold transition-all shadow-lg 
+            flex items-center gap-2"
         >
-          <WalletIcon className="w-4 h-4 sm:w-5 sm:h-5" />
-          <span className="hidden sm:inline">Connect</span>
-          <span className="sm:hidden">Sign In</span>
+          <WalletIcon className="w-5 h-5" />
+          Connect Wallet
         </button>
 
-        {/* AUTH MODAL */}
+        {/* AUTH MODAL - SUPER COMPACT */}
         {showAuthModal && (
           <>
             {/* Backdrop */}
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm animate-in fade-in" />
+            <div 
+              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowAuthModal(false)}
+            />
             
-            {/* Modal */}
+            {/* Modal - Compact with scroll */}
             <div 
               ref={modalRef}
               className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
-                w-[95%] max-w-md bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 
-                z-[60] overflow-hidden animate-in zoom-in-95"
+                w-[90%] max-w-sm 
+                max-h-[85vh] sm:max-h-[90vh]
+                bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 
+                z-[60] overflow-hidden flex flex-col"
             >
-              {/* Header */}
-              <div className="p-6 border-b border-zinc-800 bg-gradient-to-br from-zinc-900 to-zinc-950">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xl sm:text-2xl font-black text-white">
-                    Sign In to <span className="text-brand-red">ShelbyFlix</span>
+              {/* Header - Sticky */}
+              <div className="flex-shrink-0 p-4 border-b border-zinc-800 bg-zinc-900">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base sm:text-lg font-black text-white">
+                    Sign In
                   </h3>
                   <button
                     onClick={() => setShowAuthModal(false)}
-                    className="text-zinc-500 hover:text-white transition-colors p-1"
+                    className="text-zinc-500 hover:text-white transition-colors p-1 -mr-1"
                   >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
                 </div>
-                <p className="text-sm text-zinc-400">
-                  Choose your preferred sign-in method
-                </p>
               </div>
 
-              <div className="p-6 space-y-4">
-                {/* GOOGLE SIGN-IN */}
+              {/* Content - Scrollable */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {/* GOOGLE SIGN-IN - Compact */}
                 <button
                   onClick={handleGoogleLogin}
-                  className="w-full flex items-center justify-center gap-3 px-6 py-4 
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 
                     bg-white hover:bg-zinc-100 text-zinc-900 rounded-xl transition-all 
-                    shadow-md hover:shadow-lg font-bold group"
+                    shadow-sm hover:shadow-md font-bold text-sm"
                 >
-                  {/* Google logo */}
-                  <svg className="w-6 h-6" viewBox="0 0 24 24">
+                  {/* Google logo - Compact */}
+                  <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                     <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -177,58 +178,60 @@ const UnifiedAuth: React.FC = () => {
                   <span>Continue with Google</span>
                 </button>
 
-                {/* DIVIDER */}
-                <div className="flex items-center gap-3">
+                {/* DIVIDER - Compact */}
+                <div className="flex items-center gap-2 py-1">
                   <div className="flex-1 h-px bg-zinc-800" />
-                  <span className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Or</span>
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Or</span>
                   <div className="flex-1 h-px bg-zinc-800" />
                 </div>
 
-                {/* WALLET OPTIONS */}
+                {/* WALLET OPTIONS - Compact List */}
                 <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-wider mb-3">
-                    Connect with Wallet
+                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1">
+                    Connect Wallet
                   </p>
+                  
                   {wallets.length > 0 ? (
-                    wallets.map((wallet: any) => (
-                      <button
-                        key={wallet.name}
-                        onClick={() => handleWalletConnect(wallet)}
-                        className="w-full px-4 py-3 text-left hover:bg-zinc-800 rounded-xl 
-                          transition-all flex items-center justify-between group border border-transparent hover:border-zinc-700"
-                      >
-                        <div className="flex items-center gap-3">
+                    <div className="space-y-1">
+                      {wallets.map((wallet: any) => (
+                        <button
+                          key={wallet.name}
+                          onClick={() => handleWalletConnect(wallet)}
+                          className="w-full px-3 py-2.5 text-left hover:bg-zinc-800 rounded-lg 
+                            transition-all flex items-center gap-2.5 group"
+                        >
                           {wallet.icon ? (
                             <img 
                               src={wallet.icon} 
                               alt={wallet.name} 
-                              className="w-8 h-8 rounded-lg"
+                              className="w-8 h-8 rounded-lg flex-shrink-0"
                             />
                           ) : (
-                            <div className="w-8 h-8 bg-zinc-800 rounded-lg flex items-center justify-center">
+                            <div className="w-8 h-8 bg-zinc-800 rounded-lg flex items-center justify-center flex-shrink-0">
                               <WalletIcon className="w-5 h-5 text-zinc-400" />
                             </div>
                           )}
-                          <div>
-                            <p className="font-bold text-white text-sm group-hover:text-brand-pink transition-colors">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-white text-sm group-hover:text-brand-pink transition-colors truncate">
                               {wallet.name}
                             </p>
-                            <p className="text-xs text-zinc-500">
-                              {wallet.readyState === 'Installed' ? 'Detected' : 'Not Installed'}
+                            <p className="text-[10px] text-zinc-500">
+                              {wallet.readyState === 'Installed' ? 'Ready' : 'Not Installed'}
                             </p>
                           </div>
-                        </div>
-                        <div className="w-2 h-2 rounded-full bg-zinc-700 group-hover:bg-brand-red transition-colors" />
-                      </button>
-                    ))
+                          <div className="w-2 h-2 rounded-full bg-zinc-700 group-hover:bg-brand-red transition-colors flex-shrink-0" />
+                        </button>
+                      ))}
+                    </div>
                   ) : (
                     <div className="text-center py-6 text-zinc-500">
-                      <WalletIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No wallets detected</p>
+                      <WalletIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                      <p className="text-xs mb-1">No wallets detected</p>
                       <a 
                         href="https://petra.app/" 
                         target="_blank"
-                        className="text-xs text-brand-pink hover:text-brand-red mt-2 inline-block"
+                        rel="noopener noreferrer"
+                        className="text-xs text-brand-pink hover:text-brand-red font-bold"
                       >
                         Get Petra Wallet →
                       </a>
@@ -237,15 +240,15 @@ const UnifiedAuth: React.FC = () => {
                 </div>
               </div>
 
-              {/* Footer */}
-              <div className="p-6 bg-zinc-950 border-t border-zinc-800">
-                <p className="text-xs text-zinc-400 text-center">
-                  New to blockchain?{' '}
+              {/* Footer - Optional help text */}
+              <div className="flex-shrink-0 p-3 bg-zinc-950 border-t border-zinc-800">
+                <p className="text-[10px] text-zinc-500 text-center">
+                  New to crypto?{' '}
                   <a
                     href="https://aptos.dev/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-brand-pink hover:text-brand-red font-bold transition-colors"
+                    className="text-brand-pink hover:text-brand-red font-bold"
                   >
                     Learn More
                   </a>
@@ -263,7 +266,7 @@ const UnifiedAuth: React.FC = () => {
     <div className="relative">
       <button
         onClick={() => setShowDropdown(!showDropdown)}
-        className="flex items-center gap-2 sm:gap-3 px-3 py-2 sm:px-4 bg-zinc-900 border border-zinc-800 
+        className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 
           rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
       >
         {/* User avatar/icon */}
@@ -272,7 +275,7 @@ const UnifiedAuth: React.FC = () => {
             <img 
               src={googleUser.picture} 
               alt={googleUser.name || googleUser.email}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
+              className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
             />
           ) : (
             <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors">
@@ -282,7 +285,7 @@ const UnifiedAuth: React.FC = () => {
         </div>
 
         {/* User info */}
-        <div className="hidden sm:flex flex-col items-start min-w-0">
+        <div className="flex flex-col items-start min-w-0">
           <span className="text-xs font-bold text-white truncate max-w-[120px]">
             {googleUser?.name?.split(' ')[0] || formatAddress(userAddress)}
           </span>
@@ -382,4 +385,4 @@ const UnifiedAuth: React.FC = () => {
   );
 };
 
-export default UnifiedAuth;
+export default WalletConnect;
