@@ -9,13 +9,42 @@ export function useWallet() {
   const [user, setUser] = useState<User | null>(null);
   const [needsUsername, setNeedsUsername] = useState(false);
   const [loading, setLoading] = useState(true);
+  
+  // Google Keyless state
+  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [googleAddress, setGoogleAddress] = useState<string | null>(null);
 
+  // Check for Google user on mount
+  useEffect(() => {
+    try {
+      import('@/lib/keyless-auth')
+        .then(({ getUserInfo }) => {
+          const userInfo = getUserInfo();
+          if (userInfo) {
+            setGoogleUser(userInfo);
+            setGoogleAddress(userInfo.accountAddress);
+          }
+        })
+        .catch(() => {
+          // Google auth not available
+        });
+    } catch {
+      // Google auth module not found
+    }
+  }, []);
+
+  // Check user whenever wallet or Google state changes
   useEffect(() => {
     checkUser();
-  }, [account?.address, connected]);
+  }, [account?.address, connected, googleAddress]);
 
   const checkUser = async () => {
-    if (!account?.address || !connected) {
+    // Determine address from either wallet or Google
+    const walletAddress = account?.address?.toString();
+    const effectiveAddress = googleAddress || walletAddress;
+    const isConnected = connected || !!googleAddress;
+
+    if (!effectiveAddress || !isConnected) {
       setUser(null);
       setNeedsUsername(false);
       setLoading(false);
@@ -24,7 +53,7 @@ export function useWallet() {
 
     setLoading(true);
     try {
-      const existingUser = await getUserByWallet(account.address.toString());
+      const existingUser = await getUserByWallet(effectiveAddress);
       
       if (existingUser) {
         setUser(existingUser);
@@ -44,14 +73,45 @@ export function useWallet() {
     await checkUser();
   };
 
+  // Unified disconnect function
+  const handleDisconnect = async () => {
+    if (googleAddress) {
+      // Logout from Google
+      try {
+        const { logout } = await import('@/lib/keyless-auth');
+        logout();
+        setGoogleUser(null);
+        setGoogleAddress(null);
+      } catch (error) {
+        console.error('Failed to logout from Google:', error);
+      }
+    } else {
+      // Disconnect wallet
+      disconnect();
+    }
+  };
+
   return {
-    address: account?.address,
-    connected,
-    disconnect,
+    // Address (from wallet or Google)
+    address: googleAddress ? { toString: () => googleAddress } : account?.address,
+    
+    // Connected status (wallet OR Google)
+    connected: connected || !!googleAddress,
+    
+    // Disconnect (handles both)
+    disconnect: handleDisconnect,
+    
+    // Sign function (wallet only for now - Google needs implementation)
     signAndSubmitTransaction,
+    
+    // User data
     user,
     needsUsername,
     loading,
     refreshUser,
+    
+    // Google-specific info
+    googleUser,
+    isGoogleAuth: !!googleAddress,
   };
 }
