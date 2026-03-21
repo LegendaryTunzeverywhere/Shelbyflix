@@ -9,6 +9,7 @@ import {
   Network,
   EphemeralKeyPair,
   KeylessAccount,
+  Hex,
 } from '@aptos-labs/ts-sdk';
 
 // Initialize Aptos client
@@ -42,8 +43,10 @@ export function initiateGoogleLogin(): void {
     console.log('✅ Generated ephemeral key pair');
 
     // 2. Store in localStorage (needed after redirect)
-    const ekpHex = ephemeralKeyPair.bcsToHex().toString();
-    localStorage.setItem(STORAGE_KEY_EKP, ekpHex);
+    // Store as base64 — avoids the 0x prefix issue with hex encoding
+    const ekpBytes = ephemeralKeyPair.bcsToBytes();
+    const ekpBase64 = Buffer.from(ekpBytes).toString('base64');
+    localStorage.setItem(STORAGE_KEY_EKP, ekpBase64);
     console.log('✅ Stored ephemeral key pair');
 
     // 3. Build Google OAuth URL
@@ -96,7 +99,7 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     }
 
     const ephemeralKeyPair = EphemeralKeyPair.fromBytes(
-      Buffer.from(ekpStored, 'hex')
+      Buffer.from(ekpStored, 'base64')
     );
     console.log('✅ Retrieved ephemeral key pair');
 
@@ -281,7 +284,7 @@ export function cleanupExpiredKeys(): void {
     if (!ekpStored) return;
 
     const ephemeralKeyPair = EphemeralKeyPair.fromBytes(
-      Buffer.from(ekpStored, 'hex')
+      Buffer.from(ekpStored, 'base64')
     );
 
     if (ephemeralKeyPair.isExpired()) {
