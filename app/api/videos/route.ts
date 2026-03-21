@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Service role — only used server-side, never exposed to browser
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Use NEXT_PUBLIC_ vars with fallback to server vars
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// Validate environment variables
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('Missing Supabase environment variables!');
+  console.error('SUPABASE_URL:', !!supabaseUrl);
+  console.error('SUPABASE_SERVICE_ROLE_KEY:', !!supabaseServiceKey);
+  console.error('NEXT_PUBLIC_SUPABASE_URL:', !!process.env.NEXT_PUBLIC_SUPABASE_URL);
+  console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  throw new Error('Missing required Supabase environment variables. Check your .env.local or deployment settings.');
+}
+
+// Service role client — only used server-side, never exposed to browser
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 export async function GET(req: NextRequest) {
   // Require a valid wallet address header — basic auth gate
