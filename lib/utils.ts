@@ -162,3 +162,21 @@ export function debounce<T extends (...args: any[]) => any>(
     timeout = setTimeout(later, wait);
   };
 }
+
+/**
+ * Sanitize URL to prevent XSS attacks
+ * @param url - URL to sanitize
+ * @returns Sanitized URL or empty string if unsafe
+ */
+export function sanitizeUrl(url: string | undefined | null): string {
+  if (!url) return '';
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+      return url;
+    }
+  } catch (error) {
+    // Invalid URL format
+  }
+  return ''; // Return empty string for invalid or unsafe URLs
+}

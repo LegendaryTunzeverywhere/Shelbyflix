@@ -110,13 +110,27 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     console.log('✅ Keyless account derived');
     console.log('   Address:', keylessAccount.accountAddress.toString());
 
-    // 4. Parse user info from JWT
-    const userInfo = parseJWT(jwt);
+    // 4. Send JWT to server for verification and get verified user info
+    console.log("➡️ Sending JWT to server for verification...");
+    const response = await fetch("/api/auth/google/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: jwt }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Failed to verify JWT on server");
+    }
+
+    const verifiedUserInfo = await response.json();
+    console.log("✅ Server verified JWT");
+
     const keylessUserInfo: KeylessUserInfo = {
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture,
-      sub: userInfo.sub,
+      email: verifiedUserInfo.email,
+      name: verifiedUserInfo.name,
+      picture: verifiedUserInfo.picture,
+      sub: verifiedUserInfo.sub,
       accountAddress: keylessAccount.accountAddress.toString(),
     };
 
@@ -124,7 +138,7 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     await storeKeylessAccount(keylessAccount, keylessUserInfo);
 
     console.log('✅ Login complete!');
-    console.log('   Email:', userInfo.email);
+    console.log('   Email:', keylessUserInfo.email);
     console.log('   Account:', keylessUserInfo.accountAddress);
 
     return keylessUserInfo;

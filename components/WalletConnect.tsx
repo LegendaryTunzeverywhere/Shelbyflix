@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
-import { formatAddress } from '@/lib/aptos';
+import { formatAddress, sanitizeUrl } from '@/lib/utils';
 import { useShelbyAccess } from '@/hooks/useShelbyAccess';
 import { initiateGoogleLogin, getUserInfo, logout as logoutGoogle, isLoggedIn } from '@/lib/keyless-auth';
 
@@ -202,7 +202,7 @@ const WalletConnect: React.FC = () => {
                         >
                           {wallet.icon ? (
                             <img 
-                              src={wallet.icon} 
+                              src={sanitizeUrl(wallet.icon)} 
                               alt={wallet.name} 
                               className="w-8 h-8 rounded-lg flex-shrink-0"
                             />
@@ -273,7 +273,7 @@ const WalletConnect: React.FC = () => {
         <div className="flex-shrink-0">
           {googleUser?.picture ? (
             <img 
-              src={googleUser.picture} 
+              src={sanitizeUrl(googleUser.picture)} 
               alt={googleUser.name || googleUser.email}
               className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
             />
@@ -317,7 +317,7 @@ const WalletConnect: React.FC = () => {
                   <div className="flex items-center gap-3 mb-3">
                     {googleUser.picture && (
                       <img 
-                        src={googleUser.picture} 
+                        src={sanitizeUrl(googleUser.picture)} 
                         alt={googleUser.name}
                         className="w-12 h-12 rounded-full"
                       />
