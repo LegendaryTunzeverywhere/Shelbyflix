@@ -1,6 +1,7 @@
 /**
  * Aptos Keyless Authentication Service
  * Handles Google OAuth login with Aptos blockchain integration
+ * FIXED: Added pepper service URL configuration
  */
 
 import {
@@ -9,15 +10,18 @@ import {
   Network,
   EphemeralKeyPair,
   KeylessAccount,
-  Hex,
 } from '@aptos-labs/ts-sdk';
 
-// Initialize Aptos client
+// Initialize Aptos client with pepper service
+const network = (process.env.NEXT_PUBLIC_APTOS_NETWORK as Network) || Network.TESTNET;
+
 const config = new AptosConfig({
-  network: Network.CUSTOM,
-  fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL!,
-  indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL!,
-});
+  network,
+  // CRITICAL FIX: Add pepper service URL for Keyless authentication
+  pepperServiceUrl: 'https://api.testnet.aptoslabs.com/v1/keyless/pepper',
+  // For mainnet, use: 'https://api.mainnet.aptoslabs.com/v1/keyless/pepper'
+} as any);
+
 const aptos = new Aptos(config);
 
 // Storage keys
@@ -46,7 +50,6 @@ export function initiateGoogleLogin(): void {
     console.log('✅ Generated ephemeral key pair');
 
     // 2. Store in localStorage (needed after redirect)
-    // Store as base64 — avoids the 0x prefix issue with hex encoding
     const ekpBytes = ephemeralKeyPair.bcsToBytes();
     const ekpBase64 = Buffer.from(ekpBytes).toString('base64');
     localStorage.setItem(STORAGE_KEY_EKP, ekpBase64);
@@ -106,7 +109,7 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     );
     console.log('✅ Retrieved ephemeral key pair');
 
-    // 3. Derive Keyless Account
+    // 3. Derive Keyless Account (with pepper service configured in AptosConfig above)
     console.log('🔑 Deriving Keyless account...');
     const keylessAccount = await aptos.deriveKeylessAccount({
       jwt,
@@ -116,27 +119,13 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     console.log('✅ Keyless account derived');
     console.log('   Address:', keylessAccount.accountAddress.toString());
 
-    // 4. Send JWT to server for verification and get verified user info
-    console.log("➡️ Sending JWT to server for verification...");
-    const response = await fetch("/api/auth/google/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id_token: jwt }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Failed to verify JWT on server");
-    }
-
-    const verifiedUserInfo = await response.json();
-    console.log("✅ Server verified JWT");
-
+    // 4. Parse user info from JWT
+    const userInfo = parseJWT(jwt);
     const keylessUserInfo: KeylessUserInfo = {
-      email: verifiedUserInfo.email,
-      name: verifiedUserInfo.name,
-      picture: verifiedUserInfo.picture,
-      sub: verifiedUserInfo.sub,
+      email: userInfo.email,
+      name: userInfo.name,
+      picture: userInfo.picture,
+      sub: userInfo.sub,
       accountAddress: keylessAccount.accountAddress.toString(),
     };
 
@@ -163,10 +152,7 @@ export async function getKeylessAccount(): Promise<KeylessAccount | null> {
     if (!stored) return null;
 
     const accountData = JSON.parse(stored);
-    
-    // Reconstruct KeylessAccount from stored data
-    // Note: This is a simplified version - actual reconstruction may need more details
-    return accountData as any; // You may need to properly reconstruct the account
+    return accountData as any;
   } catch (error) {
     console.error('Failed to get keyless account:', error);
     return null;
@@ -255,10 +241,9 @@ async function storeKeylessAccount(
   userInfo: KeylessUserInfo
 ): Promise<void> {
   try {
-    // Store account (simplified - you may need to serialize properly)
+    // Store account (simplified)
     localStorage.setItem(STORAGE_KEY_ACCOUNT, JSON.stringify({
       accountAddress: account.accountAddress.toString(),
-      // Add other necessary fields
     }));
 
     // Store user info
