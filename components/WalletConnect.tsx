@@ -4,43 +4,30 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress, sanitizeUrl } from '@/lib/utils';
 import { useShelbyAccess } from '@/hooks/useShelbyAccess';
-
 import {
   WalletIcon,
   CheckCircleIcon,
   ArrowRightStartOnRectangleIcon,
   ExclamationTriangleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 
 type AuthMethod = 'google' | 'wallet';
 
-// Logout Confirmation Modal Component
+// ── Logout confirmation modal ─────────────────────────────────────────────────
 function LogoutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        onClick={onCancel}
-      />
-
-      {/* Modal */}
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl">
-        {/* Icon */}
         <div className="w-16 h-16 bg-yellow-500/10 border border-yellow-500/20 rounded-full
           flex items-center justify-center mx-auto mb-4">
           <ExclamationTriangleIcon className="w-8 h-8 text-yellow-500" />
         </div>
-
-        {/* Heading */}
-        <h3 className="text-white font-black text-xl text-center mb-2">
-          Sign Out?
-        </h3>
+        <h3 className="text-white font-black text-xl text-center mb-2">Sign Out?</h3>
         <p className="text-zinc-400 text-sm text-center mb-6">
           Are you sure you want to disconnect your wallet?
         </p>
-
-        {/* Buttons */}
         <div className="flex gap-3">
           <button
             onClick={onCancel}
@@ -60,23 +47,21 @@ function LogoutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel:
   );
 }
 
+// ── Main component ────────────────────────────────────────────────────────────
 const WalletConnect: React.FC = () => {
-  // Wallet state
   const { account, connected, disconnect, connect, wallets } = useWallet();
   const { hasAccess, balance, loading: balanceLoading } = useShelbyAccess();
 
-  // Google/Keyless state
   const [googleUser, setGoogleUser] = useState<any>(null);
-
-  // UI state
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [activeMethod, setActiveMethod] = useState<AuthMethod | null>(null);
 
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Check for Google login on mount - with error handling
+  // Check for existing Google session
   useEffect(() => {
     try {
       import('@/lib/keyless-auth')
@@ -87,43 +72,41 @@ const WalletConnect: React.FC = () => {
             setActiveMethod('google');
           }
         })
-        .catch((err) => {
-          console.log('Google auth not available:', err.message);
-        });
-    } catch (error) {
-      console.log('Google auth module not found');
-    }
+        .catch(() => {});
+    } catch {}
   }, []);
 
-  // Close modal on click outside
+  // Close modal on outside click
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        modalRef.current &&
+        !modalRef.current.contains(e.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(e.target as Node)
+      ) {
         setShowAuthModal(false);
       }
     }
-
     if (showAuthModal) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [showAuthModal]);
 
-  // Close on ESC key
+  // ESC key closes everything
   useEffect(() => {
-    function handleEsc(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
+    function handleEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
         setShowAuthModal(false);
         setShowDropdown(false);
         setShowLogoutModal(false);
       }
     }
-
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
   }, []);
 
-  // Handle wallet connection
   const handleWalletConnect = async (wallet: any) => {
     try {
       if (wallet.readyState === 'NotDetected') {
@@ -139,34 +122,28 @@ const WalletConnect: React.FC = () => {
     }
   };
 
-  // Handle Google login - with error handling
   const handleGoogleLogin = async () => {
     try {
       const { initiateGoogleLogin } = await import('@/lib/keyless-auth');
       initiateGoogleLogin();
-    } catch (error) {
-      console.error('Google login failed:', error);
+    } catch {
       alert('Google Sign-In is not fully configured yet. Please use a wallet to connect.');
     }
   };
 
-  // Handle logout - show confirmation modal
   const handleLogoutClick = () => {
     setShowDropdown(false);
     setShowLogoutModal(true);
   };
 
-  // Confirm logout
   const confirmLogout = async () => {
     if (activeMethod === 'google') {
       try {
         const { logout: logoutGoogle } = await import('@/lib/keyless-auth');
         logoutGoogle();
         setGoogleUser(null);
-      } catch (error) {
-        console.error('Google logout failed:', error);
-      }
-    } else if (activeMethod === 'wallet') {
+      } catch {}
+    } else {
       disconnect();
     }
     setActiveMethod(null);
@@ -174,225 +151,64 @@ const WalletConnect: React.FC = () => {
     window.location.href = '/';
   };
 
-  // Determine if user is connected with wallet
-  const isWalletConnected = connected && account;
+  const isAuthenticated = (connected && account) || googleUser;
+  const userAddress = googleUser?.accountAddress || account?.address.toString();
 
-  // Determine if user is authenticated via Google
-  const isGoogleAuthenticated = !!googleUser;
-
-  const userAddress = isGoogleAuthenticated ? googleUser.accountAddress : account?.address.toString();
-
-  // AUTHENTICATED WITH WALLET - Show user info
-  if (isWalletConnected) {
-    return (
-      <>
-        <div className="relative">
-          <button
-            onClick={() => setShowDropdown(!showDropdown)}
-            className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800
-              rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
-          >
-            {/* User avatar/icon */}
-            <div className="flex-shrink-0">
-              {googleUser?.picture ? ( // Prefer Google picture if available
-                <img
-                  src={googleUser.picture}
-                  alt={googleUser.name || googleUser.email}
-                  className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors"
-                />
-              ) : (
-                <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors">
-                  <WalletIcon className="w-4 h-4 text-brand-pink" />
-                </div>
-              )}
-            </div>
-
-            {/* User info */}
-            <div className="flex flex-col items-start min-w-0">
-              <span className="text-xs font-bold text-white truncate max-w-[120px]">
-                {googleUser?.name?.split(' ')[0] || formatAddress(userAddress)}
-              </span>
-              <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">
-                Wallet Connected
-              </span>
-            </div>
-
-            {/* Status dot */}
-            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              hasAccess ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-brand-red'
-            }`} />
-          </button>
-
-          {/* DROPDOWN MENU */}
-          {showDropdown && (
-            <>
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setShowDropdown(false)}
-              />
-              <div className="absolute right-0 mt-2 w-72 bg-zinc-900 rounded-2xl shadow-2xl
-                border border-zinc-800 z-50 overflow-hidden">
-
-                {/* User info section */}
-                <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
-                  {googleUser ? (
-                    <>
-                      <div className="flex items-center gap-3 mb-3">
-                        {googleUser.picture && (
-                          <img
-                            src={googleUser.picture}
-                            alt={googleUser.name}
-                            className="w-12 h-12 rounded-full"
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-white truncate">
-                            {googleUser.name || googleUser.email}
-                          </p>
-                          <p className="text-xs text-zinc-500 truncate">
-                            {googleUser.email}
-                          </p>
-                        </div>
-                      </div>
-                    </>
-                  ) : null}
-
-                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
-                    Blockchain Address
-                  </p>
-                  <p className="text-xs font-mono text-white break-all bg-black/30 p-2 rounded-lg border border-zinc-800">
-                    {userAddress}
-                  </p>
-                </div>
-
-                {/* Status section */}
-                <div className="p-5 border-b border-zinc-800">
-                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">
-                    Status
-                  </p>
-                  <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-green-500/10 rounded-lg">
-                        <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-green-500">
-                          PRO Access
-                        </p>
-                        <p className="text-xs text-zinc-500">
-                          Wallet Connected
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Logout button */}
-                <div className="p-2">
-                  <button
-                    onClick={handleLogoutClick}
-                    className="w-full px-4 py-3 text-left text-sm font-bold text-zinc-400
-                      hover:text-white hover:bg-brand-red/10 rounded-xl transition-all
-                      flex items-center justify-between group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <ArrowRightStartOnRectangleIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                      <span>Sign Out</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* LOGOUT CONFIRMATION MODAL */}
-        {showLogoutModal && (
-          <LogoutModal
-            onConfirm={confirmLogout}
-            onCancel={() => setShowLogoutModal(false)}
-          />
-        )}
-      </>
-    );
-  } else { // NOT CONNECTED WITH WALLET
+  // ── NOT AUTHENTICATED ───────────────────────────────────────────────────────
+  if (!isAuthenticated) {
     return (
       <div className="relative">
+        {/* Connect button */}
         <button
-          onClick={() => setShowAuthModal(true)}
+          ref={buttonRef}
+          onClick={() => setShowAuthModal(v => !v)}
           className="px-4 py-2 bg-gradient-to-r from-brand-purple via-brand-pink to-brand-red
             hover:opacity-90 text-white rounded-lg font-bold transition-all shadow-lg
-            flex items-center gap-2"
+            flex items-center gap-2 whitespace-nowrap"
         >
-          {isGoogleAuthenticated ? (
-            // User is Google authenticated but no wallet connected
-            <>
-              {googleUser?.picture ? (
-                <img
-                  src={googleUser.picture}
-                  alt={googleUser.name || googleUser.email}
-                  className="w-5 h-5 rounded-full"
-                />
-              ) : (
-                <WalletIcon className="w-5 h-5" /> // Fallback icon
-              )}
-              <span>{googleUser?.name?.split(' ')[0] || "Google User"}</span>
-            </>
-          ) : (
-            // No wallet or Google auth
-            <>
-              <WalletIcon className="w-5 h-5" />
-              <span>Connect Wallet</span>
-            </>
-          )}
+          <WalletIcon className="w-5 h-5 flex-shrink-0" />
+          <span>Connect Wallet</span>
         </button>
 
-        {/* AUTH MODAL */}
+        {/* Auth modal — anchored below button, right-aligned */}
         {showAuthModal && (
           <>
-            {/* Backdrop */}
+            {/* Full-screen backdrop */}
             <div
               className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
               onClick={() => setShowAuthModal(false)}
             />
 
-            {/* Modal */}
+            {/* Dropdown panel */}
             <div
               ref={modalRef}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
-                w-[90%] max-w-sm
-                max-h-[85vh] sm:max-h-[90vh]
-                bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800
-                z-[60] overflow-hidden flex flex-col"
+              className="absolute right-0 top-[calc(100%+8px)] z-[60]
+                w-80 max-h-[80vh]
+                bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl
+                flex flex-col overflow-hidden"
             >
               {/* Header */}
-              <div className="flex-shrink-0 p-4 border-b border-zinc-800 bg-zinc-900">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base sm:text-lg font-black text-white">
-                    Sign In
-                  </h3>
-                  <button
-                    onClick={() => setShowAuthModal(false)}
-                    className="text-zinc-500 hover:text-white transition-colors p-1 -mr-1"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 flex-shrink-0">
+                <h3 className="text-base font-black text-white">Sign In</h3>
+                <button
+                  onClick={() => setShowAuthModal(false)}
+                  className="w-7 h-7 flex items-center justify-center rounded-full
+                    bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                >
+                  <XMarkIcon className="w-4 h-4 text-zinc-400" />
+                </button>
               </div>
 
-              {/* Content */}
+              {/* Scrollable content */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
 
-                {/* GOOGLE SIGN-IN - ALWAYS VISIBLE */}
+                {/* Google — always shown regardless of wallet availability */}
                 <button
                   onClick={handleGoogleLogin}
-                  className="max-w-[240px] mx-auto flex items-center justify-center gap-2 px-3 py-2.5
-                    bg-white hover:bg-zinc-100 text-zinc-900 rounded-xl transition-all
-                    shadow-sm hover:shadow-md font-bold text-xs"
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3
+                    bg-white hover:bg-zinc-100 text-zinc-900 rounded-xl
+                    transition-all shadow-sm font-bold text-sm"
                 >
-                  {/* Google logo */}
                   <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -402,63 +218,62 @@ const WalletConnect: React.FC = () => {
                   <span>Continue with Google</span>
                 </button>
 
-                {/* DIVIDER */}
-                <div className="flex items-center gap-2 py-1">
+                {/* Divider */}
+                <div className="flex items-center gap-3">
                   <div className="flex-1 h-px bg-zinc-800" />
                   <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Or</span>
                   <div className="flex-1 h-px bg-zinc-800" />
                 </div>
 
-                {/* WALLET OPTIONS */}
-                <div className="space-y-2">
+                {/* Wallet list */}
+                <div className="space-y-1.5">
                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1">
                     Connect Wallet
                   </p>
 
                   {wallets.length > 0 ? (
-                    <div className="space-y-1">
-                      {wallets.map((wallet: any) => (
-                        <button
-                          key={wallet.name}
-                          onClick={() => handleWalletConnect(wallet)}
-                          className="w-full px-3 py-2.5 text-left hover:bg-zinc-800 rounded-lg
-                            transition-all flex items-center gap-2.5 group"
-                        >
-                          {wallet.icon ? (
-                            <img
-                              src={sanitizeUrl(wallet.icon)}
-                              alt={wallet.name}
-                              className="w-8 h-8 rounded-lg flex-shrink-0"
-                            />
-                          ) : (
-                            <div className="w-8 h-8 bg-zinc-800 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <WalletIcon className="w-5 h-5 text-zinc-400" />
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-white text-sm group-hover:text-brand-pink transition-colors truncate">
-                              {wallet.name}
-                            </p>
-                            <p className="text-[10px] text-zinc-500">
-                              {wallet.readyState === 'Installed' ? 'Ready' : 'Not Installed'}
-                            </p>
+                    wallets.map((wallet: any) => (
+                      <button
+                        key={wallet.name}
+                        onClick={() => handleWalletConnect(wallet)}
+                        className="w-full px-3 py-2.5 text-left hover:bg-zinc-800 rounded-xl
+                          transition-all flex items-center gap-3 group"
+                      >
+                        {wallet.icon ? (
+                          <img
+                            src={sanitizeUrl(wallet.icon)}
+                            alt={wallet.name}
+                            className="w-9 h-9 rounded-xl flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-9 h-9 bg-zinc-800 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <WalletIcon className="w-5 h-5 text-zinc-400" />
                           </div>
-                          <div className="w-2 h-2 rounded-full bg-zinc-700 group-hover:bg-brand-red transition-colors flex-shrink-0" />
-                        </button>
-                      ))}
-                    </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-white text-sm group-hover:text-brand-pink transition-colors truncate">
+                            {wallet.name}
+                          </p>
+                          <p className="text-[10px] text-zinc-500">
+                            {wallet.readyState === 'Installed' ? '● Ready' : '○ Not Installed'}
+                          </p>
+                        </div>
+                        <div className="w-2 h-2 rounded-full flex-shrink-0 transition-colors
+                          bg-zinc-700 group-hover:bg-brand-red" />
+                      </button>
+                    ))
                   ) : (
-                    <div className="text-center py-6 text-zinc-500 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <WalletIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                      <p className="text-xs mb-1 font-bold">No Wallets Found</p>
+                    <div className="text-center py-5 bg-zinc-950 rounded-xl border border-zinc-800">
+                      <WalletIcon className="w-8 h-8 mx-auto mb-2 text-zinc-700" />
+                      <p className="text-xs font-bold text-zinc-500 mb-1">No Wallets Found</p>
                       <p className="text-[10px] text-zinc-600 mb-3 px-4">
-                        Install a wallet extension or use Google Sign-In above. If you're already logged in with Google, you can still access the modal to connect a wallet.
+                        Install a wallet extension or use Google Sign-In above.
                       </p>
                       <a
                         href="https://petra.app/"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-block text-xs text-brand-pink hover:text-brand-red font-bold"
+                        className="text-xs text-brand-pink hover:text-brand-red font-bold"
                       >
                         Get Petra Wallet →
                       </a>
@@ -468,7 +283,7 @@ const WalletConnect: React.FC = () => {
               </div>
 
               {/* Footer */}
-              <div className="flex-shrink-0 p-3 bg-zinc-950 border-t border-zinc-800">
+              <div className="flex-shrink-0 px-5 py-3 bg-zinc-950 border-t border-zinc-800">
                 <p className="text-[10px] text-zinc-500 text-center">
                   New to Web3?{' '}
                   <a
@@ -487,6 +302,109 @@ const WalletConnect: React.FC = () => {
       </div>
     );
   }
+
+  // ── AUTHENTICATED ───────────────────────────────────────────────────────────
+  return (
+    <>
+      <div className="relative">
+        <button
+          onClick={() => setShowDropdown(v => !v)}
+          className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800
+            rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
+        >
+          {googleUser?.picture ? (
+            <img
+              src={googleUser.picture}
+              alt={googleUser.name || googleUser.email}
+              className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors flex-shrink-0"
+            />
+          ) : (
+            <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors flex-shrink-0">
+              <WalletIcon className="w-4 h-4 text-brand-pink" />
+            </div>
+          )}
+          <div className="flex flex-col items-start min-w-0">
+            <span className="text-xs font-bold text-white truncate max-w-[120px]">
+              {googleUser?.name?.split(' ')[0] || formatAddress(userAddress)}
+            </span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">
+              {activeMethod === 'google' ? 'Google' : balanceLoading ? 'Loading...' : `${balance} SUSD`}
+            </span>
+          </div>
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+            googleUser || hasAccess
+              ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]'
+              : 'bg-brand-red'
+          }`} />
+        </button>
+
+        {/* Dropdown */}
+        {showDropdown && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
+            <div className="absolute right-0 mt-2 w-72 bg-zinc-900 rounded-2xl shadow-2xl
+              border border-zinc-800 z-50 overflow-hidden">
+
+              <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
+                {googleUser && (
+                  <div className="flex items-center gap-3 mb-3">
+                    {googleUser.picture && (
+                      <img src={googleUser.picture} alt={googleUser.name} className="w-12 h-12 rounded-full" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{googleUser.name || googleUser.email}</p>
+                      <p className="text-xs text-zinc-500 truncate">{googleUser.email}</p>
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
+                  Blockchain Address
+                </p>
+                <p className="text-xs font-mono text-white break-all bg-black/30 p-2 rounded-lg border border-zinc-800">
+                  {userAddress}
+                </p>
+              </div>
+
+              <div className="p-5 border-b border-zinc-800">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">Status</p>
+                <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-500/10 rounded-lg">
+                      <CheckCircleIcon className="w-5 h-5 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-green-500">
+                        {activeMethod === 'google' ? 'Google Account' : 'PRO Access'}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        {activeMethod === 'google' ? 'Keyless Auth' : 'Wallet Connected'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2">
+                <button
+                  onClick={handleLogoutClick}
+                  className="w-full px-4 py-3 text-left text-sm font-bold text-zinc-400
+                    hover:text-white hover:bg-brand-red/10 rounded-xl transition-all
+                    flex items-center gap-2 group"
+                >
+                  <ArrowRightStartOnRectangleIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {showLogoutModal && (
+        <LogoutModal onConfirm={confirmLogout} onCancel={() => setShowLogoutModal(false)} />
+      )}
+    </>
+  );
 };
 
 export default WalletConnect;
