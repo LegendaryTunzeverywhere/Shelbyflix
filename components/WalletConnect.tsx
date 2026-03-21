@@ -233,9 +233,9 @@ const WalletConnect: React.FC = () => {
                 {/* GOOGLE SIGN-IN - ALWAYS VISIBLE */}
                 <button
                   onClick={handleGoogleLogin}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 
+                  className="max-w-[240px] mx-auto flex items-center justify-center gap-2 px-3 py-2.5 
                     bg-white hover:bg-zinc-100 text-zinc-900 rounded-xl transition-all 
-                    shadow-sm hover:shadow-md font-bold text-sm"
+                    shadow-sm hover:shadow-md font-bold text-xs"
                 >
                   {/* Google logo */}
                   <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
@@ -297,7 +297,7 @@ const WalletConnect: React.FC = () => {
                       <WalletIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
                       <p className="text-xs mb-1 font-bold">No Wallets Found</p>
                       <p className="text-[10px] text-zinc-600 mb-3 px-4">
-                        Install a wallet extension or use Google Sign-In above
+                        Install a wallet extension or use Google Sign-In above. If you're already logged in with Google, the 'Connect Wallet' button will not appear.
                       </p>
                       <a 
                         href="https://petra.app/" 
