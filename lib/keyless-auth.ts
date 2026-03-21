@@ -13,8 +13,11 @@ import {
 } from '@aptos-labs/ts-sdk';
 
 // Initialize Aptos client
-const network = (process.env.NEXT_PUBLIC_APTOS_NETWORK as Network) || Network.TESTNET;
-const config = new AptosConfig({ network });
+const config = new AptosConfig({
+  network: Network.CUSTOM,
+  fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL!,
+  indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL!,
+});
 const aptos = new Aptos(config);
 
 // Storage keys
