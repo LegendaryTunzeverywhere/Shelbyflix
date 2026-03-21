@@ -37,12 +37,16 @@ export interface ShelbyUploadResponse {
 export async function uploadToShelby(
   file: File,
   metadata: Partial<VideoMetadata>,
-  uploaderAccount: AccountAddress,
+  uploaderAccount: AccountAddress | { toString: () => string },
   signAndSubmitTransaction: any,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<ShelbyUploadResponse> {
   try {
     const uploaderAddress = metadata.uploader!;
+    // Normalise — Google keyless auth returns a plain object, wallet returns AccountAddress
+    const resolvedAccount = uploaderAccount instanceof AccountAddress
+      ? uploaderAccount
+      : AccountAddress.fromString(uploaderAddress);
 
     // Step 1: Analyze video
     onProgress?.({ stage: 'encrypting', progress: 5, message: 'Analyzing video...' });
@@ -101,7 +105,7 @@ export async function uploadToShelby(
       signAndSubmitTransaction,
       blobName,
       commitments,
-      uploaderAccount,
+      resolvedAccount,
       metadata.availabilityPeriod || 30
     );
 
@@ -296,4 +300,3 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
 
   return { valid: true };
 }
-

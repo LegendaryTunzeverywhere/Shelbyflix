@@ -1,182 +1,324 @@
-/**
- * Utility functions for ShelbyFlix
- */
+import type { VideoMetadata, UploadProgress } from '@/types';
+import {
+  registerBlob,
+  uploadBlobToShelbynet,
+  getBlobStreamUrl,
+  computeBlobCommitments,
+} from './shelbynet-blob';
+import { AccountAddress } from '@aptos-labs/ts-sdk';
+import {
+  encryptFile,
+  decryptBlob,
+  generateEncryptionKey,
+  getVideoDuration,
+  generateThumbnail,
+} from './encryption';
 
-/**
- * Format wallet address for display
- * @param address - Full wallet address
- * @param chars - Number of characters to show on each end (default: 4)
- * @returns Formatted address like "0x15ff...ff25"
- */
-export function formatAddress(address: string | undefined | null, chars: number = 4): string {
-  if (!address) return '';
-  
-  // Remove 0x prefix for calculation
-  const hex = address.startsWith('0x') ? address.slice(2) : address;
-  
-  // If address is short enough, return as-is
-  if (hex.length <= chars * 2) return address;
-  
-  // Return formatted: 0x + first chars + ... + last chars
-  return `0x${hex.slice(0, chars)}...${hex.slice(-chars)}`;
+export interface ShelbyUploadResponse {
+  videoId: string;
+  blobId: string;
+  blobName: string;
+  shelbyUrl: string;
+  encryptionKey: string;
+  duration: number;
+  thumbnailUrl?: string;
+  success: boolean;
 }
 
 /**
- * Truncate text with ellipsis
- * @param text - Text to truncate
- * @param maxLength - Maximum length before truncation
- * @returns Truncated text with "..."
+ * Upload video to Shelbynet (blockchain + storage)
+ *
+ * Flow:
+ *  1. Encrypt the video
+ *  2. Compute BlobCommitments via the official SDK (erasure coding + Merkle root)
+ *  3. Register on-chain with the SDK-computed Merkle root
+ *  4. Upload via shelbyClient.rpc.putBlob — RPC validates against on-chain root
  */
-export function truncateText(text: string | undefined | null, maxLength: number): string {
-  if (!text) return '';
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength) + '...';
-}
-
-/**
- * Format number with K/M suffix
- * @param num - Number to format
- * @returns Formatted string like "1.2K" or "3.5M"
- */
-export function formatNumber(num: number): string {
-  if (num >= 1000000) {
-    return (num / 1000000).toFixed(1) + 'M';
-  }
-  if (num >= 1000) {
-    return (num / 1000).toFixed(1) + 'K';
-  }
-  return num.toString();
-}
-
-/**
- * Format duration in seconds to MM:SS or HH:MM:SS
- * @param seconds - Duration in seconds
- * @returns Formatted duration string
- */
-export function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
-}
-
-/**
- * Check if user can perform action on video
- * @param userAddress - Current user's wallet address
- * @param videoUploader - Video uploader's wallet address
- * @returns true if user owns the video
- */
-export function isVideoOwner(
-  userAddress: string | undefined,
-  videoUploader: string | undefined
-): boolean {
-  if (!userAddress || !videoUploader) return false;
-  return userAddress.toLowerCase() === videoUploader.toLowerCase();
-}
-
-/**
- * Validate email address
- * @param email - Email to validate
- * @returns true if valid email format
- */
-export function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-/**
- * Validate username
- * @param username - Username to validate
- * @returns Object with valid boolean and error message
- */
-export function validateUsername(username: string): { valid: boolean; error?: string } {
-  if (!username) {
-    return { valid: false, error: 'Username is required' };
-  }
-  
-  if (username.length < 3) {
-    return { valid: false, error: 'Username must be at least 3 characters' };
-  }
-  
-  if (username.length > 20) {
-    return { valid: false, error: 'Username must be 20 characters or less' };
-  }
-  
-  if (!/^[a-z0-9_]+$/.test(username)) {
-    return { valid: false, error: 'Username can only contain lowercase letters, numbers, and underscores' };
-  }
-  
-  return { valid: true };
-}
-
-/**
- * Copy text to clipboard
- * @param text - Text to copy
- * @returns Promise<boolean> - true if successful
- */
-export async function copyToClipboard(text: string): Promise<boolean> {
+export async function uploadToShelby(
+  file: File,
+  metadata: Partial<VideoMetadata>,
+  uploaderAccount: AccountAddress | { toString: () => string },
+  signAndSubmitTransaction: any,
+  onProgress?: (progress: UploadProgress) => void
+): Promise<ShelbyUploadResponse> {
   try {
-    await navigator.clipboard.writeText(text);
+    const uploaderAddress = metadata.uploader!;
+    // Normalise — Google keyless auth returns a plain object, wallet returns AccountAddress
+    const resolvedAccount = uploaderAccount instanceof AccountAddress
+      ? uploaderAccount
+      : AccountAddress.fromString(uploaderAddress);
+
+    // Step 1: Analyze video
+    onProgress?.({ stage: 'encrypting', progress: 5, message: 'Analyzing video...' });
+
+    const duration = await getVideoDuration(file);
+    console.log('📹 Video duration:', duration, 'seconds');
+
+    // Step 2: Generate encryption key
+    onProgress?.({ stage: 'encrypting', progress: 10, message: 'Generating encryption key...' });
+
+    const encryptionKey = generateEncryptionKey();
+    console.log('🔐 Encryption key generated');
+
+    // Step 3: Encrypt video
+    onProgress?.({ stage: 'encrypting', progress: 20, message: 'Encrypting video...' });
+
+    const encryptedBlob = await encryptFile(file, encryptionKey);
+    console.log('🔒 Video encrypted:', encryptedBlob.size, 'bytes');
+
+    // Step 4: Generate thumbnail
+    onProgress?.({ stage: 'encrypting', progress: 30, message: 'Generating thumbnail...' });
+
+    let thumbnailUrl: string | undefined;
+    try {
+      thumbnailUrl = await generateThumbnail(file, Math.floor(duration / 2));
+      console.log('🖼️ Thumbnail generated (data URL)');
+    } catch (error) {
+      console.warn('Failed to generate thumbnail:', error);
+    }
+
+    // Step 5: Generate IDs & names
+    const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const blobName = `${videoId}_${file.name}`;
+
+    console.log('📦 Video ID:', videoId);
+    console.log('📝 Blob name:', blobName);
+
+    // Step 6: Compute blob commitments via official SDK
+    // This applies Clay erasure coding before hashing — the only way to get a
+    // Merkle root that matches what the Shelbynet storage API will compute.
+    onProgress?.({ stage: 'uploading', progress: 35, message: 'Computing blob commitments...' });
+
+    const encryptedBuffer = await encryptedBlob.arrayBuffer();
+    const commitments = await computeBlobCommitments(encryptedBuffer);
+    console.log('🔏 Blob commitments generated (SDK erasure coding + Merkle root)');
+
+    // Step 7: Register blob on Shelbynet blockchain
+    onProgress?.({
+      stage: 'uploading',
+      progress: 40,
+      message: 'Registering on Shelbynet... (approve wallet)',
+    });
+
+    console.log('📝 Registering blob on Shelbynet blockchain...');
+    const { hash: registerHash, blobId } = await registerBlob(
+      signAndSubmitTransaction,
+      blobName,
+      commitments,
+      resolvedAccount,
+      metadata.availabilityPeriod || 30
+    );
+
+    console.log('✅ Blob registered on blockchain');
+    console.log('   Transaction:', registerHash);
+    console.log('   Blob ID:', blobId);
+
+    // Step 8: Upload encrypted video to Shelbynet storage
+    // The SDK's putBlob validates the upload against the on-chain Merkle root.
+    onProgress?.({ stage: 'uploading', progress: 50, message: 'Uploading to Shelbynet storage...' });
+
+    console.log('📤 Uploading encrypted video to Shelbynet...');
+    await uploadBlobToShelbynet(
+      encryptedBlob,
+      blobName,
+      uploaderAddress,
+      (uploadProgress) => {
+        onProgress?.({
+          stage: 'uploading',
+          progress: 50 + uploadProgress * 0.45, // 50% → 95%
+          message: `Uploading to Shelbynet... ${uploadProgress}%`,
+        });
+      }
+    );
+
+    console.log('✅ Video uploaded to Shelbynet storage');
+
+    // Step 9: Generate Shelbynet URL
+    const shelbyUrl = getBlobStreamUrl(blobName, uploaderAddress);
+    console.log('🌐 Shelbynet URL:', shelbyUrl);
+
+    // Step 10: Complete
+    onProgress?.({ stage: 'complete', progress: 100, message: 'Upload complete!' });
+
+    console.log('✅ Upload complete!');
+    console.log('📊 Summary:');
+    console.log('   - Video ID:', videoId);
+    console.log('   - Blob ID:', blobId);
+    console.log('   - Register Tx:', registerHash);
+    console.log('   - Shelbynet URL:', shelbyUrl);
+
+    return {
+      videoId,
+      blobId,
+      blobName,
+      shelbyUrl,
+      encryptionKey,
+      duration,
+      thumbnailUrl,
+      success: true,
+    };
+  } catch (error) {
+    console.error('❌ Upload failed:', error);
+
+    onProgress?.({
+      stage: 'error',
+      progress: 0,
+      message: error instanceof Error ? error.message : 'Upload failed',
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Download and decrypt video from Shelbynet
+ */
+export async function downloadAndDecryptVideo(
+  shelbyUrl: string,
+  encryptionKey: string,
+  blobName: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const cacheKey = `video_${blobName}`;
+
+  // Check cache first — this short-circuits the double-invoke
+  const cached = getCachedVideo(cacheKey);
+  if (cached) {
+    console.log('✅ Using cached video');
+    return cached;
+  }
+
+  // Deduplicate in-flight requests for the same blob
+  if (inFlightRequests.has(cacheKey)) {
+    console.log('⏳ Waiting for in-flight download...');
+    return inFlightRequests.get(cacheKey)!;
+  }
+
+  const promise = (async () => {
+    console.log('📥 Downloading from Shelbynet...');
+    console.log('   URL:', shelbyUrl);
+
+    const response = await fetch(shelbyUrl, { signal });
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+    }
+
+    const encryptedBlob = await response.blob();
+    console.log('📦 Downloaded encrypted video:', encryptedBlob.size, 'bytes');
+
+    console.log('🔓 Decrypting video...');
+    const decryptedBlob = await decryptBlob(encryptedBlob, encryptionKey);
+    console.log('✅ Video decrypted:', decryptedBlob.size, 'bytes');
+
+    cacheVideo(cacheKey, decryptedBlob);
+    return decryptedBlob;
+  })();
+
+  inFlightRequests.set(cacheKey, promise);
+  promise.finally(() => inFlightRequests.delete(cacheKey));
+
+  return promise;
+}
+
+const inFlightRequests = new Map<string, Promise<Blob>>();
+
+// Video caching
+const videoCache = new Map<string, Blob>();
+const MAX_CACHE_SIZE = 5;
+
+function getCachedVideo(key: string): Blob | null {
+  return videoCache.get(key) || null;
+}
+
+function cacheVideo(key: string, blob: Blob): void {
+  if (videoCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = videoCache.keys().next().value;
+    videoCache.delete(firstKey!);
+    console.log("🗑️ Removed oldest cached video");
+  }
+
+  videoCache.set(key, blob);
+  console.log(`💾 Cached video (${videoCache.size}/${MAX_CACHE_SIZE})`);
+}
+
+export function clearVideoCache(): void {
+  videoCache.clear();
+  console.log("🗑️ Video cache cleared");
+}
+
+/**
+ * Delete video (Shelbynet blobs expire automatically)
+ */
+export async function deleteFromShelby(
+  videoId: string,
+  shelbyUrl: string,
+  blobName: string,
+  signAndSubmitTransaction: any
+): Promise<boolean> {
+  try {
+    console.log('🗑️ Deleting video...');
+
+    const cacheKey = `video_${blobName}`;
+    if (videoCache.has(cacheKey)) {
+      videoCache.delete(cacheKey);
+      console.log('✅ Removed from cache');
+    }
+
+    console.log('ℹ️ Shelbynet blob will expire automatically based on availability period');
+
     return true;
   } catch (error) {
-    console.error('Failed to copy to clipboard:', error);
+    console.error('❌ Failed to delete:', error);
     return false;
   }
 }
 
 /**
- * Generate random ID
- * @param prefix - Optional prefix for the ID
- * @returns Random ID string
+ * Validate video file
  */
-export function generateId(prefix: string = ''): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substr(2, 9);
-  return prefix ? `${prefix}_${timestamp}_${random}` : `${timestamp}_${random}`;
-}
+export function validateVideoFile(file: File): { valid: boolean; error?: string } {
+  const MAX_SIZE = parseInt(process.env.NEXT_PUBLIC_MAX_VIDEO_SIZE || '104857600');
+  const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
 
-/**
- * Debounce function
- * @param func - Function to debounce
- * @param wait - Wait time in milliseconds
- * @returns Debounced function
- */
-export function debounce<T extends (...args: any[]) => any>(
-  func: T,
-  wait: number
-): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout | null = null;
-  
-  return function executedFunction(...args: Parameters<T>) {
-    const later = () => {
-      timeout = null;
-      func(...args);
+  if (!file) {
+    return { valid: false, error: 'No file provided' };
+  }
+
+  if (!ALLOWED_TYPES.includes(file.type)) {
+    return {
+      valid: false,
+      error: `Invalid file type. Allowed: ${ALLOWED_TYPES.join(', ')}`,
     };
-    
-    if (timeout) clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
+  }
+
+  if (file.size > MAX_SIZE) {
+    return {
+      valid: false,
+      error: `File too large. Maximum size: ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB`,
+    };
+  }
+
+  return { valid: true };
 }
 
-/**
- * Sanitize URL to prevent XSS attacks
- * @param url - URL to sanitize
- * @returns Sanitized URL or empty string if unsafe
- */
-export function sanitizeUrl(url: string | undefined | null): string {
-  if (!url) return '';
+export function formatAddress(address: string | null | undefined): string {
+  if (!address) return '';
+  if (address.length <= 10) return address; // If address is too short, return as is
+  return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+}
+
+export function sanitizeUrl(url: string): string {
+  // Basic sanitization: check if it's a data URL or starts with http(s)://
+  if (url.startsWith("data:")) {
+    return url;
+  }
   try {
     const parsedUrl = new URL(url);
-    if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+    if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
       return url;
     }
   } catch (error) {
-    // Invalid URL format
+    // Invalid URL, return empty string or a placeholder
   }
-  return ''; // Return empty string for invalid or unsafe URLs
+  return "";
 }
