@@ -10,7 +10,6 @@ import {
   EphemeralKeyPair,
   KeylessAccount,
   Hex,
-  generateSignedTransaction,
 } from '@aptos-labs/ts-sdk';
 
 // aptos — Aptos TESTNET only for ZK account derivation (pepper + prover services live here)
@@ -180,67 +179,29 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
   if (!keylessAccount) return null;
 
   return async (payload: any) => {
-    // Use Aptos testnet node for all operations.
-    // Shelbynet blob contracts (MODULE_ADDRESS 0x15ff...) are deployed on Aptos testnet.
-    // NEXT_PUBLIC_SHELBYNET_NODE_URL points to the Shelby storage API (different service).
-    const aptosNode = 'https://api.testnet.aptoslabs.com/v1';
-    const senderAddress = keylessAccount.accountAddress.toString();
-
-    // Get sequence number from Aptos testnet
-    let sequenceNumber = BigInt(0);
-    try {
-      const res = await fetch(`${aptosNode}/accounts/${senderAddress}`);
-      if (res.ok) {
-        const data = await res.json();
-        sequenceNumber = BigInt(data.sequence_number ?? '0');
-      }
-    } catch { /* use 0 as fallback */ }
-
-    // Build transaction using aptos (testnet) client — ZK proof needs testnet pepper/prover
-    const transaction = await aptos.transaction.build.simple({
+    // Use aptosChain (Shelbynet) to build and submit — that's where the blob contracts live.
+    // Use aptos (testnet) only for signing — ZK proof needs testnet pepper/prover services.
+    const transaction = await aptosChain.transaction.build.simple({
       sender: keylessAccount.accountAddress,
       data: payload.data ?? payload,
-      options: { accountSequenceNumber: sequenceNumber },
     });
 
-    // Sign with keyless account (ZK proof via Aptos testnet pepper/prover)
+    // Sign using the testnet client (accesses pepper + prover)
     const senderAuthenticator = aptos.transaction.sign({
       signer: keylessAccount,
       transaction,
     });
 
-    const txBytes = Buffer.from(generateSignedTransaction({ transaction, senderAuthenticator }));
-
-    // Submit to Aptos testnet node
-    let hash = `tx_${Date.now()}`;
-
-    const submitRes = await fetch(`${aptosNode}/transactions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x.aptos.signed_transaction+bcs' },
-      body: txBytes,
+    // Submit to Shelbynet via the aptosChain client
+    const pendingTxn = await aptosChain.transaction.submit.simple({
+      transaction,
+      senderAuthenticator,
     });
 
-    const text = await submitRes.text();
-    if (!submitRes.ok && submitRes.status !== 202) {
-      // Sanitise error — never expose raw response which may contain node details
-      throw new Error(`Transaction submission failed (${submitRes.status})`);
-    }
-
-    if (text.startsWith('{')) {
-      try {
-        const json = JSON.parse(text);
-        if (json.error_code && !json.hash) {
-          throw new Error(`Transaction rejected: ${json.message ?? json.error_code}`);
-        }
-        hash = json.hash ?? json.transaction_hash ?? hash;
-      } catch (e: any) {
-        if (e.message?.startsWith('Transaction')) throw e;
-      }
-    }
-
-    return { hash };
+    return { hash: pendingTxn.hash };
   };
 }
+
 
 /**
  * Get user info from storage
