@@ -218,7 +218,7 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
     const submitRes = await fetch(`${aptosNode}/transactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x.aptos.signed_transaction+bcs' },
-      body: generateSignedTransaction({ transaction, senderAuthenticator }),
+      body: Buffer.from(generateSignedTransaction({ transaction, senderAuthenticator })),
     });
 
     let hash = `tx_${Date.now()}`;
