@@ -12,13 +12,20 @@ import {
   Hex,
 } from '@aptos-labs/ts-sdk';
 
-// Use Shelbynet custom network — same as rest of the app
-const config = new AptosConfig({
+// TWO clients:
+// 1. aptosKeyless — uses Aptos TESTNET for ZK/pepper service (account derivation only)
+//    The pepper + prover services only exist on official Aptos networks.
+// 2. aptosChain — uses Shelbynet for submitting actual transactions
+const aptosKeyless = new Aptos(new AptosConfig({ network: Network.TESTNET }));
+
+const aptosChain = new Aptos(new AptosConfig({
   network: Network.CUSTOM,
   fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL!,
   indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL!,
-});
-const aptos = new Aptos(config);
+}));
+
+// Default client used for account derivation
+const aptos = aptosKeyless;
 
 // Storage keys
 const STORAGE_KEY_EKP = 'aptos-keyless-ekp';
@@ -185,18 +192,18 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
   if (!keylessAccount) return null;
 
   return async (payload: any) => {
-    const transaction = await aptos.transaction.build.simple({
+    const transaction = await aptosChain.transaction.build.simple({
       sender: keylessAccount.accountAddress,
       data: payload.data ?? payload,
     });
 
-    const committedTxn = await aptos.signAndSubmitTransaction({
+    const committedTxn = await aptosChain.signAndSubmitTransaction({
       signer: keylessAccount,
       transaction,
     });
 
     // Wait for confirmation
-    await aptos.waitForTransaction({ transactionHash: committedTxn.hash });
+    await aptosChain.waitForTransaction({ transactionHash: committedTxn.hash });
     console.log('✅ Keyless transaction submitted:', committedTxn.hash);
     return committedTxn;
   };
