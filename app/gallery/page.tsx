@@ -199,7 +199,7 @@ function GalleryContent() {
 
 export default function GalleryPage() {
   return (
-    <AuthGuard requireUsername={true}>
+    <AuthGuard requireUsername={false}>
       <GalleryContent />
     </AuthGuard>
   );

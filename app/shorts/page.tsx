@@ -342,7 +342,7 @@ function ShortsContent() {
 
 export default function ShortsPage() {
   return (
-    <AuthGuard requireUsername={true}>
+    <AuthGuard requireUsername={false}>
       <ShortsContent />
     </AuthGuard>
   );

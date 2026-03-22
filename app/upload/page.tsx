@@ -3,7 +3,7 @@
 import React from 'react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWallet } from '@aptos-labs/wallet-adapter-react';
+import { useWallet } from '@/hooks/useWallet';
 import Header from '@/components/Header';
 import UploadForm from '@/components/UploadForm';
 import { SHELBY_FAUCET_URL, registerShelbyUSD } from '@/lib/aptos';

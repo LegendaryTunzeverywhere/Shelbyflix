@@ -9,34 +9,34 @@ interface AuthGuardProps {
   requireUsername?: boolean;
 }
 
-export default function AuthGuard({ children, requireUsername = true }: AuthGuardProps) {
+export default function AuthGuard({ children, requireUsername = false }: AuthGuardProps) {
   const router = useRouter();
   const { address, user, loading, connected } = useWallet();
   const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
-    // Wait for wallet/auth to load
+    // Wait for wallet/auth to fully load before making any decision
     if (loading) return;
 
-    // Check if user is connected
-    if (!connected || !address) {
-      console.log('❌ Not connected - redirecting to home');
-      router.push('/?auth=required');
-      return;
-    }
+    // Give Google keyless auth extra time to restore session from localStorage
+    const timer = setTimeout(() => {
+      if (!connected || !address) {
+        router.push('/');
+        return;
+      }
 
-    // Check if username is required and missing
-    if (requireUsername && (!user || !user.username)) {
-      console.log('❌ No username - redirecting to home');
-      router.push('/?username=required');
-      return;
-    }
+      // Username check — only redirect if explicitly required
+      if (requireUsername && user !== null && !user?.username) {
+        router.push('/?username=required');
+        return;
+      }
 
-    // All checks passed
-    setIsChecking(false);
+      setIsChecking(false);
+    }, 300); // 300ms buffer for Google auth state to hydrate
+
+    return () => clearTimeout(timer);
   }, [connected, address, user, loading, requireUsername, router]);
 
-  // Show loading state while checking
   if (loading || isChecking) {
     return (
       <div className="min-h-screen bg-brand-dark flex items-center justify-center">
@@ -48,16 +48,7 @@ export default function AuthGuard({ children, requireUsername = true }: AuthGuar
     );
   }
 
-  // If not connected, don't render anything (already redirecting)
-  if (!connected || !address) {
-    return null;
-  }
+  if (!connected || !address) return null;
 
-  // If username required but missing, don't render
-  if (requireUsername && (!user || !user.username)) {
-    return null;
-  }
-
-  // All good - render children
   return <>{children}</>;
-}
+
