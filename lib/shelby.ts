@@ -4,6 +4,7 @@ import {
   uploadBlobToShelbynet,
   getBlobStreamUrl,
   computeBlobCommitments,
+  addBlobAcknowledgement,
 } from './shelbynet-blob';
 import { AccountAddress } from '@aptos-labs/ts-sdk';
 import {
@@ -52,19 +53,16 @@ export async function uploadToShelby(
     onProgress?.({ stage: 'encrypting', progress: 5, message: 'Analyzing video...' });
 
     const duration = await getVideoDuration(file);
-    console.log('📹 Video duration:', duration, 'seconds');
 
     // Step 2: Generate encryption key
     onProgress?.({ stage: 'encrypting', progress: 10, message: 'Generating encryption key...' });
 
     const encryptionKey = generateEncryptionKey();
-    console.log('🔐 Encryption key generated');
 
     // Step 3: Encrypt video
     onProgress?.({ stage: 'encrypting', progress: 20, message: 'Encrypting video...' });
 
     const encryptedBlob = await encryptFile(file, encryptionKey);
-    console.log('🔒 Video encrypted:', encryptedBlob.size, 'bytes');
 
     // Step 4: Generate thumbnail
     onProgress?.({ stage: 'encrypting', progress: 30, message: 'Generating thumbnail...' });
@@ -72,8 +70,7 @@ export async function uploadToShelby(
     let thumbnailUrl: string | undefined;
     try {
       thumbnailUrl = await generateThumbnail(file, Math.floor(duration / 2));
-      console.log('🖼️ Thumbnail generated (data URL)');
-    } catch (error) {
+      } catch (error) {
       console.warn('Failed to generate thumbnail:', error);
     }
 
@@ -81,8 +78,6 @@ export async function uploadToShelby(
     const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const blobName = `${videoId}_${file.name}`;
 
-    console.log('📦 Video ID:', videoId);
-    console.log('📝 Blob name:', blobName);
 
     // Step 6: Compute blob commitments via official SDK
     // This applies Clay erasure coding before hashing — the only way to get a
@@ -91,7 +86,6 @@ export async function uploadToShelby(
 
     const encryptedBuffer = await encryptedBlob.arrayBuffer();
     const commitments = await computeBlobCommitments(encryptedBuffer);
-    console.log('🔏 Blob commitments generated (SDK erasure coding + Merkle root)');
 
     // Step 7: Register blob on Shelbynet blockchain
     onProgress?.({
@@ -100,7 +94,6 @@ export async function uploadToShelby(
       message: 'Registering on Shelbynet... (approve wallet)',
     });
 
-    console.log('📝 Registering blob on Shelbynet blockchain...');
     const { hash: registerHash, blobId } = await registerBlob(
       signAndSubmitTransaction,
       blobName,
@@ -109,15 +102,14 @@ export async function uploadToShelby(
       metadata.availabilityPeriod || 30
     );
 
-    console.log('✅ Blob registered on blockchain');
-    console.log('   Transaction:', registerHash);
-    console.log('   Blob ID:', blobId);
+    // Step 8: Add blob acknowledgement (confirms uploader owns the blob)
+    // Required by Shelbynet before putBlob will accept the upload
+    onProgress?.({ stage: 'uploading', progress: 48, message: 'Acknowledging blob on chain... (approve wallet)' });
+    await addBlobAcknowledgement(signAndSubmitTransaction, blobName, resolvedAccount);
 
-    // Step 8: Upload encrypted video to Shelbynet storage
-    // The SDK's putBlob validates the upload against the on-chain Merkle root.
+    // Step 9: Upload encrypted video to Shelbynet storage
     onProgress?.({ stage: 'uploading', progress: 50, message: 'Uploading to Shelbynet storage...' });
 
-    console.log('📤 Uploading encrypted video to Shelbynet...');
     await uploadBlobToShelbynet(
       encryptedBlob,
       blobName,
@@ -131,21 +123,13 @@ export async function uploadToShelby(
       }
     );
 
-    console.log('✅ Video uploaded to Shelbynet storage');
 
     // Step 9: Generate Shelbynet URL
     const shelbyUrl = getBlobStreamUrl(blobName, uploaderAddress);
-    console.log('🌐 Shelbynet URL:', shelbyUrl);
 
     // Step 10: Complete
     onProgress?.({ stage: 'complete', progress: 100, message: 'Upload complete!' });
 
-    console.log('✅ Upload complete!');
-    console.log('📊 Summary:');
-    console.log('   - Video ID:', videoId);
-    console.log('   - Blob ID:', blobId);
-    console.log('   - Register Tx:', registerHash);
-    console.log('   - Shelbynet URL:', shelbyUrl);
 
     return {
       videoId,
@@ -158,7 +142,6 @@ export async function uploadToShelby(
       success: true,
     };
   } catch (error) {
-    console.error('❌ Upload failed:', error);
 
     onProgress?.({
       stage: 'error',
@@ -184,19 +167,15 @@ export async function downloadAndDecryptVideo(
   // Check cache first — this short-circuits the double-invoke
   const cached = getCachedVideo(cacheKey);
   if (cached) {
-    console.log('✅ Using cached video');
     return cached;
   }
 
   // Deduplicate in-flight requests for the same blob
   if (inFlightRequests.has(cacheKey)) {
-    console.log('⏳ Waiting for in-flight download...');
     return inFlightRequests.get(cacheKey)!;
   }
 
   const promise = (async () => {
-    console.log('📥 Downloading from Shelbynet...');
-    console.log('   URL:', shelbyUrl);
 
     const response = await fetch(shelbyUrl, { signal });
     if (!response.ok) {
@@ -204,11 +183,8 @@ export async function downloadAndDecryptVideo(
     }
 
     const encryptedBlob = await response.blob();
-    console.log('📦 Downloaded encrypted video:', encryptedBlob.size, 'bytes');
 
-    console.log('🔓 Decrypting video...');
     const decryptedBlob = await decryptBlob(encryptedBlob, encryptionKey);
-    console.log('✅ Video decrypted:', decryptedBlob.size, 'bytes');
 
     cacheVideo(cacheKey, decryptedBlob);
     return decryptedBlob;
@@ -234,16 +210,13 @@ function cacheVideo(key: string, blob: Blob): void {
   if (videoCache.size >= MAX_CACHE_SIZE) {
     const firstKey = videoCache.keys().next().value;
     videoCache.delete(firstKey!);
-    console.log("🗑️ Removed oldest cached video");
   }
 
   videoCache.set(key, blob);
-  console.log(`💾 Cached video (${videoCache.size}/${MAX_CACHE_SIZE})`);
 }
 
 export function clearVideoCache(): void {
   videoCache.clear();
-  console.log("🗑️ Video cache cleared");
 }
 
 /**
@@ -256,19 +229,15 @@ export async function deleteFromShelby(
   signAndSubmitTransaction: any
 ): Promise<boolean> {
   try {
-    console.log('🗑️ Deleting video...');
 
     const cacheKey = `video_${blobName}`;
     if (videoCache.has(cacheKey)) {
       videoCache.delete(cacheKey);
-      console.log('✅ Removed from cache');
-    }
+      }
 
-    console.log('ℹ️ Shelbynet blob will expire automatically based on availability period');
 
     return true;
   } catch (error) {
-    console.error('❌ Failed to delete:', error);
     return false;
   }
 }

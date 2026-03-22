@@ -84,7 +84,6 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     if (!jwt) {
       throw new Error('No JWT token found in URL. Login may have been cancelled.');
     }
-    console.log('✅ JWT token retrieved');
 
     // Clear JWT from URL bar immediately (security — don't let it sit in history)
     window.history.replaceState(null, '', window.location.pathname);
@@ -98,20 +97,15 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     const ephemeralKeyPair = EphemeralKeyPair.fromBytes(
       Buffer.from(ekpStored, 'base64')
     );
-    console.log('✅ Retrieved ephemeral key pair');
 
     // 3. Derive Keyless Account
-    console.log('🔑 Deriving Keyless account...');
     const keylessAccount = await aptos.deriveKeylessAccount({
       jwt,
       ephemeralKeyPair,
     });
 
-    console.log('✅ Keyless account derived');
-    console.log('   Address:', keylessAccount.accountAddress.toString());
 
     // 4. Verify JWT server-side
-    console.log('➡️ Sending JWT to server for verification...');
     const response = await fetch('/api/auth/google/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -124,7 +118,6 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     }
 
     const verifiedUserInfo = await response.json();
-    console.log('✅ Server verified JWT');
 
     const keylessUserInfo: KeylessUserInfo = {
       email: verifiedUserInfo.email,
@@ -138,7 +131,6 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     localStorage.setItem(STORAGE_KEY_JWT, jwt);
     localStorage.setItem(STORAGE_KEY_USER_INFO, JSON.stringify(keylessUserInfo));
 
-    console.log('✅ Login complete!');
     return keylessUserInfo;
   } catch (error) {
     console.error('❌ Failed to finalize login:', error);
@@ -163,8 +155,7 @@ export async function getKeylessAccount(): Promise<KeylessAccount | null> {
 
     // Check if EKP is expired — if so, user needs to re-login
     if (ephemeralKeyPair.isExpired()) {
-      console.log('⏰ Ephemeral key expired — clearing session');
-      logout();
+        logout();
       return null;
     }
 
@@ -189,19 +180,23 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
   if (!keylessAccount) return null;
 
   return async (payload: any) => {
-    // Always use the official Aptos testnet node for account + transactions
-    // NEXT_PUBLIC_SHELBYNET_NODE_URL = api.testnet.shelby.xyz (Shelby storage API, not Aptos node)
+    // Use Aptos testnet node for all operations.
+    // Shelbynet blob contracts (MODULE_ADDRESS 0x15ff...) are deployed on Aptos testnet.
+    // NEXT_PUBLIC_SHELBYNET_NODE_URL points to the Shelby storage API (different service).
     const aptosNode = 'https://api.testnet.aptoslabs.com/v1';
     const senderAddress = keylessAccount.accountAddress.toString();
 
-    // Get account sequence number from Aptos testnet node
-    const accountRes = await fetch(`${aptosNode}/accounts/${senderAddress}`)
-      .then(r => r.json())
-      .catch(() => ({ sequence_number: '0' }));
+    // Get sequence number from Aptos testnet
+    let sequenceNumber = BigInt(0);
+    try {
+      const res = await fetch(`${aptosNode}/accounts/${senderAddress}`);
+      if (res.ok) {
+        const data = await res.json();
+        sequenceNumber = BigInt(data.sequence_number ?? '0');
+      }
+    } catch { /* use 0 as fallback */ }
 
-    const sequenceNumber = BigInt(accountRes.sequence_number ?? '0');
-
-    // Build transaction (aptos testnet client, local build — no extra network calls)
+    // Build transaction using aptos (testnet) client — ZK proof needs testnet pepper/prover
     const transaction = await aptos.transaction.build.simple({
       sender: keylessAccount.accountAddress,
       data: payload.data ?? payload,
@@ -214,28 +209,35 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
       transaction,
     });
 
-    // Submit BCS bytes directly to Aptos testnet node
+    const txBytes = Buffer.from(generateSignedTransaction({ transaction, senderAuthenticator }));
+
+    // Submit to Aptos testnet node
+    let hash = `tx_${Date.now()}`;
+
     const submitRes = await fetch(`${aptosNode}/transactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x.aptos.signed_transaction+bcs' },
-      body: Buffer.from(generateSignedTransaction({ transaction, senderAuthenticator })),
+      body: txBytes,
     });
 
-    let hash = `tx_${Date.now()}`;
-    try {
-      const text = await submitRes.text();
-      if (text.startsWith('{')) {
-        const json = JSON.parse(text);
-        if (json.error_code && !json.hash) {
-          throw new Error(`Transaction failed: ${json.message ?? json.error_code}`);
-        }
-        hash = json.hash ?? json.transaction_hash ?? hash;
-      }
-    } catch (parseErr: any) {
-      if (parseErr?.message?.startsWith('Transaction failed')) throw parseErr;
+    const text = await submitRes.text();
+    if (!submitRes.ok && submitRes.status !== 202) {
+      // Sanitise error — never expose raw response which may contain node details
+      throw new Error(`Transaction submission failed (${submitRes.status})`);
     }
 
-    console.log('✅ Keyless transaction submitted:', hash);
+    if (text.startsWith('{')) {
+      try {
+        const json = JSON.parse(text);
+        if (json.error_code && !json.hash) {
+          throw new Error(`Transaction rejected: ${json.message ?? json.error_code}`);
+        }
+        hash = json.hash ?? json.transaction_hash ?? hash;
+      } catch (e: any) {
+        if (e.message?.startsWith('Transaction')) throw e;
+      }
+    }
+
     return { hash };
   };
 }
@@ -291,8 +293,7 @@ export function cleanupExpiredKeys(): void {
     );
 
     if (ephemeralKeyPair.isExpired()) {
-      console.log('⏰ Ephemeral key expired - cleaning up');
-      logout();
+        logout();
     }
   } catch {
     // Key may be corrupted — clean up

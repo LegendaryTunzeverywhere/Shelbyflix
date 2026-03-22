@@ -10,21 +10,18 @@ import { Network, AccountAddress } from '@aptos-labs/ts-sdk';
 
 /**
  * Generate commitments for a blob using the official Shelby SDK.
- *
- * This is the ONLY correct way to compute the Merkle root — the SDK
- * internally applies Clay erasure coding before hashing, which is what
- * the Shelbynet storage API validates against. Any manual SHA-256 chunking
- * will produce a different root and cause a 400 error on upload.
+ * Applies Clay erasure coding before hashing — the only way to match
+ * what the Shelbynet storage API validates against.
  */
 export async function computeBlobCommitments(data: ArrayBuffer): Promise<BlobCommitments> {
   const buffer = Buffer.from(data);
   const provider = await createDefaultErasureCodingProvider();
-  const commitments = await generateCommitments(provider, buffer);
-  return commitments;
+  return generateCommitments(provider, buffer);
 }
 
 /**
- * Register a blob on Shelbynet blockchain using the official SDK payload builder.
+ * Register a blob on Shelbynet blockchain.
+ * Step 1 of 3 in the upload flow.
  */
 export async function registerBlob(
   signAndSubmitTransaction: any,
@@ -46,22 +43,44 @@ export async function registerBlob(
       blobSize: commitments.raw_data_size,
     });
 
-    console.log('📝 Registering blob on blockchain...');
-
     const response = await signAndSubmitTransaction({ data: payload });
-
     const blobId = `blob_${Date.now()}_${blobName}`;
-    console.log('✅ Blob registered successfully');
 
     return { hash: response.hash, blobId };
   } catch (error) {
-    console.error('❌ Failed to register blob:', error);
-    throw error;
+    // Never expose raw error objects — sanitise before throwing
+    const msg = error instanceof Error ? error.message : 'Blob registration failed';
+    throw new Error(msg);
   }
 }
 
 /**
- * Upload encrypted blob to Shelbynet storage using the official SDK RPC client.
+ * Add blob acknowledgement on Shelbynet blockchain.
+ * Step 2 of 3 — confirms the uploader owns the blob after registration.
+ * Required before putBlob will accept the upload.
+ */
+export async function addBlobAcknowledgement(
+  signAndSubmitTransaction: any,
+  blobName: string,
+  uploaderAddress: AccountAddress
+): Promise<{ hash: string }> {
+  try {
+    const payload = ShelbyBlobClient.createAddBlobAcknowledgementPayload({
+      account: uploaderAddress,
+      blobName,
+    });
+
+    const response = await signAndSubmitTransaction({ data: payload });
+    return { hash: response.hash };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Blob acknowledgement failed';
+    throw new Error(msg);
+  }
+}
+
+/**
+ * Upload encrypted blob to Shelbynet storage.
+ * Step 3 of 3 — only works after registerBlob + addBlobAcknowledgement.
  */
 export async function uploadBlobToShelbynet(
   encryptedBlob: Blob,
@@ -70,8 +89,6 @@ export async function uploadBlobToShelbynet(
   onProgress?: (progress: number) => void
 ): Promise<void> {
   try {
-    console.log(`📤 Uploading ${blobName} (${encryptedBlob.size} bytes) to Shelbynet...`);
-
     const shelbyClient = new ShelbyClient({
       network: Network.TESTNET,
       apiKey: process.env.NEXT_PUBLIC_SHELBY_API_KEY ?? '',
@@ -85,47 +102,28 @@ export async function uploadBlobToShelbynet(
       blobData,
     });
 
-    console.log(`✅ Blob uploaded to Shelbynet storage successfully`);
     onProgress?.(100);
   } catch (error) {
-    console.error('❌ Failed to upload blob to Shelbynet:', error);
-    throw error;
+    const msg = error instanceof Error ? error.message : 'Blob upload failed';
+    throw new Error(msg);
   }
 }
 
 /**
  * Get Shelbynet blob download URL.
- * BUG FIX: Was using api.shelbynet.shelby.xyz (wrong) — testnet domain is api.testnet.shelby.xyz
  */
 export function getBlobStreamUrl(blobName: string, accountAddress: string): string {
-  const encodedBlobName = encodeURIComponent(blobName);
-  return `https://api.testnet.shelby.xyz/shelby/v1/blobs/${accountAddress}/${encodedBlobName}`;
+  return `https://api.testnet.shelby.xyz/shelby/v1/blobs/${accountAddress}/${encodeURIComponent(blobName)}`;
 }
 
 /**
- * Download blob from Shelbynet
+ * Download blob from Shelbynet.
  */
-export async function downloadBlob(
-  blobName: string,
-  uploaderAddress: string
-): Promise<Blob> {
-  try {
-    const url = getBlobStreamUrl(blobName, uploaderAddress);
-
-    console.log('📥 Downloading from Shelbynet:', url);
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
-    }
-
-    const blob = await response.blob();
-    console.log('✅ Downloaded:', blob.size, 'bytes');
-
-    return blob;
-  } catch (error) {
-    console.error('❌ Download failed:', error);
-    throw error;
+export async function downloadBlob(blobName: string, uploaderAddress: string): Promise<Blob> {
+  const url = getBlobStreamUrl(blobName, uploaderAddress);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Download failed: ${response.status}`);
   }
+  return response.blob();
 }
