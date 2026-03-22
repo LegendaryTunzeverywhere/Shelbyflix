@@ -65,7 +65,7 @@ export async function addBlobAcknowledgement(
   uploaderAddress: AccountAddress
 ): Promise<{ hash: string }> {
   try {
-    const payload = ShelbyBlobClient.createAddBlobAcknowledgementPayload({
+    const payload = ShelbyBlobClient.createBlobAcknowledgementsPayload({
       account: uploaderAddress,
       blobName,
     });
