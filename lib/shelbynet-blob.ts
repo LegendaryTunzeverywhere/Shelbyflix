@@ -55,32 +55,8 @@ export async function registerBlob(
 }
 
 /**
- * Add blob acknowledgement on Shelbynet blockchain.
- * Step 2 of 3 — confirms the uploader owns the blob after registration.
- * Required before putBlob will accept the upload.
- */
-export async function addBlobAcknowledgement(
-  signAndSubmitTransaction: any,
-  blobName: string,
-  uploaderAddress: AccountAddress
-): Promise<{ hash: string }> {
-  try {
-    const payload = ShelbyBlobClient.createBlobAcknowledgementsPayload({
-      account: uploaderAddress,
-      blobName,
-    });
-
-    const response = await signAndSubmitTransaction({ data: payload });
-    return { hash: response.hash };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Blob acknowledgement failed';
-    throw new Error(msg);
-  }
-}
-
-/**
  * Upload encrypted blob to Shelbynet storage.
- * Step 3 of 3 — only works after registerBlob + addBlobAcknowledgement.
+ * Step 2 of 2 — only works after registerBlob.
  */
 export async function uploadBlobToShelbynet(
   encryptedBlob: Blob,

@@ -4,7 +4,6 @@ import {
   uploadBlobToShelbynet,
   getBlobStreamUrl,
   computeBlobCommitments,
-  addBlobAcknowledgement,
 } from './shelbynet-blob';
 import { AccountAddress } from '@aptos-labs/ts-sdk';
 import {
@@ -102,12 +101,7 @@ export async function uploadToShelby(
       metadata.availabilityPeriod || 30
     );
 
-    // Step 8: Add blob acknowledgement (confirms uploader owns the blob)
-    // Required by Shelbynet before putBlob will accept the upload
-    onProgress?.({ stage: 'uploading', progress: 48, message: 'Acknowledging blob on chain... (approve wallet)' });
-    await addBlobAcknowledgement(signAndSubmitTransaction, blobName, resolvedAccount);
-
-    // Step 9: Upload encrypted video to Shelbynet storage
+    // Step 8: Upload encrypted video to Shelbynet storage
     onProgress?.({ stage: 'uploading', progress: 50, message: 'Uploading to Shelbynet storage...' });
 
     await uploadBlobToShelbynet(
