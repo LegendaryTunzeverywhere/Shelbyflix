@@ -191,23 +191,20 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
     const shelbyNode = (process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.testnet.aptoslabs.com/v1').replace(/\/$/, '');
     const senderAddress = keylessAccount.accountAddress.toString();
 
-    // Fetch account sequence number + chain ID directly from Shelbynet
+    // Fetch account sequence number directly from Shelbynet
     // Using raw fetch avoids the SDK trying to parse non-standard responses
-    const [accountRes, chainRes] = await Promise.all([
-      fetch(`${shelbyNode}/accounts/${senderAddress}`).then(r => r.json()).catch(() => ({ sequence_number: '0' })),
-      fetch(`${shelbyNode}/`).then(r => r.json()).catch(() => ({ chain_id: 2 })),
-    ]);
+    const accountRes = await fetch(`${shelbyNode}/accounts/${senderAddress}`)
+      .then(r => r.json())
+      .catch(() => ({ sequence_number: '0' }));
 
     const sequenceNumber = BigInt(accountRes.sequence_number ?? '0');
-    const chainId = Number(chainRes.chain_id ?? 2);
 
-    // Build transaction using aptos testnet client but override chain params
+    // Build transaction using aptos testnet client, injecting sequence number
     const transaction = await aptos.transaction.build.simple({
       sender: keylessAccount.accountAddress,
       data: payload.data ?? payload,
       options: {
         accountSequenceNumber: sequenceNumber,
-        chainId,
       },
     });
 
