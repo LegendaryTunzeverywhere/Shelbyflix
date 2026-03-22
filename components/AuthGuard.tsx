@@ -51,4 +51,4 @@ export default function AuthGuard({ children, requireUsername = false }: AuthGua
   if (!connected || !address) return null;
 
   return <>{children}</>;
-
+}
