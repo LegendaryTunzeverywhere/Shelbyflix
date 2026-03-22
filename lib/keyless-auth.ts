@@ -10,6 +10,7 @@ import {
   EphemeralKeyPair,
   KeylessAccount,
   Hex,
+  generateSignedTransaction,
 } from '@aptos-labs/ts-sdk';
 
 // aptos — Aptos TESTNET only for ZK account derivation (pepper + prover services live here)
@@ -214,17 +215,11 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
       transaction,
     });
 
-    // Combine into signed transaction bytes
-    const signedTxnBytes = aptos.transaction.combine({
-      transaction,
-      senderAuthenticator,
-    });
-
     // Submit BCS-encoded bytes directly to Shelbynet — bypasses SDK JSON parsing
     const submitRes = await fetch(`${shelbyNode}/transactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x.aptos.signed_transaction+bcs' },
-      body: signedTxnBytes.bcsToBytes(),
+      body: generateSignedTransaction({ transaction, senderAuthenticator }),
     });
 
     let hash = `tx_${Date.now()}`;
