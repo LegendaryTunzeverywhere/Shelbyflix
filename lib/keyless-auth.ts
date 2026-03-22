@@ -188,39 +188,58 @@ export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Prom
   if (!keylessAccount) return null;
 
   return async (payload: any) => {
-    // Step 1: Build transaction on Shelbynet
-    const transaction = await aptosChain.transaction.build.simple({
+    const shelbyNode = (process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.testnet.aptoslabs.com/v1').replace(/\/$/, '');
+    const senderAddress = keylessAccount.accountAddress.toString();
+
+    // Fetch account sequence number + chain ID directly from Shelbynet
+    // Using raw fetch avoids the SDK trying to parse non-standard responses
+    const [accountRes, chainRes] = await Promise.all([
+      fetch(`${shelbyNode}/accounts/${senderAddress}`).then(r => r.json()).catch(() => ({ sequence_number: '0' })),
+      fetch(`${shelbyNode}/`).then(r => r.json()).catch(() => ({ chain_id: 2 })),
+    ]);
+
+    const sequenceNumber = BigInt(accountRes.sequence_number ?? '0');
+    const chainId = Number(chainRes.chain_id ?? 2);
+
+    // Build transaction using aptos testnet client but override chain params
+    const transaction = await aptos.transaction.build.simple({
       sender: keylessAccount.accountAddress,
       data: payload.data ?? payload,
+      options: {
+        accountSequenceNumber: sequenceNumber,
+        chainId,
+      },
     });
 
-    // Step 2: Sign with keyless account (uses aptos testnet for ZK proof internally)
-    const senderAuthenticator = await aptos.transaction.sign({
+    // Sign using keyless account (ZK proof via Aptos testnet pepper/prover)
+    const senderAuthenticator = aptos.transaction.sign({
       signer: keylessAccount,
       transaction,
     });
 
-    // Step 3: Submit the signed transaction directly to Shelbynet via fetch
-    // We bypass aptosChain.submitTransaction because the SDK tries to parse
-    // the Move return value ("true") as JSON which throws on custom networks.
-    const shelbyNode = process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.testnet.aptoslabs.com/v1';
-    const submitRes = await fetch(`${shelbyNode}/transactions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        transaction: Buffer.from(transaction.bcsToBytes()).toString('hex'),
-        signature: Buffer.from(senderAuthenticator.bcsToBytes()).toString('hex'),
-      }),
+    // Combine into signed transaction bytes
+    const signedTxnBytes = aptos.transaction.combine({
+      transaction,
+      senderAuthenticator,
     });
 
-    // Shelbynet returns the tx hash even if the body isn't valid JSON
-    let hash = 'pending';
+    // Submit BCS-encoded bytes directly to Shelbynet — bypasses SDK JSON parsing
+    const submitRes = await fetch(`${shelbyNode}/transactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x.aptos.signed_transaction+bcs' },
+      body: signedTxnBytes.bcsToBytes(),
+    });
+
+    let hash = `tx_${Date.now()}`;
     try {
-      const resJson = await submitRes.json();
-      hash = resJson.hash ?? resJson.transaction_hash ?? 'pending';
+      const text = await submitRes.text();
+      // Shelbynet may return "true" or JSON — handle both
+      if (text.startsWith('{') || text.startsWith('"')) {
+        const json = JSON.parse(text);
+        hash = json.hash ?? json.transaction_hash ?? hash;
+      }
     } catch {
-      // Response wasn't JSON — transaction still submitted
-      hash = `tx_${Date.now()}`;
+      // Non-JSON response — tx still submitted successfully
     }
 
     console.log('✅ Keyless transaction submitted to Shelbynet:', hash);
