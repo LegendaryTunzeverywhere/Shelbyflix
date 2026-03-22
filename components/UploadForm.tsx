@@ -6,7 +6,6 @@ import { VideoCategory, VideoType, UploadProgress, VideoMetadata } from '@/types
 import { uploadToShelby, validateVideoFile } from '@/lib/shelby';
 import { useNotification } from '@/hooks/useNotification';
 import { useWallet } from '@/hooks/useWallet';
-import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import CategorySelector from './CategorySelector';
 import TagInput from './TagInput';
 import ExpirationPicker from './ExpirationPicker';
@@ -24,8 +23,7 @@ import {
 export default function UploadForm() {
   const router = useRouter();
   const { success, error } = useNotification();
-  const { address, connected, user } = useWallet();
-  const { signAndSubmitTransaction } = useAptosWallet();
+  const { address, connected, user, signAndSubmitTransaction } = useWallet();
 
   const [videoType, setVideoType] = useState<VideoType>('long');
   const [file, setFile] = useState<File | null>(null);
