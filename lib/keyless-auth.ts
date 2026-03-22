@@ -1,7 +1,6 @@
 /**
  * Aptos Keyless Authentication Service
  * Handles Google OAuth login with Aptos blockchain integration
- * FIXED: Added pepper service URL configuration
  */
 
 import {
@@ -10,69 +9,56 @@ import {
   Network,
   EphemeralKeyPair,
   KeylessAccount,
+  Hex,
 } from '@aptos-labs/ts-sdk';
 
-// Initialize Aptos client with pepper service
-const network = (process.env.NEXT_PUBLIC_APTOS_NETWORK as Network) || Network.TESTNET;
-
+// Use Shelbynet custom network — same as rest of the app
 const config = new AptosConfig({
-  network,
-  // CRITICAL FIX: Add pepper service URL for Keyless authentication
-  pepperServiceUrl: 'https://api.testnet.aptoslabs.com/v1/keyless/pepper',
-  // For mainnet, use: 'https://api.mainnet.aptoslabs.com/v1/keyless/pepper'
-} as any);
-
+  network: Network.CUSTOM,
+  fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL!,
+  indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL!,
+});
 const aptos = new Aptos(config);
 
 // Storage keys
 const STORAGE_KEY_EKP = 'aptos-keyless-ekp';
-const STORAGE_KEY_ACCOUNT = 'aptos-keyless-account';
+const STORAGE_KEY_JWT = 'aptos-keyless-jwt';       // store JWT so we can re-derive account
 const STORAGE_KEY_USER_INFO = 'aptos-keyless-user';
 
 export interface KeylessUserInfo {
   email: string;
   name?: string;
   picture?: string;
-  sub: string; // Google user ID
+  sub: string;
   accountAddress: string;
 }
 
 /**
  * Initiate Google OAuth login flow
- * Generates ephemeral key pair and redirects to Google
  */
 export function initiateGoogleLogin(): void {
-  console.log('🔐 Initiating Google OAuth login...');
-
   try {
-    // 1. Generate ephemeral key pair
     const ephemeralKeyPair = EphemeralKeyPair.generate();
-    console.log('✅ Generated ephemeral key pair');
 
-    // 2. Store in localStorage (needed after redirect)
+    // Store as base64 — avoids 0x prefix issues with hex encoding
     const ekpBytes = ephemeralKeyPair.bcsToBytes();
     const ekpBase64 = Buffer.from(ekpBytes).toString('base64');
     localStorage.setItem(STORAGE_KEY_EKP, ekpBase64);
-    console.log('✅ Stored ephemeral key pair');
 
-    // 3. Build Google OAuth URL
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI;
 
     if (!clientId || !redirectUri) {
-      throw new Error('Missing Google OAuth configuration. Check your .env.local file.');
+      throw new Error('Missing Google OAuth configuration. Check your environment variables.');
     }
-
-    const nonce = ephemeralKeyPair.nonce;
 
     const loginUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     loginUrl.searchParams.set('client_id', clientId);
     loginUrl.searchParams.set('redirect_uri', redirectUri);
     loginUrl.searchParams.set('response_type', 'id_token');
     loginUrl.searchParams.set('scope', 'openid email profile');
-    loginUrl.searchParams.set('nonce', nonce);
+    loginUrl.searchParams.set('nonce', ephemeralKeyPair.nonce);
 
-    console.log('🔗 Redirecting to Google OAuth...');
     window.location.href = loginUrl.toString();
   } catch (error) {
     console.error('❌ Failed to initiate login:', error);
@@ -82,7 +68,6 @@ export function initiateGoogleLogin(): void {
 
 /**
  * Finalize login after Google OAuth callback
- * Derives Aptos Keyless account from JWT
  */
 export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
   console.log('🔐 Finalizing Google OAuth login...');
@@ -95,8 +80,10 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     if (!jwt) {
       throw new Error('No JWT token found in URL. Login may have been cancelled.');
     }
-
     console.log('✅ JWT token retrieved');
+
+    // Clear JWT from URL bar immediately (security — don't let it sit in history)
+    window.history.replaceState(null, '', window.location.pathname);
 
     // 2. Retrieve stored ephemeral key pair
     const ekpStored = localStorage.getItem(STORAGE_KEY_EKP);
@@ -109,7 +96,7 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     );
     console.log('✅ Retrieved ephemeral key pair');
 
-    // 3. Derive Keyless Account (with pepper service configured in AptosConfig above)
+    // 3. Derive Keyless Account
     console.log('🔑 Deriving Keyless account...');
     const keylessAccount = await aptos.deriveKeylessAccount({
       jwt,
@@ -119,23 +106,35 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
     console.log('✅ Keyless account derived');
     console.log('   Address:', keylessAccount.accountAddress.toString());
 
-    // 4. Parse user info from JWT
-    const userInfo = parseJWT(jwt);
+    // 4. Verify JWT server-side
+    console.log('➡️ Sending JWT to server for verification...');
+    const response = await fetch('/api/auth/google/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: jwt }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to verify JWT on server');
+    }
+
+    const verifiedUserInfo = await response.json();
+    console.log('✅ Server verified JWT');
+
     const keylessUserInfo: KeylessUserInfo = {
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture,
-      sub: userInfo.sub,
+      email: verifiedUserInfo.email,
+      name: verifiedUserInfo.name,
+      picture: verifiedUserInfo.picture,
+      sub: verifiedUserInfo.sub,
       accountAddress: keylessAccount.accountAddress.toString(),
     };
 
-    // 5. Store account and user info
-    await storeKeylessAccount(keylessAccount, keylessUserInfo);
+    // 5. Store JWT + user info — JWT is needed to re-derive the account later
+    localStorage.setItem(STORAGE_KEY_JWT, jwt);
+    localStorage.setItem(STORAGE_KEY_USER_INFO, JSON.stringify(keylessUserInfo));
 
     console.log('✅ Login complete!');
-    console.log('   Email:', keylessUserInfo.email);
-    console.log('   Account:', keylessUserInfo.accountAddress);
-
     return keylessUserInfo;
   } catch (error) {
     console.error('❌ Failed to finalize login:', error);
@@ -144,19 +143,63 @@ export async function finalizeGoogleLogin(): Promise<KeylessUserInfo> {
 }
 
 /**
- * Get currently logged-in account
+ * Re-derive the KeylessAccount from stored JWT + EKP
+ * This is needed every session since KeylessAccount can't be serialised fully
  */
 export async function getKeylessAccount(): Promise<KeylessAccount | null> {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY_ACCOUNT);
-    if (!stored) return null;
+    const jwt = localStorage.getItem(STORAGE_KEY_JWT);
+    const ekpStored = localStorage.getItem(STORAGE_KEY_EKP);
 
-    const accountData = JSON.parse(stored);
-    return accountData as any;
+    if (!jwt || !ekpStored) return null;
+
+    const ephemeralKeyPair = EphemeralKeyPair.fromBytes(
+      Buffer.from(ekpStored, 'base64')
+    );
+
+    // Check if EKP is expired — if so, user needs to re-login
+    if (ephemeralKeyPair.isExpired()) {
+      console.log('⏰ Ephemeral key expired — clearing session');
+      logout();
+      return null;
+    }
+
+    const keylessAccount = await aptos.deriveKeylessAccount({
+      jwt,
+      ephemeralKeyPair,
+    });
+
+    return keylessAccount;
   } catch (error) {
     console.error('Failed to get keyless account:', error);
     return null;
   }
+}
+
+/**
+ * Build a signAndSubmitTransaction function for Google keyless users
+ * Returns a function with the same signature as the wallet adapter's version
+ */
+export async function getKeylessSignAndSubmit(): Promise<((payload: any) => Promise<any>) | null> {
+  const keylessAccount = await getKeylessAccount();
+  if (!keylessAccount) return null;
+
+  return async (payload: any) => {
+    const transaction = await aptos.transaction.build.simple({
+      sender: keylessAccount.accountAddress,
+      data: payload.data ?? payload,
+    });
+
+    const committedTxn = await aptos.signAndSubmitTransaction({
+      signer: keylessAccount,
+      transaction,
+    });
+
+    // Wait for confirmation
+    await aptos.waitForTransaction({ transactionHash: committedTxn.hash });
+    console.log('✅ Keyless transaction submitted:', committedTxn.hash);
+    return committedTxn;
+  };
 }
 
 /**
@@ -167,14 +210,13 @@ export function getUserInfo(): KeylessUserInfo | null {
     const stored = localStorage.getItem(STORAGE_KEY_USER_INFO);
     if (!stored) return null;
     return JSON.parse(stored);
-  } catch (error) {
-    console.error('Failed to get user info:', error);
+  } catch {
     return null;
   }
 }
 
 /**
- * Check if user is logged in
+ * Check if user is logged in via Google
  */
 export function isLoggedIn(): boolean {
   const userInfo = getUserInfo();
@@ -182,78 +224,13 @@ export function isLoggedIn(): boolean {
 }
 
 /**
- * Logout (clear stored data)
+ * Logout — clear all stored data
  */
 export function logout(): void {
-  console.log('👋 Logging out...');
   localStorage.removeItem(STORAGE_KEY_EKP);
-  localStorage.removeItem(STORAGE_KEY_ACCOUNT);
+  localStorage.removeItem(STORAGE_KEY_JWT);
   localStorage.removeItem(STORAGE_KEY_USER_INFO);
   console.log('✅ Logged out');
-}
-
-/**
- * Sign and submit transaction
- */
-export async function signAndSubmitTransaction(
-  keylessAccount: KeylessAccount,
-  transaction: any
-): Promise<any> {
-  try {
-    console.log('📝 Signing transaction...');
-    const committedTxn = await aptos.signAndSubmitTransaction({
-      signer: keylessAccount,
-      transaction,
-    });
-    console.log('✅ Transaction submitted:', committedTxn.hash);
-    return committedTxn;
-  } catch (error) {
-    console.error('❌ Transaction failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Parse JWT token to extract user info
- */
-function parseJWT(jwt: string): any {
-  try {
-    const base64Url = jwt.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    return JSON.parse(jsonPayload);
-  } catch (error) {
-    console.error('Failed to parse JWT:', error);
-    throw new Error('Invalid JWT token');
-  }
-}
-
-/**
- * Store keyless account and user info
- */
-async function storeKeylessAccount(
-  account: KeylessAccount,
-  userInfo: KeylessUserInfo
-): Promise<void> {
-  try {
-    // Store account (simplified)
-    localStorage.setItem(STORAGE_KEY_ACCOUNT, JSON.stringify({
-      accountAddress: account.accountAddress.toString(),
-    }));
-
-    // Store user info
-    localStorage.setItem(STORAGE_KEY_USER_INFO, JSON.stringify(userInfo));
-
-    console.log('✅ Account and user info stored');
-  } catch (error) {
-    console.error('Failed to store account:', error);
-    throw error;
-  }
 }
 
 /**
@@ -264,7 +241,7 @@ export function getAptosClient(): Aptos {
 }
 
 /**
- * Clean up expired ephemeral keys
+ * Check and clean up expired ephemeral keys
  */
 export function cleanupExpiredKeys(): void {
   try {
@@ -279,7 +256,8 @@ export function cleanupExpiredKeys(): void {
       console.log('⏰ Ephemeral key expired - cleaning up');
       logout();
     }
-  } catch (error) {
-    console.error('Failed to check key expiry:', error);
+  } catch {
+    // Key may be corrupted — clean up
+    logout();
   }
 }

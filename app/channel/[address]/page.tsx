@@ -10,7 +10,6 @@ import EditVideoModal from '@/components/EditVideoModal';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
-import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress } from '@/lib/aptos';
 import { getSubscriberCount } from '@/lib/engagement-store';
 import { getUserByWallet } from '@/lib/user-service';
@@ -124,8 +123,7 @@ function ChannelVideoRow({
 export default function ChannelPage() {
   const params = useParams();
   const router = useRouter();
-  const { address, user } = useWallet();
-  const { signAndSubmitTransaction } = useAptosWallet();
+  const { address, user, signAndSubmitTransaction } = useWallet();
 
   const channelAddress = (params.address as string).toLowerCase();
   const isOwner = address?.toString().toLowerCase() === channelAddress;

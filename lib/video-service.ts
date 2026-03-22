@@ -117,7 +117,7 @@ export async function incrementViews(videoId: string, walletAddress?: string): P
       .from('video_engagement')
       .select('viewed')
       .eq('video_id', videoId)
-      .eq('wallet_address', walletAddress)
+      .eq('user_wallet', walletAddress)
       .maybeSingle();
 
     if (existing?.viewed) return; // Already counted — do nothing
@@ -126,11 +126,11 @@ export async function incrementViews(videoId: string, walletAddress?: string): P
     await supabase.from('video_engagement').upsert(
       {
         video_id: videoId,
-        wallet_address: walletAddress,
+        user_wallet: walletAddress,
         viewed: true,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'video_id,wallet_address' }
+      { onConflict: 'video_id,user_wallet' }
     );
   }
 

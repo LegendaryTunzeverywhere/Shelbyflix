@@ -8,7 +8,6 @@ import type { VideoMetadata } from '@/types';
 import VideoCard from '@/components/VideoCard';
 import Header from '@/components/Header';
 import { useWallet } from '@/hooks/useWallet';
-import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { registerShelbyUSD } from '@/lib/aptos';
 import { getTrendingVideos, getRecentVideos } from '@/lib/video-service';
 import {
@@ -22,8 +21,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 export default function Home() {
-  const { connected } = useWallet();
-  const { signAndSubmitTransaction } = useAptosWallet();
+  const { connected, signAndSubmitTransaction } = useWallet();
 
   const refetch = async () => {};
   const [registering, setRegistering] = useState(false);

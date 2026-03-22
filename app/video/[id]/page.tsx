@@ -10,7 +10,6 @@ import EngagementBar from '@/components/EngagementBar';
 import CommentSection from '@/components/CommentSection';
 import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
-import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
 import { getSubscriberCount } from '@/lib/engagement-store';
 import type { VideoMetadata } from '@/types';
 import {
@@ -178,8 +177,7 @@ function RelatedVideoCard({ video }: { video: VideoMetadata }) {
 export default function VideoPage() {
   const params = useParams();
   const router = useRouter();
-  const { address } = useWallet();
-  const { signAndSubmitTransaction } = useAptosWallet();
+  const { address, signAndSubmitTransaction } = useWallet();
 
   const [video, setVideo] = useState<VideoMetadata | null>(null);
   const [related, setRelated] = useState<VideoMetadata[]>([]);
@@ -252,7 +250,7 @@ export default function VideoPage() {
       console.error('Delete failed:', e);
       setDeleting(false);
       setShowDeleteModal(false);
-      alert(`Failed to delete: ${e.message || 'Unknown error'}`);
+      console.error('Delete failed:', e);
     }
   }
 

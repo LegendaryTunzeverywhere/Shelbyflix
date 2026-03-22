@@ -1,15 +1,15 @@
 'use client';
 
 import { useWallet as useAptosWallet } from '@aptos-labs/wallet-adapter-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getUserByWallet, type User } from '@/lib/user-service';
 
 export function useWallet() {
-  const { account, connected, disconnect, signAndSubmitTransaction } = useAptosWallet();
+  const { account, connected, disconnect, signAndSubmitTransaction: walletSignAndSubmit } = useAptosWallet();
   const [user, setUser] = useState<User | null>(null);
   const [needsUsername, setNeedsUsername] = useState(false);
   const [loading, setLoading] = useState(true);
-  
+
   // Google Keyless state
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [googleAddress, setGoogleAddress] = useState<string | null>(null);
@@ -25,12 +25,8 @@ export function useWallet() {
             setGoogleAddress(userInfo.accountAddress);
           }
         })
-        .catch(() => {
-          // Google auth not available
-        });
-    } catch {
-      // Google auth module not found
-    }
+        .catch(() => {});
+    } catch {}
   }, []);
 
   // Check user whenever wallet or Google state changes
@@ -39,7 +35,6 @@ export function useWallet() {
   }, [account?.address, connected, googleAddress]);
 
   const checkUser = async () => {
-    // Determine address from either wallet or Google
     const walletAddress = account?.address?.toString();
     const effectiveAddress = googleAddress || walletAddress;
     const isConnected = connected || !!googleAddress;
@@ -54,7 +49,6 @@ export function useWallet() {
     setLoading(true);
     try {
       const existingUser = await getUserByWallet(effectiveAddress);
-      
       if (existingUser) {
         setUser(existingUser);
         setNeedsUsername(false);
@@ -69,14 +63,11 @@ export function useWallet() {
     }
   };
 
-  const refreshUser = async () => {
-    await checkUser();
-  };
+  const refreshUser = async () => { await checkUser(); };
 
-  // Unified disconnect function
+  // Unified disconnect
   const handleDisconnect = async () => {
     if (googleAddress) {
-      // Logout from Google
       try {
         const { logout } = await import('@/lib/keyless-auth');
         logout();
@@ -86,31 +77,51 @@ export function useWallet() {
         console.error('Failed to logout from Google:', error);
       }
     } else {
-      // Disconnect wallet
       disconnect();
     }
   };
 
+  /**
+   * Unified signAndSubmitTransaction — works for both Petra wallet and Google keyless
+   * This is what UploadForm and other components should use
+   */
+  const unifiedSignAndSubmit = useCallback(async (payload: any): Promise<any> => {
+    if (googleAddress) {
+      // Google keyless — re-derive account and sign
+      const { getKeylessSignAndSubmit } = await import('@/lib/keyless-auth');
+      const keylessSign = await getKeylessSignAndSubmit();
+      if (!keylessSign) {
+        throw new Error('Google session expired. Please sign in again.');
+      }
+      return keylessSign(payload);
+    } else {
+      // Petra / browser wallet
+      if (!walletSignAndSubmit) {
+        throw new Error('Wallet not connected.');
+      }
+      return walletSignAndSubmit(payload);
+    }
+  }, [googleAddress, walletSignAndSubmit]);
+
   return {
-    // Address (from wallet or Google)
-    address: googleAddress ? { toString: () => googleAddress } : account?.address,
-    
-    // Connected status (wallet OR Google)
+    // Address — works for both wallet and Google
+    address: googleAddress
+      ? { toString: () => googleAddress }
+      : account?.address,
+
+    // Connected — true for either auth method
     connected: connected || !!googleAddress,
-    
-    // Disconnect (handles both)
+
     disconnect: handleDisconnect,
-    
-    // Sign function (wallet only for now - Google needs implementation)
-    signAndSubmitTransaction,
-    
-    // User data
+
+    // Unified signing — use this everywhere instead of useAptosWallet's version
+    signAndSubmitTransaction: unifiedSignAndSubmit,
+
     user,
     needsUsername,
     loading,
     refreshUser,
-    
-    // Google-specific info
+
     googleUser,
     isGoogleAuth: !!googleAddress,
   };
