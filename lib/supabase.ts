@@ -49,3 +49,18 @@ export interface VideoRecord {
   created_at: string;
   updated_at: string;
 }
+
+export interface CommentRecord {
+  id: string;
+  comment_id: string;
+  video_id: string;
+  user_id: string;
+  user_name: string;
+  user_avatar?: string;
+  text: string;
+  likes: number;
+  timestamp: number;
+  parent_comment_id?: string;
+  created_at: string;
+  updated_at: string;
+}

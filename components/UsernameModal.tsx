@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createUser, isUsernameAvailable } from '@/lib/user-service';
 import { XMarkIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 
 interface UsernameModalProps {
   walletAddress: string;
+  googleName?: string;
   onComplete: (username: string) => void;
 }
 
-export default function UsernameModal({ walletAddress, onComplete }: UsernameModalProps) {
+export default function UsernameModal({ walletAddress, googleName, onComplete }: UsernameModalProps) {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [checking, setChecking] = useState(false);
@@ -17,41 +18,84 @@ export default function UsernameModal({ walletAddress, onComplete }: UsernameMod
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
+  // Generate suggested username from Google name on mount
+  useEffect(() => {
+    if (googleName && !username) {
+      const suggested = generateSuggestedUsername(googleName);
+      setUsername(suggested);
+      setDisplayName(googleName);
+      // Auto-check availability
+      checkUsernameAvailability(suggested);
+    }
+  }, [googleName]);
+
+  const generateSuggestedUsername = (name: string): string => {
+    // Remove special characters, convert to lowercase, replace spaces with underscores
+    let username = name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s]/g, '') // Remove special characters
+      .replace(/\s+/g, '_') // Replace spaces with underscores
+      .substring(0, 20); // Max 20 chars
+    
+    // Ensure it's at least 3 characters
+    if (username.length < 3) {
+      username = username + '_user';
+    }
+    
+    return username;
+  };
+
   const validateUsername = (value: string): boolean => {
     // Only lowercase letters, numbers, underscore
     const regex = /^[a-z0-9_]{3,20}$/;
     return regex.test(value);
   };
 
-    const handleUsernameChange = async (value: string) => {
-    setUsername(value.toLowerCase());
-    setError('');
-    setAvailable(null);
-
-    if (!value) return;
-
+  const checkUsernameAvailability = async (value: string) => {
     if (!validateUsername(value)) {
-        setError('Username must be 3-20 characters (letters, numbers, underscore only)');
-        return;
+      setAvailable(false);
+      return;
     }
 
     setChecking(true);
     try {
-        console.log('🔍 Checking username availability:', value);
-        const isAvailable = await isUsernameAvailable(value);
-        console.log('✅ Username availability result:', isAvailable);
-        
-        setAvailable(isAvailable);
-        if (!isAvailable) {
+      console.log('🔍 Checking username availability:', value);
+      const isAvail = await isUsernameAvailable(value);
+      console.log('✅ Username availability result:', isAvail);
+      
+      setAvailable(isAvail);
+      if (!isAvail) {
         setError('Username already taken');
-        }
+      } else {
+        setError('');
+      }
     } catch (err) {
-        console.error('❌ Error checking username:', err);
-        setError('Failed to check username availability');
+      console.error('❌ Error checking username:', err);
+      setError('Failed to check username availability');
+      setAvailable(false);
     } finally {
-        setChecking(false);
+      setChecking(false);
     }
-    };
+  };
+
+  const handleUsernameChange = async (value: string) => {
+    setUsername(value.toLowerCase());
+    setError('');
+    
+    if (!value) {
+      setAvailable(null);
+      return;
+    }
+
+    if (!validateUsername(value)) {
+      setError('Username must be 3-20 characters (letters, numbers, underscore only)');
+      setAvailable(false);
+      return;
+    }
+
+    await checkUsernameAvailability(value);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +133,7 @@ export default function UsernameModal({ walletAddress, onComplete }: UsernameMod
           {/* Username */}
           <div>
             <label className="block text-sm font-black text-zinc-300 mb-2 uppercase tracking-widest">
-              Username *
+              Username * {googleName && <span className="text-xs text-zinc-500">(Suggested from your name)</span>}
             </label>
             <div className="relative">
               <input
@@ -165,7 +209,7 @@ export default function UsernameModal({ walletAddress, onComplete }: UsernameMod
 
         {/* Info */}
         <p className="text-xs text-zinc-600 text-center mt-6">
-          Your username cannot be changed later
+          You can update your username and profile anytime from settings
         </p>
       </div>
     </div>

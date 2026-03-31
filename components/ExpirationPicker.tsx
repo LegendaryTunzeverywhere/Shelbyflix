@@ -17,32 +17,29 @@ export default function ExpirationPicker({ value, onChange }: ExpirationPickerPr
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-200">
+      <label className="block text-xs font-black uppercase tracking-widest text-zinc-400 mb-3">
         Video Availability
       </label>
-      
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {options.map((option) => (
           <button
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              value === option.value
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
+            className={`px-4 py-2 rounded-xl text-sm font-black transition-colors
+              ${value === option.value
+                ? 'bg-brand-red text-white shadow-[0_0_20px_rgba(246,27,46,0.2)]'
+                : 'bg-zinc-900/60 text-zinc-300 border border-zinc-800 hover:bg-zinc-800/80'}
+            `}
           >
             {option.label}
           </button>
         ))}
       </div>
-
-      <p className="text-xs text-gray-400">
-        {value >= 36500 
+      <p className="text-xs text-zinc-500 mt-1">
+        {value >= 36500
           ? 'This video will be available permanently'
-          : `Available until ${expirationDate.toLocaleDateString()}`
-        }
+          : `Available until ${expirationDate.toLocaleDateString()}`}
       </p>
     </div>
   );

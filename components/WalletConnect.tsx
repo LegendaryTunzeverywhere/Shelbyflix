@@ -10,7 +10,9 @@ import {
   ArrowRightStartOnRectangleIcon,
   ExclamationTriangleIcon,
   XMarkIcon,
+  DocumentDuplicateIcon,
 } from '@heroicons/react/24/outline';
+import { getAptosClient } from '@/lib/keyless-auth';
 
 type AuthMethod = 'google' | 'wallet';
 
@@ -57,9 +59,16 @@ const WalletConnect: React.FC = () => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [activeMethod, setActiveMethod] = useState<AuthMethod | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+  const [balances, setBalances] = useState({ apt: 0, shelbyUsd: 0 });
+  const [balancesLoading, setBalancesLoading] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+
+  // Pre-compute authenticated state and address early
+  const isAuthenticated = (connected && account) || googleUser;
+  const userAddress = googleUser?.accountAddress || account?.address.toString();
 
   // Check for existing Google session
   useEffect(() => {
@@ -75,6 +84,48 @@ const WalletConnect: React.FC = () => {
         .catch(() => {});
     } catch {}
   }, []);
+
+  // Fetch user balances when authenticated
+  useEffect(() => {
+    const fetchBalances = async () => {
+      if (!userAddress) return;
+      
+      setBalancesLoading(true);
+      try {
+        const aptos = getAptosClient();
+        
+        // Fetch all coin balances
+        const coins = await aptos.account.getAccountCoinsData({
+          accountAddress: userAddress,
+        });
+        
+        // Find APT and ShelbyUSD
+        let aptBalance = 0;
+        let shelbyUsdBalance = 0;
+        
+        coins.forEach((coin: any) => {
+          if (coin.metadata?.asset_type?.includes('0x1::aptos_coin::AptosCoin')) {
+            aptBalance = parseFloat(coin.amount || '0') / 100000000;
+          }
+          
+          const shelbyUsdToken = process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS;
+          if (shelbyUsdToken && coin.metadata?.asset_type?.includes(shelbyUsdToken)) {
+            shelbyUsdBalance = parseFloat(coin.amount || '0') / 100000000;
+          }
+        });
+
+        setBalances({ apt: aptBalance, shelbyUsd: shelbyUsdBalance });
+      } catch (error) {
+        console.error('Failed to fetch balances:', error);
+      } finally {
+        setBalancesLoading(false);
+      }
+    };
+
+    if (showDropdown) {
+      fetchBalances();
+    }
+  }, [showDropdown, userAddress]);
 
   // Close modal on outside click
   useEffect(() => {
@@ -151,8 +202,19 @@ const WalletConnect: React.FC = () => {
     window.location.href = '/';
   };
 
-  const isAuthenticated = (connected && account) || googleUser;
-  const userAddress = googleUser?.accountAddress || account?.address.toString();
+  const handleCopyAddress = async () => {
+    if (userAddress) {
+      try {
+        await navigator.clipboard.writeText(userAddress);
+        setIsCopied(true);
+        console.log('Wallet address copied:', userAddress); // Logging for validation
+        setTimeout(() => setIsCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy wallet address:', err);
+        alert('Failed to copy address.');
+      }
+    }
+  };
 
   // ── NOT AUTHENTICATED ───────────────────────────────────────────────────────
   if (!isAuthenticated) {
@@ -360,40 +422,90 @@ const WalletConnect: React.FC = () => {
                 <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
                   Blockchain Address
                 </p>
-                <p className="text-xs font-mono text-white break-all bg-black/30 p-2 rounded-lg border border-zinc-800">
-                  {userAddress}
-                </p>
-              </div>
-
-              <div className="p-5 border-b border-zinc-800">
-                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">Status</p>
-                <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-500/10 rounded-lg">
-                      <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-green-500">
-                        {activeMethod === 'google' ? 'Google Account' : 'PRO Access'}
-                      </p>
-                      <p className="text-xs text-zinc-500">
-                        {activeMethod === 'google' ? 'Keyless Auth' : 'Wallet Connected'}
-                      </p>
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2 bg-black/30 p-2 rounded-lg border border-zinc-800">
+                  <p className="text-xs font-mono text-white break-all flex-1">
+                    {userAddress}
+                  </p>
+                  <button
+                    onClick={handleCopyAddress}
+                    className="flex-shrink-0 p-1.5 rounded-md bg-zinc-700 hover:bg-zinc-600 transition-colors"
+                    title="Copy address"
+                  >
+                    {isCopied ? (
+                      <CheckCircleIcon className="w-4 h-4 text-green-500" />
+                    ) : (
+                      <DocumentDuplicateIcon className="w-4 h-4 text-zinc-400" />
+                    )}
+                  </button>
                 </div>
               </div>
 
-              <div className="p-2">
-                <button
-                  onClick={handleLogoutClick}
-                  className="w-full px-4 py-3 text-left text-sm font-bold text-zinc-400
-                    hover:text-white hover:bg-brand-red/10 rounded-xl transition-all
-                    flex items-center gap-2 group"
-                >
-                  <ArrowRightStartOnRectangleIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  <span>Sign Out</span>
-                </button>
+              <div className="p-5 border-b border-zinc-800">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">Token Balances</p>
+                <div className="space-y-2">
+                  {/* APT Balance */}
+                  <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-black rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-white">
+                        Ⓐ
+                      </div>
+                      <span className="text-sm font-bold text-white">APT</span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-white">
+                        {balancesLoading ? '...' : `${balances.apt.toFixed(4)}`}
+                      </p>
+                      {balances.apt < 0.01 && !balancesLoading && (
+                        <p className="text-[10px] text-brand-red font-bold">⚠️ Low balance</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ShelbyUSD Balance */}
+                  <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-brand-purple/20 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-brand-purple">
+                        $
+                      </div>
+                      <span className="text-sm font-bold text-white">ShelbyUSD</span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-white">
+                        {balancesLoading ? '...' : `${balances.shelbyUsd.toFixed(4)}`}
+                      </p>
+                      {balances.shelbyUsd < 0.1 && !balancesLoading && (
+                        <p className="text-[10px] text-brand-red font-bold">⚠️ No funds</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fee Warning */}
+                {(balances.apt < 0.01 || balances.shelbyUsd < 0.1) && !balancesLoading && (
+                  <div className="mt-3 p-3 bg-brand-red/10 border border-brand-red/20 rounded-lg flex gap-2">
+                    <ExclamationTriangleIcon className="w-4 h-4 text-brand-red flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-bold text-brand-red mb-1">Insufficient Funds</p>
+                      <p className="text-[10px] text-zinc-400">
+                        You need APT for gas fees and ShelbyUSD to register blobs for uploads.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-5 border-b border-zinc-800">
+                <div className="p-2">
+                  <button
+                    onClick={handleLogoutClick}
+                    className="w-full px-4 py-3 text-left text-sm font-bold text-zinc-400
+                      hover:text-white hover:bg-brand-red/10 rounded-xl transition-all
+                      flex items-center gap-2 group"
+                  >
+                    <ArrowRightStartOnRectangleIcon className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
               </div>
             </div>
           </>

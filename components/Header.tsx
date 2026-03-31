@@ -4,9 +4,10 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import WalletConnect from './WalletConnect';
-import { FilmIcon, UserCircleIcon } from '@heroicons/react/24/outline';
+import { UserCircleIcon } from '@heroicons/react/24/outline';
 import useShelbyAccess from '@/hooks/useShelbyAccess';
 import { useWallet } from '@/hooks/useWallet';
+import { PlayCircleIcon } from '@heroicons/react/24/solid';
 
 const Header: React.FC = () => {
   const pathname = usePathname();
@@ -24,9 +25,9 @@ const Header: React.FC = () => {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 sm:gap-3 hover:opacity-90 transition-all group flex-shrink-0">
             <div className="relative">
-              <div className="absolute -inset-1 bg-gradient-to-r from-brand-purple to-brand-red rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200" />
-              <div className="relative p-2 sm:p-2.5 bg-zinc-900 rounded-xl border border-zinc-800 flex items-center justify-center">
-                <FilmIcon className="w-5 h-5 sm:w-7 sm:h-7 text-brand-red" />
+              <div className="absolute -inset-1 bg-gradient-to-r from-brand-purple to-brand-red rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200" />
+              <div className="relative bg-gradient-to-br from-brand-red to-brand-purple rounded-full p-2 sm:p-2.5 flex items-center justify-center shadow-lg">
+                <PlayCircleIcon className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
               </div>
             </div>
             <div>
@@ -59,7 +60,7 @@ const Header: React.FC = () => {
                   className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all
                     ${pathname === '/gallery' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900'}`}
                 >
-                  GALLERY
+                  VIDEOS
                 </Link>
                 <Link
                   href="/shorts"
@@ -101,7 +102,7 @@ const Header: React.FC = () => {
         <nav className="flex items-center gap-1 py-2 px-3 overflow-x-auto scrollbar-none">
           {[
             { href: '/', label: 'Home' },
-            { href: '/gallery', label: 'Gallery' },
+            { href: '/gallery', label: 'Videos' },
             { href: '/shorts', label: 'Shorts' },
             { href: '/upload', label: 'Upload' },
           ].map((link) => (

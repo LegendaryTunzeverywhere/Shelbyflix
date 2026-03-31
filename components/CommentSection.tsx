@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useWallet } from '@/hooks/useWallet';
 import {
   addComment,
@@ -85,33 +86,50 @@ interface CommentSectionProps {
 }
 
 export default function CommentSection({ videoId }: CommentSectionProps) {
-  const { address } = useWallet();
+  const { address, user } = useWallet();
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => { loadComments(); }, [videoId]);
 
-  const loadComments = () => setComments(getVideoComments(videoId));
-
-  const handleAddComment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!address || !newComment.trim()) return;
-    const userName = address.toString().slice(0, 6) + '...' + address.toString().slice(-4);
-    addComment(videoId, address.toString(), userName, newComment.trim());
-    setNewComment('');
-    loadComments();
+  const loadComments = async () => {
+    setLoading(true);
+    try {
+      const loadedComments = await getVideoComments(videoId);
+      setComments(loadedComments);
+    } catch (error) {
+      console.error('Failed to load comments:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleReply = (parentCommentId: string) => {
-    if (!address || !replyText.trim()) return;
-    const userName = address.toString().slice(0, 6) + '...' + address.toString().slice(-4);
-    addComment(videoId, address.toString(), userName, replyText.trim(), parentCommentId);
-    setReplyText('');
-    setReplyingTo(null);
-    loadComments();
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!address || !user || !newComment.trim()) return;
+    try {
+      await addComment(videoId, address.toString(), user.username, newComment.trim());
+      setNewComment('');
+      await loadComments();
+    } catch (error) {
+      console.error('Failed to add comment:', error);
+    }
+  };
+
+  const handleReply = async (parentCommentId: string) => {
+    if (!address || !user || !replyText.trim()) return;
+    try {
+      await addComment(videoId, address.toString(), user.username, replyText.trim(), parentCommentId);
+      setReplyText('');
+      setReplyingTo(null);
+      await loadComments();
+    } catch (error) {
+      console.error('Failed to add reply:', error);
+    }
   };
 
   const handleDeleteRequest = (commentId: string) => {
@@ -119,16 +137,24 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
     setDeletingCommentId(commentId);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!address || !deletingCommentId) return;
-    deleteComment(deletingCommentId, address.toString());
-    setDeletingCommentId(null);
-    loadComments();
+    try {
+      await deleteComment(deletingCommentId, address.toString());
+      setDeletingCommentId(null);
+      await loadComments();
+    } catch (error) {
+      console.error('Failed to delete comment:', error);
+    }
   };
 
-  const handleLike = (commentId: string) => {
-    likeComment(commentId);
-    loadComments();
+  const handleLike = async (commentId: string) => {
+    try {
+      await likeComment(commentId);
+      await loadComments();
+    } catch (error) {
+      console.error('Failed to like comment:', error);
+    }
   };
 
   const totalComments = comments.reduce((t, c) => t + 1 + (c.replies?.length || 0), 0);
@@ -186,28 +212,32 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
 
       {/* Comments list */}
       <div className="space-y-4">
-        {comments.map((comment) => (
-          <CommentItem
-            key={comment.commentId}
-            comment={comment}
-            onReply={(id) => setReplyingTo(id)}
-            onDelete={handleDeleteRequest}
-            onLike={handleLike}
-            replyingTo={replyingTo}
-            replyText={replyText}
-            setReplyText={setReplyText}
-            handleReply={handleReply}
-            currentUserId={address?.toString()}
-          />
-        ))}
+        {loading ? (
+          <div className="text-center py-8">
+            <p className="text-zinc-500 font-medium">Loading comments...</p>
+          </div>
+        ) : comments.length === 0 ? (
+          <div className="text-center py-12">
+            <ChatBubbleLeftIcon className="w-16 h-16 text-zinc-800 mx-auto mb-4" />
+            <p className="text-zinc-500 font-medium">No comments yet. Be the first!</p>
+          </div>
+        ) : (
+          comments.map((comment) => (
+            <CommentItem
+              key={comment.commentId}
+              comment={comment}
+              onReply={(id) => setReplyingTo(id)}
+              onDelete={handleDeleteRequest}
+              onLike={handleLike}
+              replyingTo={replyingTo}
+              replyText={replyText}
+              setReplyText={setReplyText}
+              handleReply={handleReply}
+              currentUserId={address?.toString()}
+            />
+          ))
+        )}
       </div>
-
-      {comments.length === 0 && (
-        <div className="text-center py-12">
-          <ChatBubbleLeftIcon className="w-16 h-16 text-zinc-800 mx-auto mb-4" />
-          <p className="text-zinc-500 font-medium">No comments yet. Be the first!</p>
-        </div>
-      )}
     </div>
   );
 }
@@ -251,7 +281,12 @@ function CommentItem({
               {comment.userName.slice(0, 2).toUpperCase()}
             </div>
             <div>
-              <p className="text-white font-bold text-sm">{comment.userName}</p>
+              <Link
+                href={`/channel/${comment.userId}`}
+                className="text-white font-bold text-sm hover:text-brand-red transition-colors"
+              >
+                {comment.userName}
+              </Link>
               <p className="text-zinc-500 text-xs">
                 {formatDistanceToNow(comment.timestamp, { addSuffix: true })}
               </p>

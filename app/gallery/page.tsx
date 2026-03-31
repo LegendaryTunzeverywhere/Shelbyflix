@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import AuthGuard from '@/components/AuthGuard';
 import VideoCard from '@/components/VideoCard';
 import type { VideoMetadata } from '@/types';
-import { MagnifyingGlassIcon, FunnelIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 
-const CATEGORIES = ['All', 'Music', 'Gaming', 'Education', 'Entertainment', 'Sports', 'Technology', 'Other'];
+const CATEGORIES = ['All', 'Entertainment', 'Education', 'Gaming', 'Music', 'Sports', 'Technology', 'News', 'Lifestyle', 'Comedy', 'Other'];
 
 function GalleryContent() {
   const router = useRouter();
@@ -18,10 +18,26 @@ function GalleryContent() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'recent' | 'popular' | 'oldest'>('recent');
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  const sortDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadVideos();
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target as Node)) {
+        setSortDropdownOpen(false);
+      }
+    }
+
+    if (sortDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [sortDropdownOpen]);
 
   async function loadVideos() {
     try {
@@ -97,7 +113,7 @@ function GalleryContent() {
       <main className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
         {/* Header */}
         <div className="mb-6 sm:mb-8">
-          <h1 className="text-3xl sm:text-4xl font-black text-white mb-2">Video Gallery</h1>
+          <h1 className="text-3xl sm:text-4xl font-black text-white mb-2">Videos</h1>
           <p className="text-zinc-500">Browse all videos</p>
         </div>
 
@@ -137,17 +153,44 @@ function GalleryContent() {
             <p className="text-sm text-zinc-500">
               {filteredVideos.length} {filteredVideos.length === 1 ? 'video' : 'videos'}
             </p>
-            <div className="flex items-center gap-2">
-              <FunnelIcon className="w-4 h-4 text-zinc-500" />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-brand-red cursor-pointer"
+            <div className="relative" ref={sortDropdownRef}>
+              <button
+                onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
+                className="flex items-center gap-2 px-4 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-sm font-bold text-white transition-all group"
               >
-                <option value="recent">Most Recent</option>
-                <option value="popular">Most Popular</option>
-                <option value="oldest">Oldest First</option>
-              </select>
+                <span>
+                  {sortBy === 'recent' && 'Most Recent'}
+                  {sortBy === 'popular' && 'Most Popular'}
+                  {sortBy === 'oldest' && 'Oldest First'}
+                </span>
+                <ChevronDownIcon className={`w-4 h-4 text-zinc-400 transition-transform group-hover:text-brand-red ${sortDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Dropdown menu */}
+              {sortDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 overflow-hidden">
+                  {[
+                    { value: 'recent', label: 'Most Recent' },
+                    { value: 'popular', label: 'Most Popular' },
+                    { value: 'oldest', label: 'Oldest First' },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setSortBy(option.value as any);
+                        setSortDropdownOpen(false);
+                      }}
+                      className={`w-full px-4 py-3 text-sm font-bold text-left transition-all ${
+                        sortBy === option.value
+                          ? 'bg-brand-red text-white'
+                          : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

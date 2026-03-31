@@ -36,23 +36,22 @@ export default function TagInput({ tags, onChange, maxTags = 10 }: TagInputProps
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-200">
+      <label className="block text-xs font-black uppercase tracking-widest text-zinc-400 mb-3">
         Tags (Press Enter to add)
       </label>
-      
       {/* Tags Display */}
       {tags.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {tags.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded-full text-sm"
+              className="inline-flex items-center gap-1 px-3 py-1 bg-brand-purple text-white rounded-full text-sm"
             >
               {tag}
               <button
                 type="button"
                 onClick={() => removeTag(tag)}
-                className="hover:bg-blue-700 rounded-full p-0.5"
+                className="hover:bg-brand-purple/80 rounded-full p-0.5"
               >
                 <XMarkIcon className="w-4 h-4" />
               </button>
@@ -60,7 +59,6 @@ export default function TagInput({ tags, onChange, maxTags = 10 }: TagInputProps
           ))}
         </div>
       )}
-
       {/* Input */}
       <input
         type="text"
@@ -70,10 +68,9 @@ export default function TagInput({ tags, onChange, maxTags = 10 }: TagInputProps
         onBlur={addTag}
         placeholder={tags.length >= maxTags ? `Max ${maxTags} tags` : 'Add a tag...'}
         disabled={tags.length >= maxTags}
-        className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+        className="w-full px-4 py-3 bg-zinc-900/60 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple disabled:opacity-50 transition-colors text-sm"
       />
-      
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-zinc-500 mt-1">
         {tags.length}/{maxTags} tags
       </p>
     </div>

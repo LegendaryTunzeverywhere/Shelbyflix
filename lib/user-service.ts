@@ -102,11 +102,23 @@ export async function createUser(
 export async function updateUserProfile(
   walletAddress: string,
   updates: {
+    username?: string;
     display_name?: string;
     avatar_url?: string;
     bio?: string;
   }
 ): Promise<User | null> {
+  // If updating username, check availability
+  if (updates.username) {
+    const currentUser = await getUserByWallet(walletAddress);
+    if (currentUser && currentUser.username.toLowerCase() !== updates.username.toLowerCase()) {
+      const available = await isUsernameAvailable(updates.username);
+      if (!available) {
+        throw new Error('Username already taken');
+      }
+    }
+  }
+  
   const { data, error } = await supabase
     .from('users')
     .update({

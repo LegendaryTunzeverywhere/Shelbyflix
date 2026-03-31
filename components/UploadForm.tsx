@@ -146,7 +146,16 @@ export default function UploadForm() {
 
     } catch (err) {
       console.error('Upload failed:', err);
-      error(err instanceof Error ? err.message : 'Upload failed');
+      const errMsg = err instanceof Error ? err.message : 'Upload failed';
+
+      // Insufficient ShelbyUSD — give the user a direct path to fix it
+      if (errMsg.includes('Insufficient ShelbyUSD') || errMsg.includes('E_INSUFFICIENT_FUNDS')) {
+        error(
+          `Not enough ShelbyUSD to pay for storage. Get free test tokens at https://faucet.shelbynet.shelby.xyz, then try again.`
+        );
+      } else {
+        error(errMsg);
+      }
     } finally {
       setIsUploading(false);
     }
