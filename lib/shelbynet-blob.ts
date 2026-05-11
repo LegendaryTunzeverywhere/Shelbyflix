@@ -22,7 +22,7 @@ const shelbynetAptos = new Aptos(new AptosConfig({
  * what the Shelbynet storage API validates against.
  */
 export async function computeBlobCommitments(data: ArrayBuffer): Promise<BlobCommitments> {
-  const buffer = Buffer.from(data);
+  const buffer = new Uint8Array(data);
   const provider = await createDefaultErasureCodingProvider();
   return generateCommitments(provider, buffer);
 }
@@ -162,7 +162,7 @@ export async function uploadBlobToShelbynet(
 ): Promise<void> {
   const shelbyClient = new ShelbyClient({
     network: Network.TESTNET,
-    apiKey: process.env.NEXT_PUBLIC_SHELBY_API_KEY ?? '',
+    apiKey: process.env.NEXT_SHELBY_API_KEY ?? '',
   });
 
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
