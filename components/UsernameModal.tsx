@@ -36,7 +36,7 @@ export default function UsernameModal({ walletAddress, googleName, onComplete }:
       .trim()
       .replace(/[^a-z0-9\s]/g, '') // Remove special characters
       .replace(/\s+/g, '_') // Replace spaces with underscores
-      .substring(0, 20); // Max 20 chars
+      .substring(0, 13); // Max 13 chars
     
     // Ensure it's at least 3 characters
     if (username.length < 3) {
@@ -47,8 +47,8 @@ export default function UsernameModal({ walletAddress, googleName, onComplete }:
   };
 
   const validateUsername = (value: string): boolean => {
-    // Only lowercase letters, numbers, underscore
-    const regex = /^[a-z0-9_]{3,20}$/;
+    // Only lowercase letters, numbers, underscore — 3 to 13 chars
+    const regex = /^[a-z0-9_]{3,13}$/;
     return regex.test(value);
   };
 
@@ -89,7 +89,7 @@ export default function UsernameModal({ walletAddress, googleName, onComplete }:
     }
 
     if (!validateUsername(value)) {
-      setError('Username must be 3-20 characters (letters, numbers, underscore only)');
+      setError('Username must be 3-13 characters (letters, numbers, underscore only)');
       setAvailable(false);
       return;
     }
@@ -141,7 +141,7 @@ export default function UsernameModal({ walletAddress, googleName, onComplete }:
                 value={username}
                 onChange={(e) => handleUsernameChange(e.target.value)}
                 placeholder="your_username"
-                maxLength={20}
+                maxLength={13}
                 required
                 className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white placeholder-zinc-500 focus:ring-2 focus:ring-brand-red focus:border-transparent font-medium"
               />

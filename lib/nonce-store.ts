@@ -44,8 +44,8 @@ export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) {
     return false;
   }
-  const bufA = Buffer.from(a, 'utf-8');
-  const bufB = Buffer.from(b, 'utf-8');
+  const bufA = new Uint8Array(Buffer.from(a, 'utf-8'));
+  const bufB = new Uint8Array(Buffer.from(b, 'utf-8'));
   return cryptoTimingSafeEqual(bufA, bufB);
 }
 

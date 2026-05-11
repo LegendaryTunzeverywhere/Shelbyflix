@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
@@ -12,7 +12,8 @@ import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
 import { formatAddress } from '@/lib/aptos';
 import { getSubscriberCount } from '@/lib/engagement-store';
-import { getUserByWallet } from '@/lib/user-service';
+import { getUserByWallet, updateUserProfile } from '@/lib/user-service';
+import { resizeAvatar, resizeBanner } from '@/lib/image-utils';
 import type { VideoMetadata } from '@/types';
 import type { User } from '@/lib/user-service';
 import {
@@ -27,6 +28,7 @@ import {
   ClockIcon,
   BoltIcon,
   UserGroupIcon,
+  CameraIcon,
 } from '@heroicons/react/24/outline';
 
 type Tab = 'videos' | 'shorts';
@@ -123,7 +125,7 @@ function ChannelVideoRow({
 export default function ChannelPage() {
   const params = useParams();
   const router = useRouter();
-  const { address, user, signAndSubmitTransaction } = useWallet();
+  const { address, user, signAndSubmitTransaction, refreshUser } = useWallet();
 
   const channelAddress = (params.address as string).toLowerCase();
   const isOwner = address?.toString().toLowerCase() === channelAddress;
@@ -136,6 +138,11 @@ export default function ChannelPage() {
   const [editingVideo, setEditingVideo] = useState<VideoMetadata | null>(null);
   const [deletingVideo, setDeletingVideo] = useState<VideoMetadata | null>(null);
   const [publicUser, setPublicUser] = useState<User | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
+
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadVideos();
@@ -143,8 +150,9 @@ export default function ChannelPage() {
     getUserByWallet(channelAddress).then(u => setPublicUser(u));
   }, [channelAddress]);
 
-  function refreshSubCount() {
-    setSubscriberCount(getSubscriberCount(channelAddress));
+  async function refreshSubCount() {
+    const count = await getSubscriberCount(channelAddress);
+    setSubscriberCount(count);
   }
 
   async function loadVideos() {
@@ -157,6 +165,42 @@ export default function ChannelPage() {
       console.error('Failed to load channel videos:', e);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !isOwner) return;
+
+    setUploadingAvatar(true);
+    try {
+      const dataUrl = await resizeAvatar(file);
+      await updateUserProfile(channelAddress, { avatar_url: dataUrl });
+      setPublicUser(prev => prev ? { ...prev, avatar_url: dataUrl } : prev);
+      if (refreshUser) refreshUser();
+    } catch (err) {
+      console.error('Failed to upload avatar:', err);
+    } finally {
+      setUploadingAvatar(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+    }
+  }
+
+  async function handleBannerChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !isOwner) return;
+
+    setUploadingBanner(true);
+    try {
+      const dataUrl = await resizeBanner(file);
+      await updateUserProfile(channelAddress, { banner_url: dataUrl });
+      setPublicUser(prev => prev ? { ...prev, banner_url: dataUrl } : prev);
+      if (refreshUser) refreshUser();
+    } catch (err) {
+      console.error('Failed to upload banner:', err);
+    } finally {
+      setUploadingBanner(false);
+      if (bannerInputRef.current) bannerInputRef.current.value = '';
     }
   }
 
@@ -189,16 +233,78 @@ export default function ChannelPage() {
     <div className="min-h-screen bg-brand-dark text-white">
       <Header />
 
-      <div className="relative h-36 sm:h-44 bg-gradient-to-br from-brand-purple/30 via-zinc-900 to-brand-red/20 border-b border-zinc-800">
-        <div className="absolute inset-0 opacity-10"
-          style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7B2BF9 0%, transparent 50%), radial-gradient(circle at 80% 50%, #F61B2E 0%, transparent 50%)' }}
-        />
+      <div className="relative h-36 sm:h-44 bg-gradient-to-br from-brand-purple/30 via-zinc-900 to-brand-red/20 border-b border-zinc-800 overflow-hidden">
+        {publicUser?.banner_url ? (
+          <img
+            src={publicUser.banner_url}
+            alt="Channel banner"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <div className="absolute inset-0 opacity-10"
+            style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7B2BF9 0%, transparent 50%), radial-gradient(circle at 80% 50%, #F61B2E 0%, transparent 50%)' }}
+          />
+        )}
+        {isOwner && (
+          <>
+            <button
+              onClick={() => bannerInputRef.current?.click()}
+              disabled={uploadingBanner}
+              className="absolute top-3 right-3 flex items-center gap-1.5 px-3 py-1.5 bg-black/60 hover:bg-black/80 backdrop-blur-sm text-white text-xs font-bold rounded-lg transition-colors z-10"
+            >
+              <CameraIcon className="w-4 h-4" />
+              {uploadingBanner ? 'Uploading...' : 'Edit Banner'}
+            </button>
+            <input
+              ref={bannerInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleBannerChange}
+              className="hidden"
+            />
+          </>
+        )}
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4 sm:gap-5 -mt-12 mb-8 relative z-10">
-          <div className="w-20 h-20 sm:w-24 sm:h-24 bg-gradient-to-br from-brand-purple to-brand-red rounded-3xl flex items-center justify-center text-white font-black text-2xl sm:text-3xl shadow-2xl border-4 border-brand-dark flex-shrink-0">
-            {initials}
+          <div className="relative flex-shrink-0 group/avatar">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl shadow-2xl border-4 border-brand-dark overflow-hidden flex-shrink-0">
+              {publicUser?.avatar_url ? (
+                <img
+                  src={publicUser.avatar_url}
+                  alt={displayName}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-br from-brand-purple to-brand-red flex items-center justify-center text-white font-black text-2xl sm:text-3xl">
+                  {initials}
+                </div>
+              )}
+            </div>
+            {isOwner && (
+              <>
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={uploadingAvatar}
+                  className="absolute inset-0 rounded-3xl bg-black/0 group-hover/avatar:bg-black/50 flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-all cursor-pointer"
+                >
+                  <CameraIcon className="w-6 h-6 text-white" />
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  className="hidden"
+                />
+              </>
+            )}
+            {uploadingAvatar && (
+              <div className="absolute inset-0 rounded-3xl bg-black/60 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white" />
+              </div>
+            )}
           </div>
 
           <div className="flex-1 min-w-0 pb-1">

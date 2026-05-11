@@ -16,6 +16,7 @@ export interface User {
   username: string;
   display_name?: string;
   avatar_url?: string;
+  banner_url?: string;
   bio?: string;
   created_at: string;
   updated_at: string;

@@ -200,7 +200,9 @@ export default function VideoPage() {
 
       if (!metadata) { setVideo(null); return; }
       setVideo(metadata);
-      setChannelSubCount(getSubscriberCount(metadata.channelId));
+      
+      const subCount = await getSubscriberCount(metadata.channelId);
+      setChannelSubCount(subCount);
 
       const rel = all
         .filter(v => v.videoId !== videoId)
@@ -354,7 +356,10 @@ export default function VideoPage() {
               <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
                 <SubscribeButton
                   channelId={video.channelId}
-                  onSubscribe={() => setChannelSubCount(getSubscriberCount(video.channelId))}
+                  onSubscribe={async () => {
+                    const subCount = await getSubscriberCount(video.channelId);
+                    setChannelSubCount(subCount);
+                  }}
                 />
 
                 <button

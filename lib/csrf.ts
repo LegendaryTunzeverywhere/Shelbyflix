@@ -49,8 +49,8 @@ export function verifyCsrfToken(headerToken: string, cookieToken: string): boole
   }
 
   try {
-    const headerBuf = Buffer.from(headerToken, 'utf-8');
-    const cookieBuf = Buffer.from(cookieToken, 'utf-8');
+    const headerBuf = new Uint8Array(Buffer.from(headerToken, 'utf-8'));
+    const cookieBuf = new Uint8Array(Buffer.from(cookieToken, 'utf-8'));
     return cryptoTimingSafeEqual(headerBuf, cookieBuf);
   } catch {
     return false;

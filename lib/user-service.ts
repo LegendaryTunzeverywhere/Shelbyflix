@@ -103,6 +103,7 @@ export async function updateUserProfile(
     username?: string;
     display_name?: string;
     avatar_url?: string;
+    banner_url?: string;
     bio?: string;
   }
 ): Promise<User | null> {

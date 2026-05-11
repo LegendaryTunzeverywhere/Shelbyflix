@@ -3,7 +3,6 @@ import { supabase } from './supabase';
 
 const ENGAGEMENT_KEY = 'shelbyflix_engagement';
 const COMMENTS_KEY = 'shelbyflix_comments';
-const SUBSCRIPTIONS_KEY = 'shelbyflix_subscriptions';
 
 // ============================================================================
 // ENGAGEMENT (Likes/Dislikes)
@@ -300,45 +299,48 @@ export async function likeComment(commentId: string): Promise<void> {
 // SUBSCRIPTIONS
 // ============================================================================
 
-function getSubscriptionsData(): Subscription[] {
-  if (typeof window === 'undefined') return [];
-  
-  try {
-    const stored = localStorage.getItem(SUBSCRIPTIONS_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch (error) {
-    console.error('Failed to load subscriptions:', error);
-    return [];
-  }
-}
-
-function saveSubscriptionsData(subs: Subscription[]): void {
-  localStorage.setItem(SUBSCRIPTIONS_KEY, JSON.stringify(subs));
-}
-
 /**
  * Toggle subscription to a channel
  */
-export function toggleSubscription(subscriberId: string, channelId: string): boolean {
-  const subs = getSubscriptionsData();
+export async function toggleSubscription(subscriberId: string, channelId: string): Promise<boolean> {
+  const normalizedSub = subscriberId.toLowerCase();
+  const normalizedChannel = channelId.toLowerCase();
   
-  const existingIndex = subs.findIndex(
-    s => s.subscriberId === subscriberId && s.channelId === channelId
-  );
+  // Check if subscription already exists
+  const { data: existing, error: fetchError } = await supabase
+    .from('subscriptions')
+    .select('*')
+    .eq('subscriber_wallet', normalizedSub)
+    .eq('channel_wallet', normalizedChannel)
+    .single();
   
-  if (existingIndex >= 0) {
-    // Unsubscribe
-    subs.splice(existingIndex, 1);
-    saveSubscriptionsData(subs);
+  if (existing) {
+    // Unsubscribe — delete the subscription
+    const { error: deleteError } = await supabase
+      .from('subscriptions')
+      .delete()
+      .eq('subscriber_wallet', normalizedSub)
+      .eq('channel_wallet', normalizedChannel);
+    
+    if (deleteError) {
+      console.error('Failed to unsubscribe:', deleteError);
+      return existing ? true : false;
+    }
     return false;
   } else {
-    // Subscribe
-    subs.push({
-      subscriberId,
-      channelId,
-      timestamp: Date.now(),
-    });
-    saveSubscriptionsData(subs);
+    // Subscribe — insert new subscription
+    const { error: insertError } = await supabase
+      .from('subscriptions')
+      .insert({
+        subscriber_wallet: normalizedSub,
+        channel_wallet: normalizedChannel,
+        timestamp: Date.now(),
+      });
+    
+    if (insertError) {
+      console.error('Failed to subscribe:', insertError);
+      return false;
+    }
     return true;
   }
 }
@@ -346,25 +348,58 @@ export function toggleSubscription(subscriberId: string, channelId: string): boo
 /**
  * Check if user is subscribed to a channel
  */
-export function isSubscribed(subscriberId: string, channelId: string): boolean {
-  const subs = getSubscriptionsData();
-  return subs.some(s => s.subscriberId === subscriberId && s.channelId === channelId);
+export async function isSubscribed(subscriberId: string, channelId: string): Promise<boolean> {
+  const normalizedSub = subscriberId.toLowerCase();
+  const normalizedChannel = channelId.toLowerCase();
+  
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('*', { count: 'exact', head: true })
+    .eq('subscriber_wallet', normalizedSub)
+    .eq('channel_wallet', normalizedChannel);
+  
+  if (error) {
+    console.error('Failed to check subscription:', error);
+    return false;
+  }
+  
+  return (data?.length ?? 0) > 0;
 }
 
 /**
  * Get subscriber count for a channel
  */
-export function getSubscriberCount(channelId: string): number {
-  const subs = getSubscriptionsData();
-  return subs.filter(s => s.channelId === channelId).length;
+export async function getSubscriberCount(channelId: string): Promise<number> {
+  const normalizedId = channelId.toLowerCase();
+  
+  const { count, error } = await supabase
+    .from('subscriptions')
+    .select('*', { count: 'exact', head: true })
+    .eq('channel_wallet', normalizedId);
+  
+  if (error) {
+    console.error('Failed to get subscriber count:', error);
+    return 0;
+  }
+  
+  return count ?? 0;
 }
 
 /**
  * Get channels user is subscribed to
  */
-export function getUserSubscriptions(subscriberId: string): string[] {
-  const subs = getSubscriptionsData();
-  return subs
-    .filter(s => s.subscriberId === subscriberId)
-    .map(s => s.channelId);
+export async function getUserSubscriptions(subscriberId: string): Promise<string[]> {
+  const normalizedSub = subscriberId.toLowerCase();
+  
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('channel_wallet')
+    .eq('subscriber_wallet', normalizedSub);
+  
+  if (error) {
+    console.error('Failed to get user subscriptions:', error);
+    return [];
+  }
+  
+  return (data ?? []).map((sub: any) => sub.channel_wallet);
 }
