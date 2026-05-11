@@ -40,7 +40,7 @@ function authenticateCronRequest(req: NextRequest): NextResponse | null {
   // against the configured secret length. If lengths differ, reject.
   if (
     headerSecret.length !== cronSecret.length ||
-    !timingSafeEqual(Buffer.from(headerSecret), Buffer.from(cronSecret))
+    !timingSafeEqual(new Uint8Array(Buffer.from(headerSecret)), new Uint8Array(Buffer.from(cronSecret)))
   ) {
     return NextResponse.json(
       { error: 'Unauthorized' },
