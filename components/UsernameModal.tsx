@@ -168,7 +168,7 @@ export default function UsernameModal({ walletAddress, googleName, onComplete }:
               <p className="text-xs text-green-400 mt-2 font-medium">✓ Username available!</p>
             )}
             <p className="text-xs text-zinc-500 mt-2">
-              3-20 characters, lowercase letters, numbers, and underscores only
+              3-13 characters, lowercase letters, numbers, and underscores only
             </p>
           </div>
 
