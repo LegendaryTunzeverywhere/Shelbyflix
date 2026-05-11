@@ -46,8 +46,32 @@ export interface VideoRecord {
   dislikes: number;
   comment_count: number;
   price: number;
+  // Access control (see supabase/migrations/2026_05_video_access_payments.sql)
+  // CHECK constraint restricts access_mode to these four values; existing rows
+  // default to 'public' so legacy videos retain current behavior.
+  access_mode: 'public' | 'allowlist' | 'timelock' | 'purchasable';
+  // Lowercased Aptos addresses. Empty array for non-allowlist modes.
+  allowlist: string[];
+  // Epoch millis; only meaningful when access_mode === 'timelock'.
+  unlock_at: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * One row per verified on-chain purchase receipt. Mirrors the `video_purchases`
+ * table. PK is (video_id, wallet_address); tx_hash is globally unique.
+ * RLS is enabled with no policies — only the service-role client may read/write.
+ */
+export interface VideoPurchaseRecord {
+  video_id: string;
+  wallet_address: string; // lowercased
+  tx_hash: string;        // globally unique
+  amount_total: number;   // base units (bigint in DB; safe within JS number range for SUSD amounts)
+  amount_creator: number;
+  amount_platform: number;
+  block_version: number | null;
+  created_at: string;
 }
 
 export interface CommentRecord {

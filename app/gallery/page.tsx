@@ -44,10 +44,12 @@ function GalleryContent() {
       const { getAllVideos } = await import('@/lib/video-service');
       const allVideos = await getAllVideos();
       
-      // Filter out shorts (duration < 60 seconds)
-      const regularVideos = allVideos.filter(v => 
-        v.videoType !== 'short' && !v.isShort && v.duration >= 60
-      );
+      // Filter out shorts (duration < 60 seconds) and timelocked videos that haven't unlocked
+      const regularVideos = allVideos.filter(v => {
+        if (v.videoType === 'short' || v.isShort || v.duration < 60) return false;
+        if (v.accessMode === 'timelock' && v.unlockAt && v.unlockAt > Date.now()) return false;
+        return true;
+      });
       
       setVideos(regularVideos);
       setFilteredVideos(regularVideos);

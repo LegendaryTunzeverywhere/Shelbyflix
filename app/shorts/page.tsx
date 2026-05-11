@@ -129,7 +129,17 @@ function ShortsContent() {
       try {
         const { getAllVideos } = await import('@/lib/video-service');
         const all = await getAllVideos();
-        setShorts(all.filter(v => v.videoType === 'short' || v.isShort || v.duration < 60));
+        setShorts(all.filter(v => {
+          const isShortVideo = v.videoType === 'short' || v.isShort || v.duration < 60;
+          if (!isShortVideo) return false;
+
+          // Hide timelocked videos that haven't unlocked yet
+          if (v.accessMode === 'timelock' && v.unlockAt && v.unlockAt > Date.now()) {
+            return false;
+          }
+
+          return true;
+        }));
       } catch (e) {
         console.error('Failed to load shorts:', e);
       } finally {

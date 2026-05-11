@@ -92,17 +92,22 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => { loadComments(); }, [videoId]);
 
   const loadComments = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const loadedComments = await getVideoComments(videoId);
       setComments(loadedComments);
     } catch (error) {
       console.error('Failed to load comments:', error);
+      setLoadError('Could not load comments. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -111,17 +116,23 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!address || !user || !newComment.trim()) return;
+    setSubmitting(true);
+    setActionError(null);
     try {
       await addComment(videoId, address.toString(), user.username, newComment.trim());
       setNewComment('');
       await loadComments();
     } catch (error) {
       console.error('Failed to add comment:', error);
+      setActionError('Could not post your comment. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleReply = async (parentCommentId: string) => {
     if (!address || !user || !replyText.trim()) return;
+    setActionError(null);
     try {
       await addComment(videoId, address.toString(), user.username, replyText.trim(), parentCommentId);
       setReplyText('');
@@ -129,6 +140,7 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
       await loadComments();
     } catch (error) {
       console.error('Failed to add reply:', error);
+      setActionError('Could not post your reply. Please try again.');
     }
   };
 
@@ -139,21 +151,26 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
 
   const handleDeleteConfirm = async () => {
     if (!address || !deletingCommentId) return;
+    setActionError(null);
     try {
       await deleteComment(deletingCommentId, address.toString());
       setDeletingCommentId(null);
       await loadComments();
     } catch (error) {
       console.error('Failed to delete comment:', error);
+      setActionError('Could not delete comment. Please try again.');
+      setDeletingCommentId(null);
     }
   };
 
   const handleLike = async (commentId: string) => {
+    setActionError(null);
     try {
       await likeComment(commentId);
       await loadComments();
     } catch (error) {
       console.error('Failed to like comment:', error);
+      setActionError('Could not register your like. Please try again.');
     }
   };
 
@@ -174,6 +191,24 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
         <ChatBubbleLeftIcon className="w-5 h-5 text-brand-red" />
         {totalComments} COMMENTS
       </h3>
+
+      {/* Action error banner */}
+      {actionError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl"
+        >
+          <ExclamationTriangleIcon className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-300 flex-1">{actionError}</p>
+          <button
+            onClick={() => setActionError(null)}
+            className="text-red-400 hover:text-red-300"
+            aria-label="Dismiss error"
+          >
+            <XMarkIcon className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Add comment */}
       {address ? (
@@ -196,11 +231,11 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
             </button>
             <button
               type="submit"
-              disabled={!newComment.trim()}
+              disabled={!newComment.trim() || submitting}
               className="px-6 py-2 bg-brand-red hover:bg-brand-red/90 disabled:bg-zinc-700
                 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-colors"
             >
-              Comment
+              {submitting ? 'Posting...' : 'Submit'}
             </button>
           </div>
         </form>
@@ -213,8 +248,37 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
       {/* Comments list */}
       <div className="space-y-4">
         {loading ? (
-          <div className="text-center py-8">
-            <p className="text-zinc-500 font-medium">Loading comments...</p>
+          <div className="space-y-3" aria-busy="true" aria-live="polite">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4 animate-pulse"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-8 h-8 rounded-full bg-zinc-800" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 w-24 bg-zinc-800 rounded" />
+                    <div className="h-2 w-16 bg-zinc-800 rounded" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-3 w-full bg-zinc-800 rounded" />
+                  <div className="h-3 w-3/4 bg-zinc-800 rounded" />
+                </div>
+              </div>
+            ))}
+            <p className="sr-only">Loading comments...</p>
+          </div>
+        ) : loadError ? (
+          <div className="text-center py-12 bg-zinc-900/30 border border-zinc-800 rounded-2xl">
+            <ExclamationTriangleIcon className="w-12 h-12 text-red-500/70 mx-auto mb-3" />
+            <p className="text-zinc-400 text-sm mb-4">{loadError}</p>
+            <button
+              onClick={loadComments}
+              className="px-5 py-2 bg-brand-red hover:bg-brand-red/90 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors"
+            >
+              Retry
+            </button>
           </div>
         ) : comments.length === 0 ? (
           <div className="text-center py-12">

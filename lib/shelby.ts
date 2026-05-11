@@ -173,7 +173,12 @@ export async function downloadAndDecryptVideo(
 
     const response = await fetch(shelbyUrl, { signal });
     if (!response.ok) {
-      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+      // Throw detailed error for 404 so VideoPlayer can detect it
+      if (response.status === 404) {
+        throw new Error(`Download failed: 404`);
+      }
+      // Generic error for other status codes
+      throw new Error(`Download failed: ${response.status}`);
     }
 
     const encryptedBlob = await response.blob();
@@ -248,10 +253,15 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
   }
 
   if (!ALLOWED_TYPES.includes(file.type)) {
-    return {
-      valid: false,
-      error: `Invalid file type. Allowed: ${ALLOWED_TYPES.join(', ')}`,
-    };
+    // Some browsers/OS don't set MIME type on drag-and-drop; fall back to extension check
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const ALLOWED_EXTENSIONS = ['mp4', 'webm', 'mov', 'avi'];
+    if (!ext || !ALLOWED_EXTENSIONS.includes(ext)) {
+      return {
+        valid: false,
+        error: `Invalid file type. Allowed: MP4, WebM, MOV, AVI`,
+      };
+    }
   }
 
   if (file.size > MAX_SIZE) {

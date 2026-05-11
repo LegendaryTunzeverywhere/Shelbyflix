@@ -9,6 +9,7 @@ import VideoPlayer from '@/components/VideoPlayer';
 import EngagementBar from '@/components/EngagementBar';
 import CommentSection from '@/components/CommentSection';
 import SubscribeButton from '@/components/SubscribeButton';
+import CreatorVideoSettings from '@/components/CreatorVideoSettings';
 import { useWallet } from '@/hooks/useWallet';
 import { getSubscriberCount } from '@/lib/engagement-store';
 import type { VideoMetadata } from '@/types';
@@ -409,6 +410,18 @@ export default function VideoPage() {
                 </div>
               )}
             </div>
+
+            {/* Creator Settings — owner-only access-mode editor (task 4.7).
+                The component itself re-checks ownership as defense-in-depth,
+                but we guard mounting here so non-owners never pay the render
+                cost or issue the /purchases fetch. */}
+            {isOwner && address && (
+              <CreatorVideoSettings
+                video={video}
+                walletAddress={address.toString()}
+                signAndSubmitTransaction={signAndSubmitTransaction}
+              />
+            )}
 
             <CommentSection videoId={video.videoId} />
           </div>

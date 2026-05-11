@@ -135,21 +135,39 @@ export async function registerBlob(
 /**
  * Upload encrypted blob to Shelbynet storage.
  * Only call this AFTER registerBlob has confirmed successfully on-chain.
+ *
+ * ── 408 / "complete multipart upload" handling ──────────────────────────────
+ * Shelby's API gateway has a 300s upstream timeout on the `/complete` step of
+ * a multipart upload. When the internal storage service (erasure coding +
+ * chunk distribution) takes longer than that, the gateway returns 408 even
+ * though the bytes we uploaded are already sitting on their servers. In that
+ * case the finalization usually completes on Shelby's side within a minute
+ * or two after the timeout — we just never got the acknowledgement.
+ *
+ * To avoid losing otherwise-good uploads to this race, on 408 we poll the
+ * blob's public URL with HEAD requests for up to `FINALIZATION_POLL_MS`.
+ * If it starts returning 200 the upload is real and we return success.
+ * If the poll budget runs out without the blob becoming available, we
+ * surface a clear error so the caller can retry.
  */
+
+const FINALIZATION_POLL_MS = 180_000; // 3 minutes — well beyond typical lag
+const FINALIZATION_POLL_INTERVAL_MS = 5_000;
+
 export async function uploadBlobToShelbynet(
   encryptedBlob: Blob,
   blobName: string,
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
+  const shelbyClient = new ShelbyClient({
+    network: Network.TESTNET,
+    apiKey: process.env.NEXT_PUBLIC_SHELBY_API_KEY ?? '',
+  });
+
+  const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
+
   try {
-    const shelbyClient = new ShelbyClient({
-      network: Network.TESTNET,
-      apiKey: process.env.NEXT_PUBLIC_SHELBY_API_KEY ?? '',
-    });
-
-    const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
-
     await shelbyClient.rpc.putBlob({
       account: uploaderAddress,
       blobName,
@@ -157,10 +175,98 @@ export async function uploadBlobToShelbynet(
     });
 
     onProgress?.(100);
+    return;
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Blob upload failed';
-    throw new Error(`Failed to start multipart upload! ${msg}`);
+
+    // Shelby's upstream timed out on /complete. The bytes are very likely
+    // already stored — poll the public URL to confirm before declaring
+    // failure. Treats any 408 / "Request Timed Out" / "Upstream took longer"
+    // as the same upstream-finalization-lag case.
+    const isUpstreamTimeout =
+      /\b408\b/.test(msg) ||
+      /Request Timed Out/i.test(msg) ||
+      /Upstream took longer/i.test(msg) ||
+      /complete multipart upload/i.test(msg);
+
+    if (!isUpstreamTimeout) {
+      throw new Error(`Failed to start multipart upload! ${msg}`);
+    }
+
+    console.warn(
+      `⏳ Shelby upstream timed out on /complete for ${blobName}. ` +
+      `Polling ${getBlobStreamUrl(blobName, uploaderAddress)} for up to ` +
+      `${Math.round(FINALIZATION_POLL_MS / 1000)}s to see if it finalises…`
+    );
+    onProgress?.(95);
+
+    const became = await pollBlobAvailable(
+      blobName,
+      uploaderAddress,
+      FINALIZATION_POLL_MS,
+      FINALIZATION_POLL_INTERVAL_MS,
+      (elapsedMs, budgetMs) => {
+        // Nudge progress between 95–99% while polling so the UI doesn't
+        // look frozen. Never reach 100% until we actually confirm.
+        const frac = Math.min(1, elapsedMs / budgetMs);
+        onProgress?.(95 + Math.floor(frac * 4));
+      }
+    );
+
+    if (became) {
+      console.log(`✅ ${blobName} finalised on Shelbynet despite upstream 408`);
+      onProgress?.(100);
+      return;
+    }
+
+    throw new Error(
+      `Shelbynet finalisation stalled. The blob was uploaded but never became ` +
+      `available within ${Math.round(FINALIZATION_POLL_MS / 1000)}s. This is ` +
+      `usually a temporary Shelby-side issue — try re-uploading in a few minutes.`
+    );
   }
+}
+
+/**
+ * Poll the blob's public URL until it returns 200, or the budget expires.
+ * Uses HEAD to avoid pulling the full body on every attempt. Returns true
+ * if the blob became available, false if we ran out of time.
+ */
+async function pollBlobAvailable(
+  blobName: string,
+  uploaderAddress: string,
+  budgetMs: number,
+  intervalMs: number,
+  onTick?: (elapsedMs: number, budgetMs: number) => void
+): Promise<boolean> {
+  const url = getBlobStreamUrl(blobName, uploaderAddress);
+  const started = Date.now();
+
+  while (Date.now() - started < budgetMs) {
+    try {
+      // HEAD first — cheap, avoids downloading the body. Some CDNs return
+      // 405 for HEAD though, so we fall back to GET on that specific status.
+      let res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (res.status === 405) {
+        res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      }
+      if (res.ok) return true;
+      // 404 is the expected "not ready yet" state; anything else is a
+      // real error (auth, bad URL, etc.) and retrying won't help.
+      if (res.status !== 404) {
+        console.warn(`pollBlobAvailable: unexpected status ${res.status} from ${url}`);
+        return false;
+      }
+    } catch (err) {
+      // Network blip — swallow and keep polling.
+      console.warn('pollBlobAvailable: transient fetch error, continuing', err);
+    }
+
+    onTick?.(Date.now() - started, budgetMs);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+
+  return false;
 }
 
 /**

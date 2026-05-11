@@ -1,36 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/supabase-admin';
 
-// Use NEXT_PUBLIC_ vars with fallback to server vars
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// ---------------------------------------------------------------------------
+// SECURITY NOTE — Why we removed the x-wallet-address header check:
+//
+// A plain "x-wallet-address: 0x..." header is trivially forgeable by anyone
+// with curl. It provides zero actual authentication. Real auth requires the
+// client to prove ownership of the address by signing a challenge nonce
+// (see /api/auth/challenge and /api/auth/check-access).
+//
+// For a public listing endpoint (no per-user gating), no auth header is
+// needed — just rate-limiting (handled in middleware.ts).
+//
+// If you want per-user gating in the future, verify a session token or
+// a signed nonce here instead.
+// ---------------------------------------------------------------------------
 
-// Validate environment variables
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.error('Missing Supabase environment variables!');
-  console.error('SUPABASE_URL:', !!supabaseUrl);
-  console.error('SUPABASE_SERVICE_ROLE_KEY:', !!supabaseServiceKey);
-  console.error('NEXT_PUBLIC_SUPABASE_URL:', !!process.env.NEXT_PUBLIC_SUPABASE_URL);
-  console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-  throw new Error('Missing required Supabase environment variables. Check your .env.local or deployment settings.');
-}
-
-// Service role client — only used server-side, never exposed to browser
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-export async function GET(req: NextRequest) {
-  // Require a valid wallet address header — basic auth gate
-  const walletAddress = req.headers.get('x-wallet-address');
-  if (!walletAddress || !/^0x[a-fA-F0-9]{64}$/.test(walletAddress)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+// ---------------------------------------------------------------------------
+// GET /api/videos  — public video listing
+// Never returns encryption_key or other sensitive columns.
+// ---------------------------------------------------------------------------
+export async function GET(_req: NextRequest): Promise<NextResponse> {
+  const supabaseAdmin = getSupabaseAdmin();
   const { data, error } = await supabaseAdmin
     .from('videos')
-    // Never return encryption_key through this route
-    .select('video_id, title, description, category, tags, thumbnail_url, duration, is_short, upload_timestamp, views, likes, dislikes, comment_count, channel_id, channel_name, uploader_wallet, shelby_url, blob_name, price')
+    .select(
+      // Explicitly enumerate columns — never use select('*') on this route
+      // to ensure encryption_key is never accidentally returned.
+      `video_id,
+       title,
+       description,
+       category,
+       tags,
+       thumbnail_url,
+       duration,
+       is_short,
+       video_type,
+       upload_timestamp,
+       expiration_timestamp,
+       views,
+       likes,
+       dislikes,
+       comment_count,
+       channel_id,
+       channel_name,
+       uploader_wallet,
+       shelby_url,
+       blob_name,
+       price`
+    )
     .order('upload_timestamp', { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[/api/videos] Supabase error in GET /api/videos:', JSON.stringify({ code: error.code, message: error.message }));
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+
   return NextResponse.json(data);
 }

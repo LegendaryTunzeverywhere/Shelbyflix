@@ -11,7 +11,6 @@ import { PlayCircleIcon } from '@heroicons/react/24/solid';
 
 const Header: React.FC = () => {
   const pathname = usePathname();
-  const { hasAccess } = useShelbyAccess();
   const { address, connected, user } = useWallet();
 
   const navLinks = [
@@ -53,7 +52,7 @@ const Header: React.FC = () => {
                 {link.label}
               </Link>
             ))}
-            {hasAccess && (
+            {connected && (
               <>
                 <Link
                   href="/gallery"
@@ -76,7 +75,7 @@ const Header: React.FC = () => {
                 >
                   UPLOAD
                 </Link>
-                {connected && address && (
+                {address && (
                   <Link
                     href={`/channel/${address.toString()}`}
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all

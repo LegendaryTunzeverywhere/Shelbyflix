@@ -48,6 +48,7 @@ move-contracts/.aptos/
 *.swp
 *.swo
 *~
+.kiro
 
 # OS
 Thumbs.db

@@ -18,10 +18,18 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   const [dislikes, setDislikes] = useState(0);
   const [hasLiked, setHasLiked] = useState(false);
   const [hasDisliked, setHasDisliked] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadEngagement();
   }, [videoId, address]);
+
+  // Auto-dismiss error after 4 seconds
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
 
   async function loadEngagement() {
     try {
@@ -62,6 +70,7 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   async function handleLike() {
     if (!address || hasLiked) return;
 
+    setError(null);
     setLiked(true);
     setHasLiked(true);
     setLikes(l => l + 1);
@@ -96,6 +105,7 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
       );
     } catch (err) {
       console.error('Failed to like:', err);
+      setError('Could not register your like. Please try again.');
       // Rollback on error
       setLiked(false);
       setHasLiked(false);
@@ -111,6 +121,7 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   async function handleDislike() {
     if (!address || hasDisliked) return;
 
+    setError(null);
     setDisliked(true);
     setHasDisliked(true);
     setDislikes(d => d + 1);
@@ -145,6 +156,7 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
       );
     } catch (err) {
       console.error('Failed to dislike:', err);
+      setError('Could not register your dislike. Please try again.');
       // Rollback on error
       setDisliked(false);
       setHasDisliked(false);
@@ -159,7 +171,15 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
 
   if (vertical) {
     return (
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex flex-col items-center gap-4 relative">
+        {error && (
+          <div
+            role="alert"
+            className="absolute right-full mr-2 top-0 w-48 p-2 bg-red-500/20 border border-red-500/40 rounded-lg text-[11px] text-red-300 font-medium shadow-lg"
+          >
+            {error}
+          </div>
+        )}
         <button
           onClick={handleLike}
           disabled={hasLiked}
@@ -194,36 +214,46 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   }
 
   return (
-    <div className="flex items-center gap-1 bg-zinc-800 rounded-xl overflow-hidden">
-      <button
-        onClick={handleLike}
-        disabled={hasLiked}
-        title={hasLiked ? 'Already liked' : 'Like'}
-        className={`flex items-center gap-2 px-4 py-2 transition-colors disabled:cursor-not-allowed
-          ${hasLiked ? 'text-brand-red bg-brand-red/10' : 'hover:bg-zinc-700'}`}
-      >
-        {liked
-          ? <HandThumbUpSolid className="w-4 h-4 text-brand-red" />
-          : <HandThumbUpIcon className="w-4 h-4" />
-        }
-        <span className="text-sm font-bold">{likes.toLocaleString()}</span>
-      </button>
+    <div className="flex flex-col gap-2">
+      {error && (
+        <div
+          role="alert"
+          className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-300 font-medium"
+        >
+          {error}
+        </div>
+      )}
+      <div className="flex items-center gap-1 bg-zinc-800 rounded-xl overflow-hidden">
+        <button
+          onClick={handleLike}
+          disabled={hasLiked}
+          title={hasLiked ? 'Already liked' : 'Like'}
+          className={`flex items-center gap-2 px-4 py-2 transition-colors disabled:cursor-not-allowed
+            ${hasLiked ? 'text-brand-red bg-brand-red/10' : 'hover:bg-zinc-700'}`}
+        >
+          {liked
+            ? <HandThumbUpSolid className="w-4 h-4 text-brand-red" />
+            : <HandThumbUpIcon className="w-4 h-4" />
+          }
+          <span className="text-sm font-bold">{likes.toLocaleString()}</span>
+        </button>
 
-      <div className="w-px h-5 bg-zinc-700" />
+        <div className="w-px h-5 bg-zinc-700" />
 
-      <button
-        onClick={handleDislike}
-        disabled={hasDisliked}
-        title={hasDisliked ? 'Already disliked' : 'Dislike'}
-        className={`flex items-center gap-2 px-4 py-2 transition-colors disabled:cursor-not-allowed
-          ${hasDisliked ? 'text-zinc-400 bg-zinc-700/50' : 'hover:bg-zinc-700'}`}
-      >
-        {disliked
-          ? <HandThumbDownSolid className="w-4 h-4 text-zinc-400" />
-          : <HandThumbDownIcon className="w-4 h-4" />
-        }
-        <span className="text-sm font-bold">{dislikes.toLocaleString()}</span>
-      </button>
+        <button
+          onClick={handleDislike}
+          disabled={hasDisliked}
+          title={hasDisliked ? 'Already disliked' : 'Dislike'}
+          className={`flex items-center gap-2 px-4 py-2 transition-colors disabled:cursor-not-allowed
+            ${hasDisliked ? 'text-zinc-400 bg-zinc-700/50' : 'hover:bg-zinc-700'}`}
+        >
+          {disliked
+            ? <HandThumbDownSolid className="w-4 h-4 text-zinc-400" />
+            : <HandThumbDownIcon className="w-4 h-4" />
+          }
+          <span className="text-sm font-bold">{dislikes.toLocaleString()}</span>
+        </button>
+      </div>
     </div>
   );
 }

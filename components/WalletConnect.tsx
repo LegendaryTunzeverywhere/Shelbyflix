@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
 import { formatAddress, sanitizeUrl } from '@/lib/utils';
 import { useShelbyAccess } from '@/hooks/useShelbyAccess';
@@ -12,9 +12,7 @@ import {
   XMarkIcon,
   DocumentDuplicateIcon,
 } from '@heroicons/react/24/outline';
-import { getAptosClient } from '@/lib/keyless-auth';
-
-type AuthMethod = 'google' | 'wallet';
+import { getAptosClient } from '@/lib/aptos-client';
 
 // ── Logout confirmation modal ─────────────────────────────────────────────────
 function LogoutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
@@ -54,78 +52,69 @@ const WalletConnect: React.FC = () => {
   const { account, connected, disconnect, connect, wallets } = useWallet();
   const { hasAccess, balance, loading: balanceLoading } = useShelbyAccess();
 
-  const [googleUser, setGoogleUser] = useState<any>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [activeMethod, setActiveMethod] = useState<AuthMethod | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [balances, setBalances] = useState({ apt: 0, shelbyUsd: 0 });
   const [balancesLoading, setBalancesLoading] = useState(false);
+  const [balancesError, setBalancesError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Pre-compute authenticated state and address early
-  const isAuthenticated = (connected && account) || googleUser;
-  const userAddress = googleUser?.accountAddress || account?.address.toString();
+  // Authenticated state and address derived from Wallet Adapter only
+  const isAuthenticated = connected && account;
+  const userAddress = account?.address.toString();
 
-  // Check for existing Google session
-  useEffect(() => {
+  // Fetch user balances when dropdown is opened
+  const fetchBalances = useCallback(async () => {
+    if (!userAddress) return;
+
+    setBalancesLoading(true);
+    setBalancesError(null);
     try {
-      import('@/lib/keyless-auth')
-        .then(({ getUserInfo }) => {
-          const userInfo = getUserInfo();
-          if (userInfo) {
-            setGoogleUser(userInfo);
-            setActiveMethod('google');
-          }
-        })
-        .catch(() => {});
-    } catch {}
-  }, []);
+      const aptos = getAptosClient();
 
-  // Fetch user balances when authenticated
+      // Fetch all coin balances
+      const coins = await aptos.account.getAccountCoinsData({
+        accountAddress: userAddress,
+      });
+
+      // Find APT and ShelbyUSD
+      let aptBalance = 0;
+      let shelbyUsdBalance = 0;
+
+      coins.forEach((coin: any) => {
+        if (coin.metadata?.asset_type?.includes('0x1::aptos_coin::AptosCoin')) {
+          aptBalance = parseFloat(coin.amount || '0') / 100000000;
+        }
+
+        const shelbyUsdToken = process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS;
+        if (shelbyUsdToken && coin.metadata?.asset_type?.includes(shelbyUsdToken)) {
+          shelbyUsdBalance = parseFloat(coin.amount || '0') / 100000000;
+        }
+      });
+
+      setBalances({ apt: aptBalance, shelbyUsd: shelbyUsdBalance });
+    } catch (error) {
+      console.error('Failed to fetch balances:', error);
+      setBalancesError(
+        error instanceof Error
+          ? `Couldn't load balances: ${error.message}`
+          : "Couldn't load balances. Check your connection."
+      );
+    } finally {
+      setBalancesLoading(false);
+    }
+  }, [userAddress]);
+
   useEffect(() => {
-    const fetchBalances = async () => {
-      if (!userAddress) return;
-      
-      setBalancesLoading(true);
-      try {
-        const aptos = getAptosClient();
-        
-        // Fetch all coin balances
-        const coins = await aptos.account.getAccountCoinsData({
-          accountAddress: userAddress,
-        });
-        
-        // Find APT and ShelbyUSD
-        let aptBalance = 0;
-        let shelbyUsdBalance = 0;
-        
-        coins.forEach((coin: any) => {
-          if (coin.metadata?.asset_type?.includes('0x1::aptos_coin::AptosCoin')) {
-            aptBalance = parseFloat(coin.amount || '0') / 100000000;
-          }
-          
-          const shelbyUsdToken = process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS;
-          if (shelbyUsdToken && coin.metadata?.asset_type?.includes(shelbyUsdToken)) {
-            shelbyUsdBalance = parseFloat(coin.amount || '0') / 100000000;
-          }
-        });
-
-        setBalances({ apt: aptBalance, shelbyUsd: shelbyUsdBalance });
-      } catch (error) {
-        console.error('Failed to fetch balances:', error);
-      } finally {
-        setBalancesLoading(false);
-      }
-    };
-
     if (showDropdown) {
       fetchBalances();
     }
-  }, [showDropdown, userAddress]);
+  }, [showDropdown, fetchBalances]);
 
   // Close modal on outside click
   useEffect(() => {
@@ -160,25 +149,20 @@ const WalletConnect: React.FC = () => {
 
   const handleWalletConnect = async (wallet: any) => {
     try {
+      setConnectError(null);
       if (wallet.readyState === 'NotDetected') {
         window.open(wallet.url, '_blank');
         return;
       }
       await connect(wallet.name);
-      setActiveMethod('wallet');
       setShowAuthModal(false);
     } catch (error) {
       console.error('Failed to connect wallet:', error);
-      alert(`Connection failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    try {
-      const { initiateGoogleLogin } = await import('@/lib/keyless-auth');
-      initiateGoogleLogin();
-    } catch {
-      alert('Google Sign-In is not fully configured yet. Please use a wallet to connect.');
+      const msg = error instanceof Error ? error.message : String(error);
+      const friendly = /reject|denied|cancel/i.test(msg)
+        ? 'Connection was cancelled or rejected.'
+        : `Connection failed: ${msg}`;
+      setConnectError(friendly);
     }
   };
 
@@ -188,16 +172,7 @@ const WalletConnect: React.FC = () => {
   };
 
   const confirmLogout = async () => {
-    if (activeMethod === 'google') {
-      try {
-        const { logout: logoutGoogle } = await import('@/lib/keyless-auth');
-        logoutGoogle();
-        setGoogleUser(null);
-      } catch {}
-    } else {
-      disconnect();
-    }
-    setActiveMethod(null);
+    disconnect();
     setShowLogoutModal(false);
     window.location.href = '/';
   };
@@ -207,11 +182,9 @@ const WalletConnect: React.FC = () => {
       try {
         await navigator.clipboard.writeText(userAddress);
         setIsCopied(true);
-        console.log('Wallet address copied:', userAddress); // Logging for validation
         setTimeout(() => setIsCopied(false), 2000);
       } catch (err) {
         console.error('Failed to copy wallet address:', err);
-        alert('Failed to copy address.');
       }
     }
   };
@@ -223,7 +196,7 @@ const WalletConnect: React.FC = () => {
         {/* Connect button */}
         <button
           ref={buttonRef}
-          onClick={() => setShowAuthModal(v => !v)}
+          onClick={() => { setShowAuthModal(v => !v); setConnectError(null); }}
           className="px-4 py-2 bg-gradient-to-r from-brand-purple via-brand-pink to-brand-red
             hover:opacity-90 text-white rounded-lg font-bold transition-all shadow-lg
             flex items-center gap-2 whitespace-nowrap"
@@ -251,7 +224,7 @@ const WalletConnect: React.FC = () => {
             >
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 flex-shrink-0">
-                <h3 className="text-base font-black text-white">Sign In</h3>
+                <h3 className="text-base font-black text-white">Connect Wallet</h3>
                 <button
                   onClick={() => setShowAuthModal(false)}
                   className="w-7 h-7 flex items-center justify-center rounded-full
@@ -263,34 +236,25 @@ const WalletConnect: React.FC = () => {
 
               {/* Scrollable content */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
-
-                {/* Google — always shown regardless of wallet availability */}
-                <button
-                  onClick={handleGoogleLogin}
-                  className="w-full flex items-center justify-center gap-3 px-4 py-3
-                    bg-white hover:bg-zinc-100 text-zinc-900 rounded-xl
-                    transition-all shadow-sm font-bold text-sm"
-                >
-                  <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                  </svg>
-                  <span>Continue with Google</span>
-                </button>
-
-                {/* Divider */}
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-zinc-800" />
-                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Or</span>
-                  <div className="flex-1 h-px bg-zinc-800" />
-                </div>
+                {/* Connection error banner */}
+                {connectError && (
+                  <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl animate-in fade-in">
+                    <ExclamationTriangleIcon className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-red-300 flex-1">{connectError}</p>
+                    <button
+                      onClick={() => setConnectError(null)}
+                      className="text-red-400 hover:text-red-300 flex-shrink-0"
+                      aria-label="Dismiss error"
+                    >
+                      <XMarkIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {/* Wallet list */}
                 <div className="space-y-1.5">
                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider px-1">
-                    Connect Wallet
+                    Available Wallets
                   </p>
 
                   {wallets.length > 0 ? (
@@ -329,7 +293,7 @@ const WalletConnect: React.FC = () => {
                       <WalletIcon className="w-8 h-8 mx-auto mb-2 text-zinc-700" />
                       <p className="text-xs font-bold text-zinc-500 mb-1">No Wallets Found</p>
                       <p className="text-[10px] text-zinc-600 mb-3 px-4">
-                        Install a wallet extension or use Google Sign-In above.
+                        Install a wallet extension to connect.
                       </p>
                       <a
                         href="https://petra.app/"
@@ -374,27 +338,19 @@ const WalletConnect: React.FC = () => {
           className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800
             rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
         >
-          {googleUser?.picture ? (
-            <img
-              src={googleUser.picture}
-              alt={googleUser.name || googleUser.email}
-              className="w-8 h-8 rounded-full border-2 border-zinc-700 group-hover:border-brand-pink transition-colors flex-shrink-0"
-            />
-          ) : (
-            <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors flex-shrink-0">
-              <WalletIcon className="w-4 h-4 text-brand-pink" />
-            </div>
-          )}
+          <div className="p-1.5 bg-zinc-800 rounded-lg group-hover:bg-brand-purple/20 transition-colors flex-shrink-0">
+            <WalletIcon className="w-4 h-4 text-brand-pink" />
+          </div>
           <div className="flex flex-col items-start min-w-0">
             <span className="text-xs font-bold text-white truncate max-w-[120px]">
-              {googleUser?.name?.split(' ')[0] || formatAddress(userAddress)}
+              {formatAddress(userAddress)}
             </span>
             <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">
-              {activeMethod === 'google' ? 'Google' : balanceLoading ? 'Loading...' : `${balance} SUSD`}
+              {balanceLoading ? 'Loading...' : `${balance} SUSD`}
             </span>
           </div>
           <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-            googleUser || hasAccess
+            hasAccess
               ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]'
               : 'bg-brand-red'
           }`} />
@@ -408,17 +364,6 @@ const WalletConnect: React.FC = () => {
               border border-zinc-800 z-50 overflow-hidden">
 
               <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
-                {googleUser && (
-                  <div className="flex items-center gap-3 mb-3">
-                    {googleUser.picture && (
-                      <img src={googleUser.picture} alt={googleUser.name} className="w-12 h-12 rounded-full" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-white truncate">{googleUser.name || googleUser.email}</p>
-                      <p className="text-xs text-zinc-500 truncate">{googleUser.email}</p>
-                    </div>
-                  </div>
-                )}
                 <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
                   Blockchain Address
                 </p>
@@ -442,6 +387,25 @@ const WalletConnect: React.FC = () => {
 
               <div className="p-5 border-b border-zinc-800">
                 <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-3">Token Balances</p>
+
+                {balancesError && (
+                  <div
+                    role="alert"
+                    className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2"
+                  >
+                    <ExclamationTriangleIcon className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-red-300 font-medium break-words">{balancesError}</p>
+                      <button
+                        onClick={fetchBalances}
+                        className="mt-1 text-[10px] font-bold uppercase tracking-widest text-brand-pink hover:text-brand-red"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   {/* APT Balance */}
                   <div className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800">

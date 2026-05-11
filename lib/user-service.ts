@@ -62,7 +62,6 @@ export async function createUser(
     // Check if user already exists
     const existing = await getUserByWallet(walletAddress);
     if (existing) {
-      console.log('User already exists:', existing);
       return existing;
     }
     
@@ -88,7 +87,6 @@ export async function createUser(
       throw error;
     }
     
-    console.log('✅ User created successfully:', data);
     return data;
   } catch (error) {
     console.error('Failed to create user:', error);

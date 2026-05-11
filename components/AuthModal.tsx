@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useWallet } from '@aptos-labs/wallet-adapter-react';
-import { initiateGoogleLogin } from '@/lib/keyless-auth';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -12,8 +11,13 @@ interface AuthModalProps {
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const { wallets, connect, connected } = useWallet();
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [walletLoading, setWalletLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Clear error when modal opens/closes
+  useEffect(() => {
+    if (!isOpen) setAuthError(null);
+  }, [isOpen]);
 
   // Close modal when connected
   useEffect(() => {
@@ -22,31 +26,28 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     }
   }, [connected, onClose]);
 
-  const handleGoogleLogin = async () => {
+  const handleWalletConnect = async (walletName: string) => {
     try {
-      setGoogleLoading(true);
-      initiateGoogleLogin();
-    } catch (error) {
-      console.error('Google login failed:', error);
-      setGoogleLoading(false);
-    }
-  };
-
-  const handleWalletConnect = (walletName: string) => {
-    try {
+      setAuthError(null);
       setWalletLoading(true);
       setSelectedWallet(walletName);
-      connect(walletName);
-    } catch (error) {
-      console.error('Wallet connection failed:', error);
+      await connect(walletName);
+    } catch (err) {
+      console.error('Wallet connection failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      // User-rejection produces a cleaner message
+      const friendly = /reject|denied|cancel/i.test(msg)
+        ? 'Connection request was cancelled.'
+        : `Couldn't connect to ${walletName}: ${msg}`;
+      setAuthError(friendly);
       setWalletLoading(false);
       setSelectedWallet(null);
     }
   };
 
-  const availableWallets = wallets.filter(
-    (w) => w.readyState === 'Installed'
-  );
+  // Show all wallets — includes both installed extensions and AptosConnect (Petra Web) options
+  // AptosConnect wallets provide Google/Apple social login automatically via the Wallet Adapter plugin
+  const availableWallets = wallets;
 
   if (!isOpen) return null;
 
@@ -58,50 +59,45 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           <h2 className="text-2xl font-black text-white">
             SHELBY<span className="text-brand-red">FLIX</span>
           </h2>
-          <p className="text-sm text-zinc-400 mt-2">Choose how to sign in</p>
+          <p className="text-sm text-zinc-400 mt-2">Connect your wallet to sign in</p>
         </div>
 
         {/* Content */}
         <div className="p-6 space-y-4">
-          {/* Google Login */}
-          <button
-            onClick={handleGoogleLogin}
-            disabled={googleLoading}
-            className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 disabled:from-gray-500 disabled:to-gray-600 text-white font-semibold py-3 px-4 rounded-xl transition flex items-center justify-center gap-3 disabled:cursor-not-allowed"
-          >
-            {googleLoading ? (
-              <>
-                <span className="animate-spin">⏳</span>
-                <span>Redirecting to Google...</span>
-              </>
-            ) : (
-              <>
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                </svg>
-                <span>Continue with Google</span>
-              </>
-            )}
-          </button>
-
-          {/* Divider */}
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-zinc-700"></div>
+          {/* Error banner */}
+          {authError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl"
+            >
+              <svg
+                className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <p className="text-sm text-red-300 flex-1">{authError}</p>
+              <button
+                onClick={() => setAuthError(null)}
+                className="text-red-400 hover:text-red-300 text-xs font-bold"
+                aria-label="Dismiss error"
+              >
+                ✕
+              </button>
             </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-zinc-900 text-zinc-500">or</span>
-            </div>
-          </div>
+          )}
 
-          {/* Wallet Selection */}
+          {/* Wallet Selection — includes Petra extension + AptosConnect (Google/Apple social login) */}
           {availableWallets.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                Connected Wallets
+                Choose a connection method
               </p>
               {availableWallets.map((wallet) => (
                 <button
@@ -110,7 +106,16 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   disabled={walletLoading && selectedWallet === wallet.name}
                   className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-700 text-white font-semibold py-3 px-4 rounded-xl transition flex items-center justify-between disabled:cursor-not-allowed"
                 >
-                  <span>{wallet.name}</span>
+                  <div className="flex items-center gap-3">
+                    {wallet.icon && (
+                      <img
+                        src={wallet.icon}
+                        alt={`${wallet.name} icon`}
+                        className="w-6 h-6 rounded"
+                      />
+                    )}
+                    <span>{wallet.name}</span>
+                  </div>
                   {walletLoading && selectedWallet === wallet.name && (
                     <span className="animate-spin">⏳</span>
                   )}
@@ -119,27 +124,31 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             </div>
           ) : (
             <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-4 text-center">
-              <p className="text-sm text-zinc-400">
-                No wallet extensions detected. Install{' '}
-                <a
-                  href="https://www.petra.app/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 font-semibold"
-                >
-                  Petra
-                </a>
-                {' '}or{' '}
-                <a
-                  href="https://nightly.app/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 font-semibold"
-                >
-                  Nightly
-                </a>
-                {' '}to connect.
+              <p className="text-sm text-zinc-400 mb-3">
+                No wallet connection options available.
               </p>
+              <a
+                href="https://petra.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-semibold py-2 px-4 rounded-xl transition"
+              >
+                <span>Install Petra Wallet</span>
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                  />
+                </svg>
+              </a>
             </div>
           )}
         </div>

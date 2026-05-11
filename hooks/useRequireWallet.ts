@@ -17,7 +17,6 @@ export function useRequireWallet(redirectUrl: string = '/?connect=true') {
 
     // Redirect if not connected
     if (!connected || !address) {
-      console.log('⚠️ Wallet not connected - redirecting to home');
       router.push(redirectUrl);
     }
   }, [connected, address, loading, router, redirectUrl]);
