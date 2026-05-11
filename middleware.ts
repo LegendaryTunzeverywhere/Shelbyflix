@@ -130,7 +130,9 @@ const SECURITY_HEADERS: Record<string, string> = {
   // HSTS with preload — ensures browsers always use HTTPS
   'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
   // Cross-origin isolation headers
-  'Cross-Origin-Opener-Policy':   'same-origin',
+  // Use 'same-origin-allow-popups' so OAuth popups (e.g. Petra Web social login)
+  // can postMessage back to the main window after completing auth.
+  'Cross-Origin-Opener-Policy':   'same-origin-allow-popups',
   'Cross-Origin-Resource-Policy': 'same-origin',
   // Note: require-corp may break third-party resources (images, scripts from CDNs).
   // Change to 'credentialless' or remove if third-party resources fail to load.

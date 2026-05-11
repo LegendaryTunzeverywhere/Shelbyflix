@@ -126,11 +126,13 @@ const WalletConnect: React.FC = () => {
         !buttonRef.current.contains(e.target as Node)
       ) {
         setShowAuthModal(false);
+        setConnectError(null);
       }
     }
     if (showAuthModal) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      // Use 'click' on document (captures clicks anywhere on the page)
+      document.addEventListener('click', handleClickOutside, true);
+      return () => document.removeEventListener('click', handleClickOutside, true);
     }
   }, [showAuthModal]);
 
@@ -146,6 +148,19 @@ const WalletConnect: React.FC = () => {
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
   }, []);
+
+  // Close wallet dropdown on click outside (capture phase for full-page coverage)
+  useEffect(() => {
+    if (!showDropdown) return;
+    function handleClick(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      // Don't close if clicking inside the dropdown panel itself
+      if (target.closest('[data-wallet-dropdown]')) return;
+      setShowDropdown(false);
+    }
+    document.addEventListener('click', handleClick, true);
+    return () => document.removeEventListener('click', handleClick, true);
+  }, [showDropdown]);
 
   const handleWalletConnect = async (wallet: any) => {
     try {
@@ -335,6 +350,7 @@ const WalletConnect: React.FC = () => {
       <div className="relative">
         <button
           onClick={() => setShowDropdown(v => !v)}
+          data-wallet-dropdown
           className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800
             rounded-xl hover:bg-zinc-800 transition-all shadow-lg group"
         >
@@ -359,9 +375,8 @@ const WalletConnect: React.FC = () => {
         {/* Dropdown */}
         {showDropdown && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
             <div className="absolute right-0 mt-2 w-72 bg-zinc-900 rounded-2xl shadow-2xl
-              border border-zinc-800 z-50 overflow-hidden">
+              border border-zinc-800 z-50 overflow-hidden" data-wallet-dropdown>
 
               <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
                 <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">
