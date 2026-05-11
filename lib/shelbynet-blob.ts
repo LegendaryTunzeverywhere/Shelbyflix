@@ -162,7 +162,7 @@ export async function uploadBlobToShelbynet(
 ): Promise<void> {
   const shelbyClient = new ShelbyClient({
     network: Network.TESTNET,
-    apiKey: process.env.NEXT_SHELBY_API_KEY ?? '',
+    apiKey: process.env.NEXT_PUBLIC_SHELBY_API_KEY ?? '',
   });
 
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
@@ -190,7 +190,7 @@ export async function uploadBlobToShelbynet(
       /complete multipart upload/i.test(msg);
 
     if (!isUpstreamTimeout) {
-      throw new Error(`Failed to start multipart upload! ${msg}`);
+      throw new Error(`Failed to start multipart upload!`);
     }
 
     console.warn(
