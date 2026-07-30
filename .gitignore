@@ -42,6 +42,9 @@ next-env.d.ts
 move-contracts/build/
 move-contracts/.aptos/
 
+# Backfill script generated payloads
+scripts/backfill-payloads/
+
 # IDE
 .vscode/
 .idea/
@@ -56,3 +59,7 @@ Thumbs.db
 #exe
 *.exe
 .aptos
+
+/tests
+/supabase
+/scripts

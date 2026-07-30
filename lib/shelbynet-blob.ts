@@ -8,6 +8,25 @@ import {
 } from '@shelby-protocol/sdk/browser';
 import { Aptos, AptosConfig, Network, AccountAddress } from '@aptos-labs/ts-sdk';
 
+export function getShelbyApiKey(): string {
+  const serverKey = process.env.SHELBY_API_KEY?.trim();
+  if (serverKey) {
+    return serverKey;
+  }
+
+  const legacyKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
+  if (legacyKey) {
+    console.warn(
+      '[shelbynet-blob] NEXT_PUBLIC_SHELBY_API_KEY is deprecated; use SHELBY_API_KEY instead.'
+    );
+    return legacyKey;
+  }
+
+  throw new Error(
+    'Missing Shelby API key. Set SHELBY_API_KEY in your server environment before uploading blobs.'
+  );
+}
+
 // Use the Shelbynet node for submitting and confirming blob transactions.
 // Falls back to Aptos testnet if the env var is not set.
 const shelbynetAptos = new Aptos(new AptosConfig({
@@ -162,7 +181,7 @@ export async function uploadBlobToShelbynet(
 ): Promise<void> {
   const shelbyClient = new ShelbyClient({
     network: Network.TESTNET,
-    apiKey: process.env.NEXT_PUBLIC_SHELBY_API_KEY ?? '',
+    apiKey: getShelbyApiKey(),
   });
 
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());

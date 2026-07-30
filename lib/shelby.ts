@@ -1,4 +1,4 @@
-import type { VideoMetadata, UploadProgress } from '@/types';
+import type { VideoMetadata, UploadProgress, AccessMode } from '@/types';
 import {
   registerBlob,
   uploadBlobToShelbynet,
@@ -13,6 +13,11 @@ import {
   getVideoDuration,
   generateThumbnail,
 } from './encryption';
+import { serializeRegistrationInfoV2, serializeRegistrationInfoV2Vec, msToMicros } from './move-bcs';
+import type { AccessPolicy, RegistrationInfoV2 } from './move-bcs';
+import { ACCESS_CONTROL_MODULE } from './move-contract';
+import { logChainWriteSuccess } from './move-logging';
+import { getAptosClient } from './aptos-client';
 
 export interface ShelbyUploadResponse {
   videoId: string;
@@ -23,6 +28,276 @@ export interface ShelbyUploadResponse {
   duration: number;
   thumbnailUrl?: string;
   success: boolean;
+  _chainTxHash?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Move-backed registration — register_blob_v2 (Req 8.1 - 8.8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Error categories for wallet/signing failures (Req 8.8).
+ * These are surfaced to the UI so the creator knows what went wrong
+ * without a chain broadcast having occurred.
+ */
+export type SigningFailureCategory =
+  | 'user_rejection'
+  | 'adapter_error'
+  | 'missing_account';
+
+/**
+ * Structured error thrown when the wallet rejects or fails to sign.
+ * The upload form catches this to keep form state intact (Req 8.8).
+ */
+export class WalletSigningError extends Error {
+  public readonly category: SigningFailureCategory;
+  constructor(category: SigningFailureCategory, message: string) {
+    super(message);
+    this.name = 'WalletSigningError';
+    this.category = category;
+  }
+}
+
+/**
+ * Structured error thrown when the chain transaction aborts or times out.
+ * Carries the abort code or timeout indicator + entry function name (Req 8.5).
+ */
+export class ChainTransactionError extends Error {
+  public readonly entryFunction: string;
+  public readonly abortCode?: string;
+  public readonly isTimeout: boolean;
+  constructor(opts: { entryFunction: string; abortCode?: string; isTimeout?: boolean; message: string }) {
+    super(opts.message);
+    this.name = 'ChainTransactionError';
+    this.entryFunction = opts.entryFunction;
+    this.abortCode = opts.abortCode;
+    this.isTimeout = opts.isTimeout ?? false;
+  }
+}
+
+/**
+ * Structured error thrown when the Supabase write fails after a successful
+ * chain commit (Req 8.6). Carries the chain tx hash so the creator can
+ * retry the DB write only.
+ */
+export class PostCommitSupabaseError extends Error {
+  public readonly txHash: string;
+  public readonly videoId: string;
+  constructor(opts: { txHash: string; videoId: string; message: string }) {
+    super(opts.message);
+    this.name = 'PostCommitSupabaseError';
+    this.txHash = opts.txHash;
+    this.videoId = opts.videoId;
+  }
+}
+
+/**
+ * Map the upload-form access mode selection to a Move `AccessPolicy` (Table 4a inverted).
+ *
+ * - Public → PayToDownload { price: 0 }
+ * - Purchasable → PayToDownload { price: n } where n > 0
+ * - Allowlist → Allowlist { addresses }
+ * - TimeLock → TimeLock { locked_until } (ms → µs via msToMicros)
+ */
+export function mapFormToAccessPolicy(opts: {
+  accessMode: AccessMode;
+  price?: number;
+  allowlist?: string[];
+  unlockAt?: number;
+}): AccessPolicy {
+  switch (opts.accessMode) {
+    case 'public':
+      return { kind: 'PayToDownload', price: 0n };
+    case 'purchasable':
+      return { kind: 'PayToDownload', price: BigInt(opts.price!) };
+    case 'allowlist': {
+      // Deduplicate by canonical form and sort ascending
+      const canonical = [...new Set(
+        (opts.allowlist ?? []).map(a => {
+          try {
+            return AccountAddress.from(a).toStringLong();
+          } catch {
+            return a.toLowerCase();
+          }
+        })
+      )].sort();
+      return { kind: 'Allowlist', addresses: canonical };
+    }
+    case 'timelock':
+      return { kind: 'TimeLock', locked_until: msToMicros(opts.unlockAt!) };
+  }
+}
+
+/**
+ * Validate access-mode selection before upload under the move flag.
+ * Returns null if valid, or an object `{ field, message }` on failure.
+ * (Req 8.2, 8.3, 8.4)
+ */
+export function validateAccessModeForMove(opts: {
+  accessMode: AccessMode;
+  price?: number;
+  allowlist?: string[];
+  unlockAt?: number;
+  expirationTimestamp: number;
+}): { field: string; message: string } | null {
+  if (opts.accessMode === 'purchasable') {
+    if (
+      opts.price === undefined ||
+      opts.price === null ||
+      !Number.isSafeInteger(opts.price) ||
+      opts.price <= 0
+    ) {
+      return {
+        field: 'price',
+        message: 'Purchasable videos require a positive integer price in SHELBYUSD base units.',
+      };
+    }
+  }
+
+  if (opts.accessMode === 'timelock') {
+    if (opts.unlockAt === undefined || opts.unlockAt === null) {
+      return { field: 'unlockAt', message: 'TimeLock requires an unlock time.' };
+    }
+    if (!Number.isFinite(opts.unlockAt) || !Number.isSafeInteger(opts.unlockAt)) {
+      return { field: 'unlockAt', message: 'unlockAt must be a finite safe integer (epoch ms).' };
+    }
+    if (opts.unlockAt <= Date.now()) {
+      return { field: 'unlockAt', message: 'unlockAt must be strictly in the future.' };
+    }
+    if (opts.unlockAt >= opts.expirationTimestamp) {
+      return { field: 'unlockAt', message: 'unlockAt must be strictly before the video expiration.' };
+    }
+  }
+
+  if (opts.accessMode === 'allowlist') {
+    // Deduplicate by canonical form
+    const deduped = [...new Set(
+      (opts.allowlist ?? []).map(a => {
+        try {
+          return AccountAddress.from(a).toStringLong();
+        } catch {
+          return a.toLowerCase();
+        }
+      })
+    )];
+    if (deduped.length < 1) {
+      return { field: 'allowlist', message: 'Allowlist must contain at least 1 address.' };
+    }
+    if (deduped.length > 100) {
+      return { field: 'allowlist', message: 'Allowlist must not exceed 100 addresses.' };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Submit `register_blob_v2` on the Move access_control module.
+ *
+ * Called after a successful Shelby blob registration when
+ * `NEXT_PUBLIC_ACCESS_BACKEND === "move"`.
+ *
+ * Returns the transaction hash on success.
+ * Throws WalletSigningError, ChainTransactionError on failure.
+ */
+export async function submitRegisterBlobV2(opts: {
+  videoId: string;
+  blobName: string;
+  accessPolicy: AccessPolicy;
+  signAndSubmitTransaction: (payload: any) => Promise<any>;
+  account: { address?: { toString: () => string } } | null | undefined;
+}): Promise<{ txHash: string; version: number | string }> {
+  const { videoId, blobName, accessPolicy, signAndSubmitTransaction, account } = opts;
+
+  // Check account is connected (Req 8.8)
+  if (!account?.address) {
+    throw new WalletSigningError(
+      'missing_account',
+      'No wallet account connected. Please connect your wallet and try again.',
+    );
+  }
+
+  // Build RegistrationInfoV2 (Req 8.1, 8.7)
+  const regInfo: RegistrationInfoV2 = {
+    blob_name: blobName,
+    green_box_scheme: 0,
+    green_box_bytes: new Uint8Array(0),
+    access_policy: accessPolicy,
+  };
+
+  // Use serializeRegistrationInfoV2Vec to wrap in a single-element vector
+  // because the module exposes `register_blobs_v2` (plural, vector input)
+  // as the entry function, not `register_blob_v2` (singular).
+  const bcsBytes = serializeRegistrationInfoV2Vec([regInfo]);
+
+  // Emit the no-green-box info log (Req 8.7, 14.2)
+  console.info(JSON.stringify({ event: 'register_blob_v2_no_green_box', videoId }));
+
+  // Build the entry function payload — register_blobs_v2 takes a single
+  // BCS-encoded vector<RegistrationInfoV2> argument
+  const payload = {
+    function: `${ACCESS_CONTROL_MODULE}register_blobs_v2` as `${string}::${string}::${string}`,
+    typeArguments: [],
+    functionArguments: [Array.from(bcsBytes)],
+  };
+
+  // Sign and submit (Req 8.8 — catch wallet rejections)
+  let txHash: string;
+  try {
+    const response = await signAndSubmitTransaction({ data: payload });
+    txHash = response.hash;
+  } catch (err) {
+    // Categorize the signing failure
+    const msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg.toLowerCase().includes('user rejected') ||
+      msg.toLowerCase().includes('user denied') ||
+      msg.toLowerCase().includes('rejected by user') ||
+      msg.toLowerCase().includes('cancelled')
+    ) {
+      throw new WalletSigningError('user_rejection', `Wallet signing rejected: ${msg}`);
+    }
+    throw new WalletSigningError('adapter_error', `Wallet adapter error: ${msg}`);
+  }
+
+  // Wait for transaction with 60-second timeout (Req 8.1)
+  const aptos = getAptosClient();
+  let txResult: any;
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Transaction commit timeout (60s)')), 60_000)
+    );
+    const waitPromise = aptos.waitForTransaction({
+      transactionHash: txHash,
+      options: { checkSuccess: false },
+    });
+    txResult = await Promise.race([waitPromise, timeoutPromise]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isTimeout = msg.includes('timeout') || msg.includes('60s');
+    throw new ChainTransactionError({
+      entryFunction: 'register_blob_v2',
+      isTimeout,
+      message: `register_blob_v2 failed: ${msg}`,
+    });
+  }
+
+  // Check on-chain result (Req 8.5)
+  if (txResult.success === false) {
+    const vmStatus: string = txResult.vm_status ?? '';
+    throw new ChainTransactionError({
+      entryFunction: 'register_blob_v2',
+      abortCode: vmStatus || 'unknown',
+      isTimeout: false,
+      message: `register_blob_v2 aborted on-chain: ${vmStatus || 'Unknown VM error'}`,
+    });
+  }
+
+  // Success — emit structured log (Req 14.2)
+  const version = txResult.version ?? 0;
+  logChainWriteSuccess('register_blob_v2', { videoId, txHash, version });
+
+  return { txHash, version };
 }
 
 /**
@@ -101,6 +376,41 @@ export async function uploadToShelby(
       metadata.availabilityPeriod || 30
     );
 
+    // Step 7b: Move-flag — register access policy on the access_control module
+    // BEFORE uploading the blob data. This ensures the access policy is set
+    // before the content is available on the storage layer. Only for non-public
+    // modes (allowlist, timelock, purchasable) since public videos don't need
+    // access gating before the blob is uploaded.
+    if (
+      process.env.NEXT_PUBLIC_ACCESS_BACKEND === 'move' &&
+      metadata.accessMode &&
+      metadata.accessMode !== 'public'
+    ) {
+      onProgress?.({
+        stage: 'uploading',
+        progress: 45,
+        message: 'Registering access policy on-chain... (approve wallet)',
+      });
+
+      const accessPolicy = mapFormToAccessPolicy({
+        accessMode: metadata.accessMode!,
+        price: metadata.price,
+        allowlist: (metadata as any).allowlist,
+        unlockAt: (metadata as any).unlockAt,
+      });
+
+      const chainResult = await submitRegisterBlobV2({
+        videoId,
+        blobName,
+        accessPolicy,
+        signAndSubmitTransaction,
+        account: resolvedAccount ? { address: { toString: () => resolvedAccount.toStringLong() } } : null,
+      });
+
+      // Store the chain tx hash for downstream use
+      (metadata as any)._chainTxHash = chainResult.txHash;
+    }
+
     // Step 8: Upload encrypted video to Shelbynet storage
     onProgress?.({ stage: 'uploading', progress: 50, message: 'Uploading to Shelbynet storage...' });
 
@@ -134,6 +444,7 @@ export async function uploadToShelby(
       duration,
       thumbnailUrl,
       success: true,
+      _chainTxHash: (metadata as any)._chainTxHash,
     };
   } catch (error) {
 

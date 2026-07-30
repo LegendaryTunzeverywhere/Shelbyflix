@@ -18,7 +18,14 @@ interface DeleteVideoModalProps {
   onSuccess: () => void;
 }
 
-type DeleteStage = 'confirm' | 'deleting_db' | 'deleting_chain' | 'done' | 'error';
+type DeleteStage =
+  | 'confirm'
+  | 'checking_chain'
+  | 'deleting_chain_blob'
+  | 'deleting_db'
+  | 'deleting_shelby'
+  | 'done'
+  | 'error';
 
 export default function DeleteVideoModal({
   video,
@@ -36,6 +43,20 @@ export default function DeleteVideoModal({
     if (!confirmed) return;
     setError('');
 
+    // Read the flag at the point of use, not module load (Req 15.6)
+    const isMoveBackend = process.env.NEXT_PUBLIC_ACCESS_BACKEND === 'move';
+
+    if (isMoveBackend) {
+      await handleMoveDelete();
+    } else {
+      await handleSupabaseDelete();
+    }
+  }
+
+  /**
+   * Supabase-flag delete — preserved unchanged (Req 10.5).
+   */
+  async function handleSupabaseDelete() {
     try {
       // Step 1: Remove from Supabase
       setStage('deleting_db');
@@ -48,7 +69,7 @@ export default function DeleteVideoModal({
       if (dbError) throw new Error(`Database error: ${dbError.message}`);
 
       // Step 2: Remove from Shelby cache + on-chain blob expiry signal
-      setStage('deleting_chain');
+      setStage('deleting_shelby');
       const { deleteFromShelby } = await import('@/lib/shelby');
       await deleteFromShelby(
         video.videoId,
@@ -61,7 +82,6 @@ export default function DeleteVideoModal({
       setTimeout(() => {
         onSuccess();
       }, 1200);
-
     } catch (e) {
       console.error('Delete failed:', e);
       setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
@@ -69,7 +89,170 @@ export default function DeleteVideoModal({
     }
   }
 
-  const isProcessing = stage === 'deleting_db' || stage === 'deleting_chain';
+  /**
+   * Move-flag delete flow (Req 10.1, 10.2, 10.3, 10.4, 10.6):
+   *
+   * Strict ordering — do not advance on failure:
+   *   (a) Pre-check get_maybe_blob_metadata_bcs(full_blob_name) with 10s timeout
+   *       - None → skip delete_blob, proceed to (c)
+   *       - Some → proceed to (b)
+   *   (b) Submit delete_blob(full_blob_name) signed by creator, waitForTransaction 60s
+   *   (c) Delete Supabase videos row
+   *   (d) Invoke deleteFromShelby
+   */
+  async function handleMoveDelete() {
+    try {
+      const { getAptosClient } = await import('@/lib/aptos-client');
+      const { ACCESS_CONTROL_MODULE } = await import('@/lib/move-contract');
+      const { logChainWriteSuccess } = await import('@/lib/move-logging');
+      const { normalizeAddress } = await import('@/lib/access-control');
+
+      // ── (a) Pre-check: resolve full_blob_name and check chain state ────
+      setStage('checking_chain');
+
+      // Resolve the full blob name via the server endpoint
+      const blobNameRes = await fetch(`/api/videos/${video.videoId}/blob-name`);
+      if (!blobNameRes.ok) {
+        throw new Error(
+          `Failed to resolve blob name: ${blobNameRes.status} ${blobNameRes.statusText}`
+        );
+      }
+      const { fullBlobName } = await blobNameRes.json();
+
+      // Pre-check get_maybe_blob_metadata_bcs with 10-second timeout (Req 10.6)
+      const aptos = getAptosClient();
+      let blobExistsOnChain = false;
+
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Pre-check timeout (10s)')), 10_000)
+        );
+        const viewPromise = aptos.view({
+          payload: {
+            function: `${ACCESS_CONTROL_MODULE}get_maybe_blob_metadata_bcs` as `${string}::${string}::${string}`,
+            typeArguments: [],
+            functionArguments: [fullBlobName],
+          },
+        });
+
+        const result = await Promise.race([viewPromise, timeoutPromise]);
+
+        // The view returns a hex-encoded Option<BlobMetadataV2>.
+        // We only need to know if it's None (skip delete_blob) or Some (proceed).
+        // None is represented as a hex string whose first byte (Option tag) is 0x00.
+        if (Array.isArray(result) && result.length === 1 && typeof result[0] === 'string') {
+          const hexPayload = result[0] as string;
+          const cleanHex = hexPayload.startsWith('0x') ? hexPayload.slice(2) : hexPayload;
+          // Option tag: first byte — 0x00 = None, 0x01 = Some
+          if (cleanHex.length >= 2) {
+            const optionTag = parseInt(cleanHex.slice(0, 2), 16);
+            blobExistsOnChain = optionTag === 1;
+          }
+        }
+      } catch (preCheckErr) {
+        // Pre-check timeout or failure — abort the entire delete (Req 10.3)
+        const msg = preCheckErr instanceof Error ? preCheckErr.message : String(preCheckErr);
+        throw new Error(`Chain pre-check failed: ${msg}`);
+      }
+
+      // ── (b) Submit delete_blob if blob exists on chain ─────────────────
+      if (blobExistsOnChain) {
+        setStage('deleting_chain_blob');
+
+        const payload = {
+          function: `${ACCESS_CONTROL_MODULE}delete_blob` as `${string}::${string}::${string}`,
+          typeArguments: [],
+          functionArguments: [fullBlobName],
+        };
+
+        // Sign and submit — catch wallet rejections (Req 10.3)
+        let txHash: string;
+        try {
+          const response = await signAndSubmitTransaction({ data: payload });
+          txHash = response.hash;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Categorize signing failure
+          if (
+            msg.toLowerCase().includes('user rejected') ||
+            msg.toLowerCase().includes('user denied') ||
+            msg.toLowerCase().includes('rejected by user') ||
+            msg.toLowerCase().includes('cancelled')
+          ) {
+            throw new Error(`Signing rejected: User declined the delete_blob transaction.`);
+          }
+          throw new Error(`Wallet signing failed (delete_blob): ${msg}`);
+        }
+
+        // Wait for transaction with 60-second timeout (Req 10.3)
+        let txResult: any;
+        try {
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Transaction commit timeout (60s)')), 60_000)
+          );
+          const waitPromise = aptos.waitForTransaction({
+            transactionHash: txHash,
+            options: { checkSuccess: false },
+          });
+          txResult = await Promise.race([waitPromise, timeoutPromise]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`delete_blob commit failed: ${msg}`);
+        }
+
+        // Check on-chain result (Req 10.3)
+        if (txResult.success === false) {
+          const vmStatus: string = txResult.vm_status ?? '';
+          throw new Error(
+            `delete_blob aborted on-chain: ${vmStatus || 'Unknown VM error'} (abort code: ${vmStatus})`
+          );
+        }
+
+        // Emit logChainWriteSuccess on confirmed commit (Req 14.2)
+        const version = txResult.version ?? 0;
+        logChainWriteSuccess('delete_blob', {
+          videoId: video.videoId,
+          txHash,
+          version,
+        });
+      }
+
+      // ── (c) Delete Supabase videos row ─────────────────────────────────
+      setStage('deleting_db');
+      const { supabase } = await import('@/lib/supabase');
+      const { error: dbError } = await supabase
+        .from('videos')
+        .delete()
+        .eq('video_id', video.videoId);
+
+      if (dbError) throw new Error(`Database error: ${dbError.message}`);
+
+      // ── (d) Invoke deleteFromShelby ────────────────────────────────────
+      setStage('deleting_shelby');
+      const { deleteFromShelby } = await import('@/lib/shelby');
+      await deleteFromShelby(
+        video.videoId,
+        video.shelbyUrl,
+        video.blobName,
+        signAndSubmitTransaction
+      );
+
+      setStage('done');
+      setTimeout(() => {
+        onSuccess();
+      }, 1200);
+    } catch (e) {
+      console.error('Move delete failed:', e);
+      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+      setStage('error');
+    }
+  }
+
+  const isProcessing =
+    stage === 'checking_chain' ||
+    stage === 'deleting_chain_blob' ||
+    stage === 'deleting_db' ||
+    stage === 'deleting_shelby';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -145,14 +328,78 @@ export default function DeleteVideoModal({
           {/* Progress stages */}
           {(isProcessing || stage === 'done') && (
             <div className="space-y-2 py-1">
-              <StageRow
-                label="Removing from database"
-                status={stage === 'deleting_db' ? 'active' : (stage === 'deleting_chain' || stage === 'done') ? 'done' : 'pending'}
-              />
-              <StageRow
-                label="Removing from Shelbynet"
-                status={stage === 'deleting_chain' ? 'active' : stage === 'done' ? 'done' : 'pending'}
-              />
+              {process.env.NEXT_PUBLIC_ACCESS_BACKEND === 'move' ? (
+                <>
+                  <StageRow
+                    label="Checking on-chain state"
+                    status={
+                      stage === 'checking_chain'
+                        ? 'active'
+                        : stage === 'deleting_chain_blob' ||
+                          stage === 'deleting_db' ||
+                          stage === 'deleting_shelby' ||
+                          stage === 'done'
+                        ? 'done'
+                        : 'pending'
+                    }
+                  />
+                  <StageRow
+                    label="Removing on-chain blob"
+                    status={
+                      stage === 'deleting_chain_blob'
+                        ? 'active'
+                        : stage === 'deleting_db' ||
+                          stage === 'deleting_shelby' ||
+                          stage === 'done'
+                        ? 'done'
+                        : 'pending'
+                    }
+                  />
+                  <StageRow
+                    label="Removing from database"
+                    status={
+                      stage === 'deleting_db'
+                        ? 'active'
+                        : stage === 'deleting_shelby' || stage === 'done'
+                        ? 'done'
+                        : 'pending'
+                    }
+                  />
+                  <StageRow
+                    label="Removing from Shelbynet"
+                    status={
+                      stage === 'deleting_shelby'
+                        ? 'active'
+                        : stage === 'done'
+                        ? 'done'
+                        : 'pending'
+                    }
+                  />
+                </>
+              ) : (
+                <>
+                  <StageRow
+                    label="Removing from database"
+                    status={
+                      stage === 'deleting_db'
+                        ? 'active'
+                        : stage === 'deleting_shelby' || stage === 'done'
+                        ? 'done'
+                        : 'pending'
+                    }
+                  />
+                  <StageRow
+                    label="Removing from Shelbynet"
+                    status={
+                      stage === 'deleting_shelby'
+                        ? 'active'
+                        : stage === 'done'
+                        ? 'done'
+                        : 'pending'
+                    }
+                  />
+                </>
+              )}
               {stage === 'done' && (
                 <p className="text-green-400 text-sm font-bold text-center pt-1">✓ Video deleted successfully</p>
               )}

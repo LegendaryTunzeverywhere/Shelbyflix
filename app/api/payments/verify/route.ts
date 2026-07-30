@@ -84,7 +84,49 @@ const APTOS_TX_HASH_REGEX = /^0x[a-fA-F0-9]{64}$/;
 // a pointless DB round trip and any injection risk into downstream queries.
 const VIDEO_ID_REGEX = /^[\w-]+$/;
 
+// ---------------------------------------------------------------------------
+// Move-backend 410 short-circuit helper (Req 12.10, 13.3, 15.6)
+// ---------------------------------------------------------------------------
+// Under the Move backend the native `purchase` entry function replaces
+// the transfer + verify pipeline entirely. The on-chain Receipt is
+// canonical; this endpoint is no longer needed. Return 410 Gone before
+// any DB read or write so the client knows to stop calling this route.
+// Applied to every exported HTTP method per Req 13.3.
+function moveBackend410(): NextResponse | null {
+  if ((process.env.NEXT_PUBLIC_ACCESS_BACKEND ?? 'supabase') === 'move') {
+    return NextResponse.json(
+      { hasAccess: false, reason: 'not_supported' },
+      { status: 410 },
+    );
+  }
+  return null;
+}
+
+export async function GET(): Promise<NextResponse> {
+  const gone = moveBackend410();
+  if (gone) return gone;
+  // GET is not supported on this endpoint outside the move-backend 410 path.
+  return NextResponse.json(
+    { hasAccess: false, reason: 'method_not_allowed' },
+    { status: 405 },
+  );
+}
+
+export async function OPTIONS(): Promise<NextResponse> {
+  const gone = moveBackend410();
+  if (gone) return gone;
+  // Standard OPTIONS response for non-move environments.
+  return new NextResponse(null, {
+    status: 204,
+    headers: { Allow: 'POST, OPTIONS' },
+  });
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ── 0. Move-backend short-circuit (Req 12.10, 13.3, 15.6) ───────────
+  const gone = moveBackend410();
+  if (gone) return gone;
+
   try {
     // ── 1. Parse body ────────────────────────────────────────────────────
     // A malformed JSON body is a programmer error on the client — treat it

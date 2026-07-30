@@ -304,18 +304,18 @@ export default function PurchaseGate({
       )}
 
       {/* ── Manual retry affordance ────────────────────────────────────── */}
-      {/* Shown when the chain transfer succeeded but /api/payments/verify
-          failed after all backoff attempts. The user's funds are already
+      {/* Shown when the chain transfer succeeded but access confirmation
+          failed after all retry attempts. The user's funds are already
           gone on-chain — we must NOT re-sign. `retryVerify()` only replays
-          the server call. */}
+          the access check (move) or server verify call (supabase). */}
       {needsManualRetry && state !== 'success' && (
         <div className="mt-5 max-w-md flex flex-col items-stretch gap-2 p-3 bg-brand-purple/10 border border-brand-purple/30 rounded-lg text-left">
           <p className="text-brand-purple text-xs font-bold">
-            Payment sent but verification failed
+            Payment sent but confirmation pending
           </p>
           <p className="text-zinc-300 text-xs">
             Your transaction went through on-chain. Click retry to confirm
-            it with the server — you will not be charged again.
+            access — you will not be charged again.
           </p>
           <button
             type="button"
@@ -328,7 +328,7 @@ export default function PurchaseGate({
             <ArrowPathIcon
               className={`w-3.5 h-3.5 ${state === 'verifying' ? 'animate-spin' : ''}`}
             />
-            {state === 'verifying' ? 'Retrying…' : 'Retry verification'}
+            {state === 'verifying' ? 'Retrying…' : 'Retry confirmation'}
           </button>
         </div>
       )}

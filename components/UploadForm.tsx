@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { VideoCategory, VideoType, UploadProgress, VideoMetadata, AccessMode } from '@/types';
-import { uploadToShelby, validateVideoFile } from '@/lib/shelby';
+import { uploadToShelby, validateVideoFile, validateAccessModeForMove, mapFormToAccessPolicy, submitRegisterBlobV2, WalletSigningError, ChainTransactionError, PostCommitSupabaseError } from '@/lib/shelby';
 import { useNotification } from '@/hooks/useNotification';
 import { useWallet } from '@/hooks/useWallet';
 import CategorySelector from './CategorySelector';
@@ -26,7 +26,7 @@ import {
 export default function UploadForm() {
   const router = useRouter();
   const { success, error } = useNotification();
-  const { address, connected, user, signAndSubmitTransaction } = useWallet();
+  const { address, connected, user, signAndSubmitTransaction, account } = useWallet();
 
   const [videoType, setVideoType] = useState<VideoType>('long');
   const [file, setFile] = useState<File | null>(null);
@@ -46,6 +46,8 @@ export default function UploadForm() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [pendingChainTxHash, setPendingChainTxHash] = useState<string | null>(null);
+  const [pendingVideoMetadata, setPendingVideoMetadata] = useState<VideoMetadata | null>(null);
 
   // Shared file processing logic
   const processFile = async (selectedFile: File) => {
@@ -188,6 +190,23 @@ export default function UploadForm() {
       }
     }
 
+    // Move-flag pre-upload validation (Req 8.2, 8.3, 8.4)
+    const isMoveBackend = process.env.NEXT_PUBLIC_ACCESS_BACKEND === 'move';
+    if (isMoveBackend) {
+      const moveValidation = validateAccessModeForMove({
+        accessMode,
+        price: priceVal.price,
+        allowlist,
+        unlockAt,
+        expirationTimestamp,
+      });
+      if (moveValidation) {
+        setValidationErrors({ [moveValidation.field]: moveValidation.message });
+        error(moveValidation.message);
+        return;
+      }
+    }
+
     setIsUploading(true);
 
     try {
@@ -205,11 +224,23 @@ export default function UploadForm() {
           channelId: walletAddress,
           channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
           price: priceVal.price,
-        },
+          accessMode,
+          allowlist: accessMode === 'allowlist' ? allowlist : undefined,
+          unlockAt: accessMode === 'timelock' ? unlockAt : undefined,
+        } as any,
         address,
         signAndSubmitTransaction,
         setUploadProgress
       );
+
+      // --- Move-flag: chain registration only for non-public modes ---
+      // Public videos don't need on-chain access policy registration.
+      // Non-public modes are handled inside uploadToShelby (before blob upload).
+      let chainTxHash: string | undefined;
+      if (isMoveBackend && accessMode !== 'public') {
+        // Non-public: chain tx was already submitted inside uploadToShelby
+        chainTxHash = (result as any)._chainTxHash;
+      }
 
       const isShort = videoType === 'short';
 
@@ -238,7 +269,9 @@ export default function UploadForm() {
         videoType,
         uploader: walletAddress,
         timestamp: Date.now(),
-        price: priceVal.price,
+        // Only persist a price for Purchasable; other modes store 0 so the
+        // DB never has stale price values from abandoned mode selections.
+        price: accessMode === 'purchasable' ? priceVal.price : 0,
         // Access mode selection wired from form state (Req 1.6). Non-applicable
         // fields are narrowed here so we never persist stale values from a
         // mode the creator abandoned before submit.
@@ -247,7 +280,25 @@ export default function UploadForm() {
         unlockAt: accessMode === 'timelock' ? unlockAt : undefined,
       };
 
-      await saveVideo(videoMetadata);
+      // Supabase write — if this fails after a successful chain commit,
+      // surface a targeted error and allow DB-only retry (Req 8.6).
+      try {
+        await saveVideo(videoMetadata);
+      } catch (dbErr) {
+        if (isMoveBackend && chainTxHash) {
+          // Chain commit succeeded but DB write failed (Req 8.6)
+          setPendingChainTxHash(chainTxHash);
+          setPendingVideoMetadata(videoMetadata);
+          const dbMsg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+          error(
+            `Chain registration succeeded (tx: ${chainTxHash.slice(0, 10)}...) but failed to save the videos row. ` +
+            `Error: ${dbMsg}. You can retry the database write without re-submitting the chain transaction.`
+          );
+          return;
+        }
+        throw dbErr;
+      }
+
       success('Video uploaded successfully!');
 
       setFile(null);
@@ -261,6 +312,8 @@ export default function UploadForm() {
       setAccessMode('public');
       setAllowlist([]);
       setUnlockAt(undefined);
+      setPendingChainTxHash(null);
+      setPendingVideoMetadata(null);
 
       setTimeout(() => {
         router.push(isShort ? '/shorts' : '/gallery');
@@ -268,6 +321,25 @@ export default function UploadForm() {
 
     } catch (err) {
       console.error('Upload failed:', err);
+
+      // Move-flag specific error handling (Req 8.5, 8.8)
+      if (err instanceof WalletSigningError) {
+        // Wallet rejection / adapter error / missing account (Req 8.8)
+        // No broadcast, no Supabase write, keep form state
+        error(`Signing failed (${err.category}): ${err.message}`);
+        return;
+      }
+
+      if (err instanceof ChainTransactionError) {
+        // Chain abort or commit timeout (Req 8.5)
+        const indicator = err.isTimeout ? 'timeout' : `abort code: ${err.abortCode}`;
+        error(
+          `Chain transaction failed [${err.entryFunction}]: ${indicator}. ` +
+          `No access fields were persisted. You can retry from the current form state.`
+        );
+        return;
+      }
+
       const errMsg = err instanceof Error ? err.message : 'Upload failed';
 
       // Insufficient ShelbyUSD — give the user a direct path to fix it
@@ -278,6 +350,40 @@ export default function UploadForm() {
       } else {
         error(errMsg);
       }
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Retry Supabase write only — for the post-commit DB failure case (Req 8.6)
+  const handleRetrySupabaseWrite = async () => {
+    if (!pendingVideoMetadata) return;
+    setIsUploading(true);
+    try {
+      await saveVideo(pendingVideoMetadata);
+      success('Video saved successfully!');
+      setPendingChainTxHash(null);
+      setPendingVideoMetadata(null);
+
+      setFile(null);
+      setTitle('');
+      setDescription('');
+      setCategory(VideoCategory.OTHER);
+      setTags([]);
+      setThumbnailPreview(null);
+      setVideoDuration(0);
+      setVideoType('long');
+      setAccessMode('public');
+      setAllowlist([]);
+      setUnlockAt(undefined);
+
+      const isShort = pendingVideoMetadata.videoType === 'short';
+      setTimeout(() => {
+        router.push(isShort ? '/shorts' : '/gallery');
+      }, 2000);
+    } catch (dbErr) {
+      const dbMsg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+      error(`Retry failed: ${dbMsg}. The chain registration (tx: ${pendingChainTxHash?.slice(0, 10)}...) is still valid.`);
     } finally {
       setIsUploading(false);
     }
@@ -561,6 +667,25 @@ export default function UploadForm() {
       {uploadProgress && (
         <div className="p-5 bg-zinc-900 rounded-2xl border border-zinc-800">
           <UploadProgressDisplay progress={uploadProgress} />
+        </div>
+      )}
+
+      {/* DB-only retry affordance (Req 8.6) */}
+      {pendingChainTxHash && pendingVideoMetadata && (
+        <div className="p-5 bg-yellow-900/20 rounded-2xl border border-yellow-700/50">
+          <p className="text-sm text-yellow-300 font-bold mb-2">⚠️ Chain registration succeeded but database write failed</p>
+          <p className="text-xs text-yellow-400/80 mb-3">
+            Transaction: {pendingChainTxHash.slice(0, 16)}... — The on-chain registration is already confirmed.
+            Click below to retry saving the video record to the database only.
+          </p>
+          <button
+            type="button"
+            onClick={handleRetrySupabaseWrite}
+            disabled={isUploading}
+            className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-black font-bold text-xs rounded-xl transition-colors disabled:opacity-50"
+          >
+            {isUploading ? 'Retrying...' : 'Retry Database Write'}
+          </button>
         </div>
       )}
 

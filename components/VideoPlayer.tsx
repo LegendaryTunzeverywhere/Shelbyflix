@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { VideoMetadata } from '../types';
 import {
+  ArrowPathIcon,
   ExclamationCircleIcon,
   FilmIcon,
   LockClosedIcon,
@@ -221,6 +222,38 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <p className="text-zinc-400 text-sm max-w-md mb-5 leading-relaxed">
           We couldn&apos;t check whether you can play this video. Check your
           connection and try again.
+        </p>
+        <button
+          onClick={() => refetchAccess()}
+          className="px-5 py-2 bg-brand-red text-white rounded-xl font-black text-xs tracking-widest hover:bg-brand-red/90 transition-colors"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
+  // ── 2b. Chain temporarily unreachable ──────────────────────────────────
+  // Distinct from the generic accessError branch above: the server
+  // responded successfully but reported that the chain node was
+  // unreachable when it tried to resolve the access policy. We show a
+  // retryable state with NO "expired" copy so a transient node outage
+  // doesn't look like a permanent content takedown (Req 7.3, 7.6).
+  if (access?.reason === 'chain_unavailable') {
+    return (
+      <div
+        role="alert"
+        aria-label="Chain unavailable"
+        className={`${BASE_CONTAINER} ${className}`}
+      >
+        <div className="w-16 h-16 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4">
+          <ArrowPathIcon className="w-8 h-8 text-zinc-400" />
+        </div>
+        <h3 className="text-white font-black text-base mb-2 tracking-tight">
+          Chain Temporarily Unreachable
+        </h3>
+        <p className="text-zinc-400 text-sm max-w-md mb-5 leading-relaxed">
+          We couldn&apos;t confirm this video&apos;s access policy. Try again in a moment.
         </p>
         <button
           onClick={() => refetchAccess()}

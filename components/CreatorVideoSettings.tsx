@@ -60,13 +60,11 @@ interface CreatorVideoSettingsProps {
   video: VideoMetadata;
   walletAddress: string;
   /**
-   * Passed through from the parent for future on-chain flows (e.g. a
-   * "rotate encryption key" action). Not used by the current save flow,
-   * which relies on `signMessage` from `useWallet()` — we still accept it
-   * as a prop so the parent can keep a single creator-surface API as more
-   * settings are added.
+   * Sign and submit a Move entry-function transaction via the Wallet Adapter.
+   * Used by the move-flag save flow to broadcast `chainTx` payloads returned
+   * by the PATCH endpoint (Req 9.1, 9.5).
    */
-  signAndSubmitTransaction: unknown;
+  signAndSubmitTransaction: (payload: any) => Promise<any>;
 }
 
 interface PurchaseRow {
@@ -107,9 +105,9 @@ function formatUnlockTime(epochMs: number): string {
 export default function CreatorVideoSettings({
   video,
   walletAddress,
-  signAndSubmitTransaction: _signAndSubmitTransaction,
+  signAndSubmitTransaction,
 }: CreatorVideoSettingsProps) {
-  const { signMessage } = useWallet();
+  const { signMessage, account: walletAccount } = useWallet();
   const { notifications, success, error, remove } = useNotification();
 
   // ── Defense-in-depth ownership check ──────────────────────────────────
@@ -282,7 +280,10 @@ export default function CreatorVideoSettings({
       // coerce through String() so both shapes flow through to the server
       // identically.
       const signatureHex = normalizeHex(signed?.signature);
-      const publicKeyHex = normalizeHex(signed?.publicKey);
+      // Fall back to account.publicKey when signMessage doesn't return it
+      // (Petra and some wallets omit publicKey from the signMessage response)
+      const publicKeyHex = normalizeHex(signed?.publicKey)
+        || normalizeHex((walletAccount as any)?.publicKey);
       const fullMessage: string | undefined =
         typeof signed?.fullMessage === 'string' ? signed.fullMessage : undefined;
 
@@ -315,7 +316,13 @@ export default function CreatorVideoSettings({
         `/api/videos/${encodeURIComponent(video.videoId)}/access-config`,
         {
           method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'x-csrf-token': document.cookie
+              .split('; ')
+              .find((c) => c.startsWith('csrf-token='))
+              ?.split('=')[1] ?? '',
+          },
           body: JSON.stringify(body),
         },
       );
@@ -325,6 +332,75 @@ export default function CreatorVideoSettings({
         throw new Error(
           errBody?.error || `Save failed with status ${saveRes.status}`,
         );
+      }
+
+      const saveData = await saveRes.json();
+
+      // 4. Under the move flag, the PATCH returns a `chainTx` payload that
+      //    the client must sign and submit. No DB mutation occurs under move
+      //    — the chain IS the source of truth (Req 9.1, 9.5).
+      if (saveData.chainTx) {
+        // Sign and submit the chain transaction via the wallet adapter.
+        let txHash: string;
+        try {
+          const response = await signAndSubmitTransaction({
+            data: saveData.chainTx,
+          });
+          txHash = response.hash;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Categorize signing failure for user-friendly messaging
+          if (
+            msg.toLowerCase().includes('user rejected') ||
+            msg.toLowerCase().includes('user denied') ||
+            msg.toLowerCase().includes('rejected by user') ||
+            msg.toLowerCase().includes('cancelled')
+          ) {
+            throw new Error('Transaction cancelled — your access settings were not changed.');
+          }
+          if (msg.toLowerCase().includes('account')) {
+            throw new Error(`Wallet error: ${msg}`);
+          }
+          throw new Error(`Wallet signing failed: ${msg}`);
+        }
+
+        // Wait for transaction confirmation with a 60-second timeout.
+        const { getAptosClient } = await import('@/lib/aptos-client');
+        const aptos = getAptosClient();
+
+        let txResult: any;
+        try {
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Transaction commit timeout (60s)')), 60_000)
+          );
+          const waitPromise = aptos.waitForTransaction({
+            transactionHash: txHash,
+            options: { checkSuccess: false },
+          });
+          txResult = await Promise.race([waitPromise, timeoutPromise]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`Transaction failed to confirm: ${msg}`);
+        }
+
+        // Check on-chain result — abort means the policy was NOT updated.
+        if (txResult.success === false) {
+          const vmStatus: string = txResult.vm_status ?? '';
+          throw new Error(
+            `Transaction aborted on-chain: ${vmStatus || 'Unknown VM error'}`
+          );
+        }
+
+        // Emit logChainWriteSuccess on confirmed commit (Req 14.2).
+        const { logChainWriteSuccess } = await import('@/lib/move-logging');
+        const entryFn = saveData.chainTx.function?.includes('update_allowlist')
+          ? 'update_allowlist'
+          : 'force_update_policy_v2';
+        logChainWriteSuccess(entryFn as any, {
+          videoId: video.videoId,
+          txHash,
+          version: txResult.version ?? 0,
+        });
       }
 
       success('Access settings saved');

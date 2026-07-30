@@ -59,6 +59,11 @@ export type AccessMode = 'public' | 'allowlist' | 'timelock' | 'purchasable';
  * Why access was granted or denied. Returned by the access-resolution
  * endpoint so the UI can render the correct gate state without re-deriving
  * the decision client-side.
+ *
+ * `chain_unavailable` is a retryable, distinct-from-`expired` state surfaced
+ * when a chain read fails (node timeout, BCS deserialization error, or an
+ * unexpected view-response shape) under the Move-backed access backend.
+ * See `.kiro/specs/move-contract-permissions/` (Req 7.1, 7.2).
  */
 export type AccessReason =
   | 'public'
@@ -68,7 +73,8 @@ export type AccessReason =
   | 'time_locked'
   | 'not_on_allowlist'
   | 'payment_required'
-  | 'expired';
+  | 'expired'
+  | 'chain_unavailable';
 
 /**
  * Resolved access for a single (video, wallet) pair. Produced by

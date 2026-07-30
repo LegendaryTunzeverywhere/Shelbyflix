@@ -54,6 +54,16 @@ export async function GET(
 
     const result = await resolveAccess(id, wallet);
 
+    // Req 7.4, 7.5: When the chain is temporarily unreachable, respond with
+    // HTTP 503 and a minimal two-key body. No Module_Address, stack trace,
+    // abort code, or any other internal detail is exposed to the client.
+    if (result.reason === 'chain_unavailable') {
+      return NextResponse.json(
+        { hasAccess: false, reason: 'chain_unavailable' },
+        { status: 503 },
+      );
+    }
+
     // AccessResult is already the exact response shape required by Req 7.1.
     // No mapping or field stripping is needed — the type was designed so
     // that every field is safe to expose to unauthenticated callers.

@@ -34,7 +34,9 @@
  * 5.7, 7.2, 7.4, 11.1, 11.3
  */
 
+import { AccountAddress } from '@aptos-labs/ts-sdk';
 import { supabase } from './supabase';
+import { moveContractBackend, ChainUnavailableError } from './move-contract-backend';
 import type {
   AccessConfig,
   AccessMode,
@@ -47,20 +49,71 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Canonical lowercase form used for every wallet comparison in this module
+ * Canonical on-chain form used for every wallet comparison in this module
  * (owner check, allowlist membership, purchase lookup) and by callers that
  * want to match this module's behavior exactly. Routing all normalization
- * through a single helper means a future tweak — e.g. stripping a `0x`
- * prefix or zero-padding to 32 bytes when Shelby-native permissions ship —
- * is a one-line change (Req 3.1, 3.2).
+ * through a single helper means the Move-contract backend, the Supabase
+ * backend, and the resolver all agree byte-for-byte on what "same address"
+ * means (move-contract-permissions Req 2.1, 2.2, 2.3 — supersedes the
+ * earlier lowercase-only contract from Req 3.1 / 3.2 of the
+ * video-access-payments spec).
  *
- * Returns the empty string for `null` / `undefined` / whitespace-only input
- * so callers can treat "no wallet" uniformly: `normalizeAddress(x).length`
- * is the canonical "is this an anonymous caller?" check.
+ * Returns the empty string for `null`, `undefined`, whitespace-only, or
+ * unparseable input so callers can treat "no wallet" uniformly:
+ * `normalizeAddress(x).length === 0` is the canonical "is this an
+ * anonymous caller?" check and doubles as the reject-on-parse-failure
+ * sentinel. This function NEVER propagates an exception — a malformed
+ * address becomes the empty sentinel plus a single `console.warn`
+ * identifying the rejected input length (not the value — PII/wallet data
+ * is intentionally kept out of logs) and the source field that produced
+ * it (move-contract-permissions Req 2.3).
+ *
+ * On success, the returned string is a Canonical_Address: a `0x`-prefixed,
+ * zero-padded, exactly 64-lowercase-hex-character representation of the
+ * address (total length 66), produced by
+ * `AccountAddress.from(trimmed).toStringLong()`. Short-form addresses
+ * (`0x1`, `0xabc`, etc.) are accepted on input and expanded to 66-char
+ * form on output — this is safe for every existing call site because all
+ * comparisons inside this file re-normalize both sides through this
+ * helper before comparing, so the widened output form never silently
+ * mismatches a wallet stored in the legacy lowercase form.
+ *
+ * @param addr         Raw address input (wallet connect, DB column, etc.).
+ * @param sourceField  Optional label for the warn log emitted on parse
+ *                     failure. Prefer a stable short identifier like
+ *                     `'videos.uploader_wallet'`, `'allowlist[i]'`, or
+ *                     `'request.walletAddress'` so operators can grep
+ *                     across a noisy log feed. Defaults to
+ *                     `'unspecified'` when the caller can't usefully
+ *                     name the field.
  */
-export function normalizeAddress(addr: string | null | undefined): string {
-  if (!addr) return '';
-  return addr.trim().toLowerCase();
+export function normalizeAddress(
+  addr: string | null | undefined,
+  sourceField: string = 'unspecified',
+): string {
+  if (addr === null || addr === undefined) return '';
+  const trimmed = typeof addr === 'string' ? addr.trim() : '';
+  if (trimmed.length === 0) return '';
+
+  try {
+    return AccountAddress.from(trimmed).toStringLong();
+  } catch {
+    // Req 2.3: swallow the exception, return the empty sentinel, and
+    // emit exactly one warn identifying the rejected input length and
+    // the source field. We deliberately do NOT log the offending value
+    // itself — wallet addresses are PII-adjacent, and a malformed input
+    // is just as likely to be a leaked secret, signed-nonce fragment,
+    // or other sensitive material as it is to be a genuine typo.
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'normalize_address_rejected',
+        sourceField,
+        inputLength: trimmed.length,
+      }),
+    );
+    return '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,10 +186,10 @@ export const supabaseBackend: AccessBackend = {
     // (Req 3.1, 3.2).
     return {
       videoId: data.video_id,
-      ownerWallet: normalizeAddress(data.uploader_wallet),
+      ownerWallet: normalizeAddress(data.uploader_wallet, 'videos.uploader_wallet'),
       accessMode: data.access_mode as AccessMode,
       allowlist: (data.allowlist ?? [])
-        .map((a: string) => normalizeAddress(a))
+        .map((a: string) => normalizeAddress(a, 'videos.allowlist[]'))
         .filter((a: string) => a.length > 0),
       unlockAt: data.unlock_at ?? undefined,
       priceBaseUnits: data.price ?? undefined,
@@ -148,7 +201,7 @@ export const supabaseBackend: AccessBackend = {
     // Guard empty/null wallets explicitly — saves a DB round-trip and
     // ensures `resolveAccess` can treat anonymous callers the same way
     // as "no receipt found" for Purchasable videos.
-    const normalized = normalizeAddress(wallet);
+    const normalized = normalizeAddress(wallet, 'hasPurchased.wallet');
     if (!normalized) return false;
     if (!/^[\w-]+$/.test(videoId)) return false;
 
@@ -163,6 +216,56 @@ export const supabaseBackend: AccessBackend = {
     return data !== null;
   },
 };
+
+// ---------------------------------------------------------------------------
+// Default backend selection
+// ---------------------------------------------------------------------------
+
+/**
+ * Module-level flag to ensure we emit at most one warning per process
+ * lifetime for an invalid (non-empty, non-'supabase', non-'move') value
+ * of `NEXT_PUBLIC_ACCESS_BACKEND` (Req 15.4).
+ */
+let _invalidBackendFlagWarned = false;
+
+/**
+ * Select the active `AccessBackend` based on the `NEXT_PUBLIC_ACCESS_BACKEND`
+ * environment variable. Called per invocation of `resolveAccess` so that a
+ * flag change in dev takes effect on the next call without a process restart
+ * (Req 15.2).
+ *
+ * - Exactly `'move'` (byte-for-byte, case-sensitive) → `moveContractBackend`
+ * - `undefined`, empty string, or exactly `'supabase'` → `supabaseBackend`
+ * - Any other non-empty value → `supabaseBackend` with a single warn per
+ *   process lifetime naming the invalid value (truncated to 64 chars)
+ *
+ * The static import of `moveContractBackend` is safe because that module is
+ * a lazy singleton — no Aptos client or env reads happen at import time
+ * (Req 18.2).
+ *
+ * Requirements covered: 15.1, 15.3, 15.4
+ */
+export function getDefaultBackend(): AccessBackend {
+  const raw = process.env.NEXT_PUBLIC_ACCESS_BACKEND;
+  if (raw === 'move') return moveContractBackend;
+  if (raw === undefined || raw === '' || raw === 'supabase') {
+    return supabaseBackend;
+  }
+  // Invalid non-empty value — warn once per process lifetime.
+  if (!_invalidBackendFlagWarned) {
+    _invalidBackendFlagWarned = true;
+    const truncated = raw.length > 64 ? raw.slice(0, 64) : raw;
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'invalid_access_backend_flag',
+        value: truncated,
+        message: `NEXT_PUBLIC_ACCESS_BACKEND has unrecognized value "${truncated}"; defaulting to supabase`,
+      }),
+    );
+  }
+  return supabaseBackend;
+}
 
 // ---------------------------------------------------------------------------
 // Pure resolution
@@ -189,13 +292,42 @@ export const supabaseBackend: AccessBackend = {
 export async function resolveAccess(
   videoId: string,
   wallet: string | null,
-  backend: AccessBackend = supabaseBackend,
+  backend: AccessBackend = getDefaultBackend(),
 ): Promise<AccessResult> {
-  const config = await backend.getConfig(videoId);
+  // Req 6.4: Wrap backend.getConfig in try/catch — ChainUnavailableError
+  // surfaces as a distinct `chain_unavailable` reason so the UI can render
+  // a retryable state rather than the terminal "expired" state. Other
+  // errors propagate unchanged.
+  let config: AccessConfig | null;
+  try {
+    config = await backend.getConfig(videoId);
+  } catch (e) {
+    if (e instanceof ChainUnavailableError) {
+      return {
+        hasAccess: false,
+        reason: 'chain_unavailable',
+        accessMode: 'public',
+        ownerIsViewer: false,
+      };
+    }
+    throw e;
+  }
 
-  // No such video — surface as `expired` so the VideoPlayer renders its
-  // terminal "this video is gone" state rather than a more hopeful gate.
-  // The endpoint layer (task 3.3) can map this to 404 if desired.
+  // No such video — under the move backend, a null config means the blob
+  // is not registered on the access_control module. This happens for videos
+  // uploaded before the move flag was enabled. Fall back to the supabase
+  // backend so pre-cutover videos remain accessible during the transition.
+  if (!config) {
+    if (backend !== supabaseBackend) {
+      // Try supabase as a fallback for unregistered blobs
+      const fallbackConfig = await supabaseBackend.getConfig(videoId);
+      if (fallbackConfig) {
+        config = fallbackConfig;
+      }
+    }
+  }
+
+  // Still null after fallback — surface as `expired`
   if (!config) {
     return {
       hasAccess: false,
@@ -346,9 +478,26 @@ export async function resolveAccess(
       // straight to `payment_required` without a DB round-trip (Req 7.2).
       // Signed-in callers without a receipt land in the same denial state;
       // callers with a receipt get `purchased`.
-      const purchased =
-        normalizedWallet.length > 0 &&
-        (await backend.hasPurchased(videoId, normalizedWallet));
+      //
+      // Req 6.5: Wrap backend.hasPurchased in try/catch — ChainUnavailableError
+      // surfaces as `chain_unavailable` with `accessMode: 'purchasable'` so
+      // the UI knows the video's mode while rendering the retryable state.
+      let purchased: boolean;
+      try {
+        purchased =
+          normalizedWallet.length > 0 &&
+          (await backend.hasPurchased(videoId, normalizedWallet));
+      } catch (e) {
+        if (e instanceof ChainUnavailableError) {
+          return {
+            hasAccess: false,
+            reason: 'chain_unavailable',
+            accessMode: 'purchasable',
+            ownerIsViewer: false,
+          };
+        }
+        throw e;
+      }
       if (purchased) {
         return {
           hasAccess: true,

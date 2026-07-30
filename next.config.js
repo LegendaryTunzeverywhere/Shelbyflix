@@ -56,16 +56,24 @@ const nextConfig = {
       tls: false,
     };
 
-    // Alias optional/Node-only deps that leak into the client bundle from
-    // the Aptos wallet adapter ecosystem. These are never actually called
-    // in the browser — they're behind conditional imports or unused code paths.
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      // @aptos-labs/aptos-client ships a Node transport that imports 'got'
-      got: false,
-      // @aptos-connect/web-transport optionally imports Telegram bridge
-      '@telegram-apps/bridge': false,
-    };
+    // Alias optional/Node-only deps.
+    // On the CLIENT: stub `got` and `@telegram-apps/bridge` since they're
+    // Node-only and never called in the browser.
+    // On the SERVER: let `got` (v11 installed) work normally so the Aptos
+    // SDK's Node HTTP transport functions correctly. Only stub the
+    // Telegram bridge which is unused.
+    if (!isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        got: false,
+        '@telegram-apps/bridge': false,
+      };
+    } else {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        '@telegram-apps/bridge': false,
+      };
+    }
 
     return config;
   },
