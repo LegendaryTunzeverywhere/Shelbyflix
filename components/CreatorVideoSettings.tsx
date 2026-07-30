@@ -312,17 +312,11 @@ export default function CreatorVideoSettings({
       if (accessMode === 'timelock') body.unlockAt = unlockAt;
       if (accessMode === 'purchasable') body.price = priceBaseUnits;
 
-      const saveRes = await fetch(
+      const { csrfFetch } = await import('@/lib/csrf-client');
+      const saveRes = await csrfFetch(
         `/api/videos/${encodeURIComponent(video.videoId)}/access-config`,
         {
           method: 'PATCH',
-          headers: {
-            'content-type': 'application/json',
-            'x-csrf-token': document.cookie
-              .split('; ')
-              .find((c) => c.startsWith('csrf-token='))
-              ?.split('=')[1] ?? '',
-          },
           body: JSON.stringify(body),
         },
       );

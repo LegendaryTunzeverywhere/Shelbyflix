@@ -1,7 +1,28 @@
 {
   "name": "shelbyflix",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "license": "MIT",
+  "description": "A decentralized video sharing platform powered by Shelby Storage Network and Aptos blockchain",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Legendarytunzeverywhere/shelbyflix.git"
+  },
+  "keywords": [
+    "web3",
+    "blockchain",
+    "aptos",
+    "video-sharing",
+    "decentralized",
+    "shelby-storage",
+    "nextjs",
+    "react"
+  ],
+  "author": "ShelbyFlix Contributors",
+  "bugs": {
+    "url": "https://github.com/Legendarytunzeverywhere/shelbyflix/issues"
+  },
+  "homepage": "https://github.com/Legendarytunzeverywhere/shelbyflix#readme",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

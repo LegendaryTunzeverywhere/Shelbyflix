@@ -1,10 +1,10 @@
 import { supabase, type VideoRecord } from './supabase';
 import type { VideoMetadata } from '@/types';
+import { csrfFetch } from './csrf-client';
 
 export async function saveVideo(metadata: VideoMetadata): Promise<void> {
-  const response = await fetch('/api/videos', {
+  const response = await csrfFetch('/api/videos', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       video_id: metadata.videoId,
       blob_id: metadata.blobId,

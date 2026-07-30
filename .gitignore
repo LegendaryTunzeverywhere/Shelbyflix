@@ -56,10 +56,16 @@ scripts/backfill-payloads/
 # OS
 Thumbs.db
 
-#exe
+# Executables
 *.exe
-.aptos
+
+# Aptos config (contains private keys)
+.aptos/
+
+# User-specific Kiro config
+.kiro/
 
 /tests
 /supabase
 /scripts
+DEPLOYMENT_CHECKLIST.md

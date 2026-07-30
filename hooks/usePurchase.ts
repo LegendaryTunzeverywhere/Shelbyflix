@@ -167,6 +167,8 @@ function formatAbortError(err: unknown, entryFn: string): string {
 // Supabase-path helpers (unchanged)
 // ---------------------------------------------------------------------------
 
+import { csrfFetch } from '@/lib/csrf-client';
+
 async function callVerifyOnce(body: {
   videoId: string;
   txHash: string;
@@ -178,9 +180,8 @@ async function callVerifyOnce(body: {
 > {
   let res: Response;
   try {
-    res = await fetch('/api/payments/verify', {
+    res = await csrfFetch('/api/payments/verify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
   } catch (err) {
