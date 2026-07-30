@@ -90,7 +90,6 @@ const REQUIRED_ENV_VARS: EnvVarSpec[] = [
   { name: 'SUPABASE_SERVICE_ROLE_KEY', required: true, format: 'secret' },
   { name: 'NEXT_PUBLIC_SHELBYNET_NODE_URL', required: true, format: 'url' },
   { name: 'NEXT_PUBLIC_SHELBYNET_INDEXER_URL', required: true, format: 'url' },
-  { name: 'SHELBY_API_KEY', required: true, format: 'secret' },
   { name: 'CRON_SECRET', required: true, format: 'secret', minLength: 32 },
   { name: 'NEXT_PUBLIC_GOOGLE_CLIENT_ID', required: true, format: 'string' },
 ];
@@ -121,6 +120,15 @@ export function validateEnvironment(mode: 'production' | 'development'): void {
   checkEnvExampleHasKeys();
 
   const errors: string[] = [];
+
+  const hasShelbyApiKey = Boolean(
+    process.env.SHELBY_API_KEY?.trim() || process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim()
+  );
+  if (!hasShelbyApiKey) {
+    errors.push(
+      'Missing required environment variable: SHELBY_API_KEY or NEXT_PUBLIC_SHELBY_API_KEY'
+    );
+  }
 
   for (const spec of REQUIRED_ENV_VARS) {
     const value = process.env[spec.name];

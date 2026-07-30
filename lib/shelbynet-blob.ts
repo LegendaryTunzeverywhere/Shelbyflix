@@ -9,6 +9,15 @@ import {
 import { Aptos, AptosConfig, Network, AccountAddress } from '@aptos-labs/ts-sdk';
 
 export function getShelbyApiKey(): string {
+  const isBrowser = typeof window !== 'undefined';
+
+  if (isBrowser) {
+    const publicKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
+    if (publicKey) {
+      return publicKey;
+    }
+  }
+
   const serverKey = process.env.SHELBY_API_KEY?.trim();
   if (serverKey) {
     return serverKey;
@@ -16,14 +25,11 @@ export function getShelbyApiKey(): string {
 
   const legacyKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
   if (legacyKey) {
-    console.warn(
-      '[shelbynet-blob] NEXT_PUBLIC_SHELBY_API_KEY is deprecated; use SHELBY_API_KEY instead.'
-    );
     return legacyKey;
   }
 
   throw new Error(
-    'Missing Shelby API key. Set SHELBY_API_KEY in your server environment before uploading blobs.'
+    'Missing Shelby API key. Set SHELBY_API_KEY for server-side use, or NEXT_PUBLIC_SHELBY_API_KEY for browser-based uploads such as the website upload flow.'
   );
 }
 
