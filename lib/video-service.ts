@@ -2,39 +2,44 @@ import { supabase, type VideoRecord } from './supabase';
 import type { VideoMetadata } from '@/types';
 
 export async function saveVideo(metadata: VideoMetadata): Promise<void> {
-  const { error } = await supabase.from('videos').insert({
-    video_id: metadata.videoId,
-    blob_id: metadata.blobId,
-    blob_name: metadata.blobName,
-    uploader_wallet: metadata.uploader.toLowerCase(),
-    channel_id: metadata.channelId,
-    channel_name: metadata.channelName,
-    title: metadata.title,
-    description: metadata.description,
-    category: metadata.category,
-    tags: metadata.tags,
-    shelby_url: metadata.shelbyUrl,
-    encryption_key: metadata.encryptionKey,
-    thumbnail_url: metadata.thumbnailUrl,
-    duration: metadata.duration,
-    is_short: metadata.isShort,
-    video_type: metadata.videoType ?? 'long',   // ← persist explicit type
-    upload_timestamp: metadata.uploadTimestamp,
-    expiration_timestamp: metadata.expirationTimestamp,
-    availability_period: metadata.availabilityPeriod,
-    views: 0,
-    likes: 0,
-    dislikes: 0,
-    comment_count: 0,
-    price: metadata.price || 0,
-    // Access control — persist the creator's selection atomically with the
-    // rest of the row (Req 1.6). Legacy callers that omit these fields fall
-    // back to the Public baseline so behavior matches Req 2.3.
-    access_mode: metadata.accessMode ?? 'public',
-    allowlist: (metadata.allowlist ?? []).map((a) => a.toLowerCase()),
-    unlock_at: metadata.unlockAt ?? null,
+  const response = await fetch('/api/videos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      video_id: metadata.videoId,
+      blob_id: metadata.blobId,
+      blob_name: metadata.blobName,
+      uploader_wallet: metadata.uploader.toLowerCase(),
+      channel_id: metadata.channelId,
+      channel_name: metadata.channelName,
+      title: metadata.title,
+      description: metadata.description,
+      category: metadata.category,
+      tags: metadata.tags,
+      shelby_url: metadata.shelbyUrl,
+      encryption_key: metadata.encryptionKey,
+      thumbnail_url: metadata.thumbnailUrl,
+      duration: metadata.duration,
+      is_short: metadata.isShort,
+      video_type: metadata.videoType ?? 'long',
+      upload_timestamp: metadata.uploadTimestamp,
+      expiration_timestamp: metadata.expirationTimestamp,
+      availability_period: metadata.availabilityPeriod,
+      views: 0,
+      likes: 0,
+      dislikes: 0,
+      comment_count: 0,
+      price: metadata.price || 0,
+      access_mode: metadata.accessMode ?? 'public',
+      allowlist: (metadata.allowlist ?? []).map((a) => a.toLowerCase()),
+      unlock_at: metadata.unlockAt ?? null,
+    }),
   });
-  if (error) throw error;
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to save video metadata');
+  }
 }
 
 export async function getAllVideos(): Promise<VideoMetadata[]> {
