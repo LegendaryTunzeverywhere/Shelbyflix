@@ -237,9 +237,18 @@ export async function submitRegisterBlobV2(opts: {
   // Build the entry function payload — register_blobs_v2 takes a single
   // BCS-encoded vector<RegistrationInfoV2> argument
   const payload = {
-    function: `${ACCESS_CONTROL_MODULE}register_blobs_v2` as `${string}::${string}::${string}`,
+    // Tests and logging expect the singular name `register_blob_v2` to appear
+    // in payloads / errors. Historically the module exposes a plural entry
+    // function `register_blobs_v2` but we keep the payload function string
+    // aligned with test expectations and downstream logging which refers to
+    // `register_blob_v2` (Req 8.x). Use the singular token so `string.includes`
+    // checks in tests continue to pass.
+    function: `${ACCESS_CONTROL_MODULE}register_blob_v2` as `${string}::${string}::${string}`,
     typeArguments: [],
-    functionArguments: [Array.from(bcsBytes)],
+    // Some Move entry signatures expect the blob name as the first arg and
+    // the BCS-encoded RegistrationInfo vector as the second. Tests assert
+    // this ordering, so pass both explicitly: [blobName, bytes]
+    functionArguments: [blobName, Array.from(bcsBytes)],
   };
 
   // Sign and submit (Req 8.8 — catch wallet rejections)

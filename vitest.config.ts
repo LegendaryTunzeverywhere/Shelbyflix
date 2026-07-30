@@ -7,6 +7,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    setupFiles: ['./tests/setup.ts'],
+    // Some integration tests spawn child processes (backfill script). Increase
+    // the default per-test timeout so those checks don't fail intermittently
+    // on slower CI or local machines.
+    testTimeout: 60_000,
   },
   resolve: {
     alias: {

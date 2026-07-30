@@ -35,60 +35,20 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.GET = void 0;
-var server_1 = require("next/server");
-var supabase_1 = require("@/lib/supabase");
-var VIDEO_ID_REGEX = /^[\w-]+$/;
-function GET(request, _a) {
-    var params = _a.params;
-    return __awaiter(this, void 0, void 0, function () {
-        var videoId, _b, data, error, thumbnailUrl, match, contentType, base64Data, buffer, origin, resolvedUrl;
-        return __generator(this, function (_c) {
-            switch (_c.label) {
-                case 0:
-                    videoId = params.id;
-                    if (!videoId || !VIDEO_ID_REGEX.test(videoId)) {
-                        return [2 /*return*/, server_1.NextResponse.json({ error: 'Invalid video id' }, { status: 400 })];
-                    }
-                    return [4 /*yield*/, supabase_1.supabase
-                            .from('videos')
-                            .select('thumbnail_url')
-                            .eq('video_id', videoId)
-                            .single()];
-                case 1:
-                    _b = _c.sent(), data = _b.data, error = _b.error;
-                    if (error || !data) {
-                        return [2 /*return*/, server_1.NextResponse.json({ error: 'Thumbnail not found' }, { status: 404 })];
-                    }
-                    thumbnailUrl = data.thumbnail_url;
-                    if (!thumbnailUrl) {
-                        return [2 /*return*/, server_1.NextResponse.json({ error: 'Thumbnail not available' }, { status: 404 })];
-                    }
-                    if (thumbnailUrl.startsWith('data:')) {
-                        match = thumbnailUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
-                        if (!match) {
-                            return [2 /*return*/, server_1.NextResponse.json({ error: 'Unsupported thumbnail format' }, { status: 400 })];
-                        }
-                        contentType = match[1];
-                        base64Data = match[2];
-                        buffer = Buffer.from(base64Data, 'base64');
-                        return [2 /*return*/, new server_1.NextResponse(buffer, {
-                                status: 200,
-                                headers: {
-                                    'Content-Type': contentType,
-                                    'Cache-Control': 'public, max-age=3600',
-                                },
-                            })];
-                    }
-                    if (/^https?:\/\//i.test(thumbnailUrl)) {
-                        return [2 /*return*/, server_1.NextResponse.redirect(thumbnailUrl)];
-                    }
-                    origin = request.nextUrl.origin;
-                    resolvedUrl = new URL(thumbnailUrl, origin).toString();
-                    return [2 /*return*/, server_1.NextResponse.redirect(resolvedUrl)];
-            }
-        });
-    });
+import { NextResponse } from 'next/server';
+
+// Lightweight compatibility shim: prefer the TypeScript route handler if
+// present, otherwise fall back to a 410 so callers know the route isn't
+// supported from this compiled artifact.
+export async function GET(request, context) {
+  try {
+    const mod = await import('./route');
+    if (mod && typeof mod.GET === 'function') {
+      return mod.GET(request, context);
+    }
+  } catch (e) {
+    // ignore and fall through to the default response
+  }
+
+  return NextResponse.json({ error: 'not_supported' }, { status: 410 });
 }
-exports.GET = GET;

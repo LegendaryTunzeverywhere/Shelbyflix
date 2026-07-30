@@ -6,7 +6,7 @@ import {
   ShelbyClient,
   expectedTotalChunksets,
 } from '@shelby-protocol/sdk/browser';
-import { Aptos, AptosConfig, Network, AccountAddress } from '@aptos-labs/ts-sdk';
+import { Aptos, AptosConfig, Network, AccountAddress, type InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 
 export function getShelbyApiKey(): string {
   const isBrowser = typeof window !== 'undefined';
@@ -60,7 +60,7 @@ export { ShelbyBlobClient };
  * if the Move VM aborts (e.g. E_INSUFFICIENT_FUNDS).
  */
 export async function registerBlob(
-  signAndSubmitTransaction: any,
+  signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
   blobName: string,
   commitments: BlobCommitments,
   uploaderAddress: AccountAddress,
@@ -72,7 +72,7 @@ export async function registerBlob(
   const attemptRegistration = async (contractAddress?: string): Promise<{ hash: string; blobId: string }> => {
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
 
-    const payloadParams: any = {
+    const payloadParams = {
       account: uploaderAddress,
       blobName,
       blobMerkleRoot: commitments.blob_merkle_root,
@@ -80,23 +80,32 @@ export async function registerBlob(
       numChunksets: expectedTotalChunksets(commitments.raw_data_size),
       expirationMicros,
       blobSize: commitments.raw_data_size,
-    };
+    } as Parameters<typeof ShelbyBlobClient.createRegisterBlobPayload>[0];
 
+    let typedPayload = payloadParams;
     if (contractAddress) {
-      payloadParams.blobContractAddress = contractAddress;
+      // The SDK expects an AccountAddress for the deployer field; translate
+      // the string env var into the AccountAddress instance used by the SDK.
+      typedPayload = {
+        ...payloadParams,
+        deployer: AccountAddress.fromString(contractAddress),
+      } as Parameters<typeof ShelbyBlobClient.createRegisterBlobPayload>[0];
     }
 
-    const payload = ShelbyBlobClient.createRegisterBlobPayload(payloadParams);
+    const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
 
     // Submit the transaction
     const response = await signAndSubmitTransaction({ data: payload });
-    const txHash = response.hash;
+    const txHash: unknown = (response as { hash?: unknown })?.hash;
+    if (typeof txHash !== 'string' || txHash.length === 0) {
+      throw new Error('Wallet returned no transaction hash for registerBlob');
+    }
 
     // ── CRITICAL: Wait for the transaction to be confirmed on-chain ──────────
     // Without this, a Move abort (e.g. E_INSUFFICIENT_FUNDS) is invisible —
     // we'd get a hash back and immediately try to upload, which fails because
     // the blob was never registered.
-    let txResult: any;
+    let txResult: { success?: boolean; vm_status?: string } | unknown;
     try {
       txResult = await shelbynetAptos.waitForTransaction({
         transactionHash: txHash,
@@ -110,8 +119,9 @@ export async function registerBlob(
     }
 
     // Check the on-chain result — a Move abort still produces a tx entry with success=false
-    if (txResult.success === false) {
-      const vmStatus: string = txResult.vm_status ?? '';
+    const txRes = txResult as { success?: boolean; vm_status?: string };
+    if (txRes.success === false) {
+      const vmStatus: string = txRes.vm_status ?? '';
 
       // Parse the human-readable abort reason from the VM status string
       if (vmStatus.includes('E_INSUFFICIENT_FUNDS') || vmStatus.includes('0x2')) {

@@ -1,4 +1,5 @@
 import { supabase, type VideoRecord } from './supabase';
+import { VideoCategory } from '@/types';
 import type { VideoMetadata } from '@/types';
 import { csrfFetch } from './csrf-client';
 
@@ -166,6 +167,19 @@ export async function incrementViews(videoId: string, walletAddress?: string): P
 }
 
 function recordToMetadata(record: VideoRecord): VideoMetadata {
+  // Normalize category: DB may contain arbitrary strings; map to enum or default to OTHER
+  const rawCategory = record.category as unknown;
+  let category: VideoCategory;
+  if (typeof rawCategory === 'string' && Object.values(VideoCategory).includes(rawCategory as VideoCategory)) {
+    category = rawCategory as VideoCategory;
+  } else {
+    category = VideoCategory.OTHER;
+  }
+
+  // Normalize videoType to the union 'short' | 'long'
+  const rawVideoType = (record.video_type as unknown) as string | undefined;
+  const videoType = rawVideoType === 'short' ? 'short' : 'long';
+
   return {
     videoId: record.video_id,
     blobId: record.blob_id,
@@ -174,7 +188,7 @@ function recordToMetadata(record: VideoRecord): VideoMetadata {
     channelName: record.channel_name,
     title: record.title,
     description: record.description ?? '',
-    category: record.category as any,
+    category,
     tags: record.tags,
     shelbyUrl: record.shelby_url,
     encryptionKey: record.encryption_key,
@@ -188,7 +202,7 @@ function recordToMetadata(record: VideoRecord): VideoMetadata {
     dislikes: record.dislikes,
     commentCount: record.comment_count,
     isShort: record.is_short,
-    videoType: (record as any).video_type ?? 'long',
+    videoType,
     uploader: record.uploader_wallet,
     timestamp: record.upload_timestamp,
     price: record.price,

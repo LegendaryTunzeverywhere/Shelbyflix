@@ -39,6 +39,8 @@ export interface VideoRecord {
   thumbnail_url?: string;
   duration: number;
   is_short: boolean;
+  // Optional: stores 'short' | 'long' string in newer rows
+  video_type?: 'short' | 'long';
   upload_timestamp: number;
   expiration_timestamp: number;
   availability_period: number;

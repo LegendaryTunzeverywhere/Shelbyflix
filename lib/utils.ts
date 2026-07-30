@@ -5,7 +5,7 @@ import {
   getBlobStreamUrl,
   computeBlobCommitments,
 } from './shelbynet-blob';
-import { AccountAddress } from '@aptos-labs/ts-sdk';
+import { AccountAddress, type InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 import {
   encryptFile,
   decryptBlob,
@@ -38,7 +38,7 @@ export async function uploadToShelby(
   file: File,
   metadata: Partial<VideoMetadata>,
   uploaderAccount: AccountAddress | { toString: () => string },
-  signAndSubmitTransaction: any,
+  signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<ShelbyUploadResponse> {
   try {
@@ -92,7 +92,7 @@ export async function uploadToShelby(
       message: 'Registering on Shelbynet... (approve wallet)',
     });
 
-    const { hash: registerHash, blobId } = await registerBlob(
+    const { hash: _registerHash, blobId } = await registerBlob(
       signAndSubmitTransaction,
       blobName,
       commitments,
@@ -218,7 +218,7 @@ export async function deleteFromShelby(
   videoId: string,
   shelbyUrl: string,
   blobName: string,
-  signAndSubmitTransaction: any
+  _signAndSubmitTransaction?: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>
 ): Promise<boolean> {
   try {
     const cacheKey = `video_${blobName}`;
