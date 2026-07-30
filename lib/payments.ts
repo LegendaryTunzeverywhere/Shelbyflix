@@ -250,16 +250,15 @@ export function buildPurchaseTransaction(
   // `sender` is injected from the signer when the wallet submits, so
   // functionArguments carries only [metadata, recipient, amount].
   //
-  // We follow the same pattern `registerShelbyUSD` uses in lib/aptos.ts:
-  // typeArguments is left empty and the metadata object is passed as the
-  // first function argument. The wallet adapter + ts-sdk resolve the
-  // generic from the runtime metadata object.
+  // This entry function also requires an explicit type argument for the
+  // token resource. Wallet adapters such as Petra reject the payload when
+  // the generic is omitted, so we provide the token type explicitly here.
   const TRANSFER_FN =
     '0x1::primary_fungible_store::transfer' as `${string}::${string}::${string}`;
 
   const creatorTransfer: InputGenerateTransactionPayloadData = {
     function:          TRANSFER_FN,
-    typeArguments:     [],
+    typeArguments:     [SHELBYUSD_TOKEN],
     functionArguments: [SHELBYUSD_TOKEN, creatorWallet, creator.toString()],
   };
 
@@ -273,7 +272,7 @@ export function buildPurchaseTransaction(
 
   const platformTransfer: InputGenerateTransactionPayloadData = {
     function:          TRANSFER_FN,
-    typeArguments:     [],
+    typeArguments:     [SHELBYUSD_TOKEN],
     functionArguments: [SHELBYUSD_TOKEN, PLATFORM_TREASURY, platform.toString()],
   };
 

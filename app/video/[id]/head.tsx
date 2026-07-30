@@ -10,8 +10,11 @@ export default async function Head({ params }: HeadProps) {
   const video = await getVideoById(params.id);
   const title = video?.title ? `${video.title} | ShelbyFlix` : 'ShelbyFlix Video';
   const description = video?.description || 'Watch decentralized content on ShelbyFlix.';
-  const image = video?.thumbnailUrl || '/favicon-32x32.png';
-  const url = `${process.env.NEXT_PUBLIC_APP_URL || 'https://shelbyflix.shelby.xyz'}/video/${params.id}`;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://shelbyflix.shelby.xyz';
+  const image = video?.thumbnailUrl
+    ? `${appUrl}/api/videos/${params.id}/thumbnail`
+    : `${appUrl}/favicon-32x32.png`;
+  const url = `${appUrl}/video/${params.id}`;
 
   return (
     <>
