@@ -209,20 +209,32 @@ export async function deleteVideo(
 ): Promise<void> {
   if (!/^[\w-]+$/.test(videoId)) throw new Error('Invalid video ID');
 
+  let resolvedBlobName = blobName;
   let resolvedShelbyUrl = shelbyUrl;
-  if (!resolvedShelbyUrl) {
+
+  if (!resolvedBlobName || !resolvedShelbyUrl) {
     const video = await getVideoById(videoId);
-    resolvedShelbyUrl = video?.shelbyUrl ?? '';
+    if (!video) throw new Error('Video not found');
+    resolvedBlobName = resolvedBlobName || video.blobName;
+    resolvedShelbyUrl = resolvedShelbyUrl || video.shelbyUrl;
   }
 
-  const { error } = await supabase.from('videos').delete().eq('video_id', videoId);
-  if (error) throw error;
+  if (!resolvedBlobName) {
+    throw new Error('Missing blob name for Shelby deletion');
+  }
 
-  try {
-    const { deleteFromShelby } = await import('./shelby');
-    await deleteFromShelby(videoId, resolvedShelbyUrl, blobName, signAndSubmitTransaction);
-  } catch (e) {
-    console.warn('Shelbynet cleanup failed (non-fatal):', e);
+  // Delete the storage blob first so we don't remove the metadata row if
+  // the Shelby cleanup fails.
+  const { deleteFromShelby } = await import('./shelby');
+  await deleteFromShelby(videoId, resolvedShelbyUrl, resolvedBlobName, signAndSubmitTransaction);
+
+  const response = await csrfFetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to delete video metadata');
   }
 }
 

@@ -27,6 +27,15 @@ module.exports = {
           900: '#5E0A12',
         },
       },
+      keyframes: {
+        'buy-glow': {
+          '0%, 100%': { boxShadow: '0 0 0 8px rgba(246,27,46,0.12)' },
+          '50%': { boxShadow: '0 0 0 18px rgba(246,27,46,0.20)' },
+        },
+      },
+      animation: {
+        'buy-glow': 'buy-glow 2s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

@@ -4,6 +4,7 @@ import {
   uploadBlobToShelbynet,
   getBlobStreamUrl,
   computeBlobCommitments,
+  ShelbyBlobClient,
 } from './shelbynet-blob';
 import { AccountAddress } from '@aptos-labs/ts-sdk';
 import {
@@ -341,11 +342,13 @@ export async function uploadToShelby(
     // Step 4: Generate thumbnail
     onProgress?.({ stage: 'encrypting', progress: 30, message: 'Generating thumbnail...' });
 
-    let thumbnailUrl: string | undefined;
-    try {
-      thumbnailUrl = await generateThumbnail(file, Math.floor(duration / 2));
+    let thumbnailUrl: string | undefined = metadata.thumbnailUrl;
+    if (!thumbnailUrl) {
+      try {
+        thumbnailUrl = await generateThumbnail(file, Math.floor(duration / 2));
       } catch (error) {
-      console.warn('Failed to generate thumbnail:', error);
+        console.warn('Failed to generate thumbnail:', error);
+      }
     }
 
     // Step 5: Generate IDs & names
@@ -538,18 +541,62 @@ export async function deleteFromShelby(
   blobName: string,
   signAndSubmitTransaction: any
 ): Promise<boolean> {
-  try {
-
-    const cacheKey = `video_${blobName}`;
-    if (videoCache.has(cacheKey)) {
-      videoCache.delete(cacheKey);
-      }
-
-
-    return true;
-  } catch (error) {
-    return false;
+  const cacheKey = `video_${blobName}`;
+  if (videoCache.has(cacheKey)) {
+    videoCache.delete(cacheKey);
   }
+
+  if (!signAndSubmitTransaction) {
+    throw new Error('No signer available to delete Shelby blob');
+  }
+
+  if (!blobName) {
+    throw new Error('Missing blob name for Shelby deletion');
+  }
+
+  const payload = ShelbyBlobClient.createDeleteBlobPayload({ blobName });
+
+  let txHash: string;
+  try {
+    const response = await signAndSubmitTransaction({ data: payload });
+    txHash = response.hash;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      message.toLowerCase().includes('user rejected') ||
+      message.toLowerCase().includes('user denied') ||
+      message.toLowerCase().includes('rejected by user') ||
+      message.toLowerCase().includes('cancelled')
+    ) {
+      throw new Error('Shelby deletion cancelled by user');
+    }
+    throw new Error(`Shelby deletion failed: ${message}`);
+  }
+
+  const aptos = getAptosClient();
+  let txResult: any;
+  try {
+    txResult = await aptos.waitForTransaction({
+      transactionHash: txHash,
+      options: { checkSuccess: false },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Shelby deletion commit failed: ${message}`);
+  }
+
+  if (txResult.success === false) {
+    const vmStatus: string = txResult.vm_status ?? '';
+    throw new Error(`Shelby deletion aborted on-chain: ${vmStatus || 'Unknown VM error'}`);
+  }
+
+  logChainWriteSuccess('delete_blob', {
+    videoId,
+    txHash,
+    version: txResult.version ?? 0,
+  });
+
+  return true;
 }
 
 /**

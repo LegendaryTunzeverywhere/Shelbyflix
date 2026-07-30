@@ -173,6 +173,8 @@ export default function PurchaseGate({
   // is verifying. Disabling the Buy button during these states prevents
   // double-submits which would produce rejected duplicate transactions.
   const inFlight = state === 'signing' || state === 'verifying';
+  const buttonDisabled =
+    inFlight || insufficientBalance || balanceLoading || state === 'success';
 
   // Apply the owner short-circuit AFTER every hook has been called so the
   // rules of hooks are satisfied. The hooks above run for the owner too
@@ -243,12 +245,11 @@ export default function PurchaseGate({
       <button
         type="button"
         onClick={() => void purchase()}
-        disabled={
-          inFlight || insufficientBalance || balanceLoading || state === 'success'
-        }
-        className="inline-flex items-center gap-2 px-8 py-3.5 bg-brand-red hover:bg-brand-red/90
+        disabled={buttonDisabled}
+        className={`inline-flex items-center gap-2 px-8 py-3.5 bg-brand-red hover:bg-brand-red/90
           disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed
-          text-white font-black text-sm uppercase tracking-wider rounded-xl transition-colors"
+          text-white font-black text-sm uppercase tracking-wider rounded-xl transition-colors duration-300
+          ${!buttonDisabled ? 'animate-buy-glow shadow-[0_0_30px_rgba(246,27,46,0.35)] ring-1 ring-brand-red/30' : ''}`}
       >
         {inFlight ? (
           <ArrowPathIcon className="w-4 h-4 animate-spin" />

@@ -52,6 +52,8 @@ export async function computeBlobCommitments(data: ArrayBuffer): Promise<BlobCom
   return generateCommitments(provider, buffer);
 }
 
+export { ShelbyBlobClient };
+
 /**
  * Register a blob on Shelbynet blockchain.
  * Waits for the transaction to be confirmed on-chain and throws a clear error

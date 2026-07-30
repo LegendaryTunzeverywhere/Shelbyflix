@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { VideoMetadata } from '@/types';
+import { csrfFetch } from '@/lib/csrf-client';
 import {
   ExclamationTriangleIcon,
   TrashIcon,
@@ -58,17 +59,7 @@ export default function DeleteVideoModal({
    */
   async function handleSupabaseDelete() {
     try {
-      // Step 1: Remove from Supabase
-      setStage('deleting_db');
-      const { supabase } = await import('@/lib/supabase');
-      const { error: dbError } = await supabase
-        .from('videos')
-        .delete()
-        .eq('video_id', video.videoId);
-
-      if (dbError) throw new Error(`Database error: ${dbError.message}`);
-
-      // Step 2: Remove from Shelby cache + on-chain blob expiry signal
+      // Step 1: Remove from Shelby storage first, then remove metadata from Supabase.
       setStage('deleting_shelby');
       const { deleteFromShelby } = await import('@/lib/shelby');
       await deleteFromShelby(
@@ -77,6 +68,15 @@ export default function DeleteVideoModal({
         video.blobName,
         signAndSubmitTransaction
       );
+
+      setStage('deleting_db');
+      const response = await csrfFetch(`/api/videos/${encodeURIComponent(video.videoId)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to delete video metadata');
+      }
 
       setStage('done');
       setTimeout(() => {
@@ -217,25 +217,15 @@ export default function DeleteVideoModal({
         });
       }
 
-      // ── (c) Delete Supabase videos row ─────────────────────────────────
+      // ── (c) Delete Supabase videos row using a server-side admin route ───
       setStage('deleting_db');
-      const { supabase } = await import('@/lib/supabase');
-      const { error: dbError } = await supabase
-        .from('videos')
-        .delete()
-        .eq('video_id', video.videoId);
-
-      if (dbError) throw new Error(`Database error: ${dbError.message}`);
-
-      // ── (d) Invoke deleteFromShelby ────────────────────────────────────
-      setStage('deleting_shelby');
-      const { deleteFromShelby } = await import('@/lib/shelby');
-      await deleteFromShelby(
-        video.videoId,
-        video.shelbyUrl,
-        video.blobName,
-        signAndSubmitTransaction
-      );
+      const response = await csrfFetch(`/api/videos/${encodeURIComponent(video.videoId)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to delete video metadata');
+      }
 
       setStage('done');
       setTimeout(() => {

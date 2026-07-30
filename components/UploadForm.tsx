@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { VideoCategory, VideoType, UploadProgress, VideoMetadata, AccessMode } from '@/types';
-import { uploadToShelby, validateVideoFile, validateAccessModeForMove, mapFormToAccessPolicy, submitRegisterBlobV2, WalletSigningError, ChainTransactionError, PostCommitSupabaseError } from '@/lib/shelby';
+import { uploadToShelby, validateVideoFile, validateAccessModeForMove, WalletSigningError, ChainTransactionError } from '@/lib/shelby';
 import { useNotification } from '@/hooks/useNotification';
 import { useWallet } from '@/hooks/useWallet';
 import CategorySelector from './CategorySelector';
@@ -22,6 +22,12 @@ import {
   XMarkIcon,
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
+
+function formatTime(seconds: number) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${mins}:${secs}`;
+}
 
 export default function UploadForm() {
   const router = useRouter();
@@ -43,6 +49,16 @@ export default function UploadForm() {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
+  const [thumbnailSource, setThumbnailSource] = useState<'auto' | 'manual'>('auto');
+  const [thumbnailTime, setThumbnailTime] = useState<number>(0);
+  const [selectedPreset, setSelectedPreset] = useState<'start' | 'mid' | 'end' | null>(null);
+  const [presetThumbnails, setPresetThumbnails] = useState<{
+    start?: string;
+    mid?: string;
+    end?: string;
+  }>({});
+  const [isThumbnailGenerating, setIsThumbnailGenerating] = useState(false);
+  const thumbnailUploadRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
@@ -64,6 +80,11 @@ export default function UploadForm() {
       const { getVideoDuration, generateThumbnail } = await import('@/lib/encryption');
       const duration = await getVideoDuration(selectedFile);
       setVideoDuration(duration);
+      const mid = Math.floor(duration / 2);
+      setThumbnailTime(mid);
+      setThumbnailSource('auto');
+      setSelectedPreset('mid');
+      setIsThumbnailGenerating(true);
       
       // Auto-detect short videos (< 60 seconds)
       if (duration < 60) {
@@ -71,14 +92,59 @@ export default function UploadForm() {
         success('📱 Detected short video (vertical recommended)');
       }
       
-      const thumbnail = await generateThumbnail(selectedFile, Math.floor(duration / 2));
-      setThumbnailPreview(thumbnail);
+      const [startThumbnail, midThumbnail, endThumbnail] = await Promise.all([
+        generateThumbnail(selectedFile, 0),
+        generateThumbnail(selectedFile, mid),
+        generateThumbnail(selectedFile, Math.max(duration - 1, 0)),
+      ]);
+      setPresetThumbnails({
+        start: startThumbnail,
+        mid: midThumbnail,
+        end: endThumbnail,
+      });
+      setThumbnailPreview(midThumbnail);
     } catch (err) {
       console.error('Failed to process video:', err);
       error(err instanceof Error ? err.message : 'Failed to process video');
     } finally {
       setIsProcessing(false);
+      setIsThumbnailGenerating(false);
     }
+  };
+
+  const generateThumbnailForTime = async (timeSeconds: number, preset?: 'start' | 'mid' | 'end') => {
+    if (!file || videoDuration <= 0) return;
+    setIsThumbnailGenerating(true);
+    try {
+      const { generateThumbnail } = await import('@/lib/encryption');
+      const safeTime = Math.min(timeSeconds, Math.max(videoDuration - 0.1, 0));
+      const thumbnail = await generateThumbnail(file, safeTime);
+      setThumbnailPreview(thumbnail);
+      setThumbnailSource('auto');
+      if (preset) {
+        setSelectedPreset(preset);
+      } else {
+        setSelectedPreset(null);
+      }
+    } catch (err) {
+      console.error('Failed to generate thumbnail:', err);
+      error(err instanceof Error ? err.message : 'Failed to generate thumbnail');
+    } finally {
+      setIsThumbnailGenerating(false);
+    }
+  };
+
+  const handleThumbnailUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setThumbnailPreview(reader.result as string);
+      setThumbnailSource('manual');
+      setSelectedPreset(null);
+      setPresetThumbnails({});
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -227,6 +293,7 @@ export default function UploadForm() {
           accessMode,
           allowlist: accessMode === 'allowlist' ? allowlist : undefined,
           unlockAt: accessMode === 'timelock' ? unlockAt : undefined,
+          thumbnailUrl: thumbnailPreview || undefined,
         } as any,
         address,
         signAndSubmitTransaction,
@@ -667,6 +734,112 @@ export default function UploadForm() {
       {uploadProgress && (
         <div className="p-5 bg-zinc-900 rounded-2xl border border-zinc-800">
           <UploadProgressDisplay progress={uploadProgress} />
+        </div>
+      )}
+
+      {file && (
+        <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest text-zinc-400">
+                Thumbnail
+              </p>
+              <p className="text-[11px] text-zinc-500 mt-2 max-w-2xl">
+                Choose a quick preview frame or upload your own thumbnail image.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => thumbnailUploadRef.current?.click()}
+              disabled={isUploading || isProcessing}
+              className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-brand-red hover:bg-brand-red/90 text-xs font-black uppercase tracking-wider text-white transition-colors disabled:opacity-50"
+            >
+              Upload image
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] items-center">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-widest text-zinc-500">
+                <span>Quick choose</span>
+                <span className="text-zinc-400">{formatTime(thumbnailTime)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(['start', 'mid', 'end'] as const).map((slot) => {
+                  const labels = { start: 'Start', mid: 'Middle', end: 'End' } as const;
+                  const times = {
+                    start: 0,
+                    mid: Math.floor(videoDuration / 2),
+                    end: Math.max(videoDuration - 1, 0),
+                  } as const;
+                  const thumb = presetThumbnails[slot];
+                  const active = selectedPreset === slot && thumbnailSource !== 'manual';
+
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      onClick={() => {
+                        setThumbnailSource('auto');
+                        setThumbnailTime(times[slot]);
+                        setSelectedPreset(slot);
+                        void generateThumbnailForTime(times[slot], slot);
+                      }}
+                      disabled={isUploading || isProcessing || videoDuration === 0}
+                      className={`rounded-2xl overflow-hidden border-2 transition-all duration-200
+                        ${active ? 'border-brand-red shadow-[0_0_20px_rgba(246,27,46,0.25)]' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-600'}
+                        ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      <div className="h-24 bg-zinc-950 flex items-center justify-center overflow-hidden">
+                        {thumb ? (
+                          <img src={thumb} alt={`${labels[slot]} thumbnail`} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center text-[10px] text-zinc-500 uppercase tracking-[0.22em] px-2 text-center">
+                            {labels[slot]}
+                          </div>
+                        )}
+                      </div>
+                      <div className={`px-2 py-2 text-[10px] font-black uppercase tracking-widest text-center
+                        ${active ? 'text-white bg-brand-red' : 'text-zinc-300 bg-zinc-900'}`}>
+                        {labels[slot]}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="w-full sm:w-40 rounded-2xl border border-zinc-800 overflow-hidden bg-zinc-900 h-24">
+              {thumbnailPreview ? (
+                <img
+                  src={thumbnailPreview}
+                  alt="Thumbnail preview"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center p-3 text-zinc-500 text-xs text-center">
+                  Thumbnail preview will appear here.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <p className="mt-3 text-[11px] text-zinc-500">
+            {thumbnailSource === 'manual'
+              ? 'Custom thumbnail selected.'
+              : isThumbnailGenerating
+                ? 'Generating frame preview…'
+                : selectedPreset
+                  ? `${selectedPreset.charAt(0).toUpperCase() + selectedPreset.slice(1)} frame selected.`
+                  : `Frame at ${formatTime(thumbnailTime)} selected.`}
+          </p>
+
+          <input
+            ref={thumbnailUploadRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleThumbnailUpload}
+          />
         </div>
       )}
 
