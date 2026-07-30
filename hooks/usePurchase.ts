@@ -172,6 +172,7 @@ import { csrfFetch } from '@/lib/csrf-client';
 async function callVerifyOnce(body: {
   videoId: string;
   txHash: string;
+  platformTxHash?: string;
   walletAddress: string;
 }): Promise<
   | { ok: true }
@@ -217,6 +218,7 @@ async function callVerifyOnce(body: {
 async function verifyWithBackoff(body: {
   videoId: string;
   txHash: string;
+  platformTxHash?: string;
   walletAddress: string;
 }): Promise<
   | { ok: true }
@@ -370,6 +372,9 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
   // Captures the creator-transfer hash (supabase path) or purchase tx hash
   // (move path) so `retryVerify` can re-run without re-signing.
   const pendingTxHashRef = useRef<string | null>(null);
+  // Companion to pendingTxHashRef: holds the separate platform-fee tx hash
+  // so a manual retry still sends both legs to /verify.
+  const pendingPlatformTxHashRef = useRef<string | null>(null);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -389,6 +394,7 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
     setError(null);
     setNeedsManualRetry(false);
     pendingTxHashRef.current = null;
+    pendingPlatformTxHashRef.current = null;
   }, []);
 
   // ── retryVerify ──────────────────────────────────────────────────────────
@@ -443,12 +449,14 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
     const outcome = await verifyWithBackoff({
       videoId,
       txHash: hash,
+      platformTxHash: pendingPlatformTxHashRef.current ?? undefined,
       walletAddress,
     });
     if (!mountedRef.current) return;
 
     if (outcome.ok) {
       pendingTxHashRef.current = null;
+      pendingPlatformTxHashRef.current = null;
       setNeedsManualRetry(false);
       setState('success');
       onSuccessRef.current?.();
@@ -663,6 +671,7 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
     setError(null);
     setNeedsManualRetry(false);
     pendingTxHashRef.current = null;
+    pendingPlatformTxHashRef.current = null;
 
     // Build the 1-or-2 payloads (Req 12.10: never called under move)
     let payloads: ReturnType<typeof buildPurchaseTransaction>;
@@ -685,6 +694,7 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
     setState('signing');
 
     let creatorTxHash: string | null = null;
+    let platformTxHash: string | null = null;
     try {
       for (let i = 0; i < payloads.length; i++) {
         const res = await signAndSubmitTransaction({ data: payloads[i] });
@@ -694,6 +704,8 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
         }
         if (i === 0) {
           creatorTxHash = hash;
+        } else if (i === 1) {
+          platformTxHash = hash;
         }
         await aptos.waitForTransaction({ transactionHash: hash });
       }
@@ -725,17 +737,20 @@ export function usePurchase(args: UsePurchaseArgs): UsePurchaseResult {
     if (!mountedRef.current) return;
 
     pendingTxHashRef.current = creatorTxHash;
+    pendingPlatformTxHashRef.current = platformTxHash;
     setState('verifying');
 
     const outcome = await verifyWithBackoff({
       videoId,
       txHash: creatorTxHash,
+      platformTxHash: platformTxHash ?? undefined,
       walletAddress,
     });
     if (!mountedRef.current) return;
 
     if (outcome.ok) {
       pendingTxHashRef.current = null;
+      pendingPlatformTxHashRef.current = null;
       setState('success');
       setNeedsManualRetry(false);
       onSuccessRef.current?.();

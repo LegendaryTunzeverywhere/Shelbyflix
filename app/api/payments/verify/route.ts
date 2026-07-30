@@ -142,8 +142,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { videoId, txHash, walletAddress } =
-      (body ?? {}) as { videoId?: unknown; txHash?: unknown; walletAddress?: unknown };
+    const { videoId, txHash, platformTxHash, walletAddress } =
+      (body ?? {}) as {
+        videoId?: unknown;
+        txHash?: unknown;
+        platformTxHash?: unknown;
+        walletAddress?: unknown;
+      };
 
     // ── 2. Shape validation ─────────────────────────────────────────────
     // `missing_fields` covers both absent keys and non-string values so
@@ -186,6 +191,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 400 },
       );
     }
+
+    if (platformTxHash !== undefined) {
+      if (
+        typeof platformTxHash !== 'string' ||
+        !APTOS_TX_HASH_REGEX.test(platformTxHash)
+      ) {
+        return NextResponse.json(
+          { hasAccess: false, reason: 'missing_fields' },
+          { status: 400 },
+        );
+      }
+    }
+    const platformTxHashStr: string | null =
+      typeof platformTxHash === 'string' ? platformTxHash : null;
 
     if (!APTOS_ADDRESS_REGEX.test(walletAddress)) {
       return NextResponse.json(
@@ -466,6 +485,109 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const expectedSplit = splitPrice(config.priceBaseUnits);
 
+    if (expectedSplit.platform > 0 && !platformTxHashStr) {
+      logRejection('platform_tx_missing', {
+        videoId,
+        txHash: truncateHash(txHash),
+        walletAddress: truncateHash(walletLc),
+        expectedPlatform: expectedSplit.platform,
+      });
+      return NextResponse.json(
+        { hasAccess: false, reason: 'platform_tx_missing' },
+        { status: 400 },
+      );
+    }
+
+    if (
+      platformTxHashStr &&
+      platformTxHashStr.toLowerCase() === txHash.toLowerCase()
+    ) {
+      logRejection('platform_tx_missing', {
+        videoId,
+        txHash: truncateHash(txHash),
+        walletAddress: truncateHash(walletLc),
+        reason: 'platform_tx_same_as_creator_tx',
+      });
+      return NextResponse.json(
+        { hasAccess: false, reason: 'platform_tx_missing' },
+        { status: 400 },
+      );
+    }
+
+    let platformUserTx: UserTransactionResponse | null = null;
+    if (platformTxHashStr) {
+      let platformTx: TransactionResponse;
+      try {
+        platformTx = await withTimeout(
+          aptos.getTransactionByHash({ transactionHash: platformTxHashStr }),
+          TX_FETCH_TIMEOUT_MS,
+        );
+      } catch (err: unknown) {
+        if (isTimeoutError(err)) {
+          logRejection('tx_fetch_timeout', {
+            videoId,
+            txHash: truncateHash(platformTxHashStr),
+            walletAddress: truncateHash(walletLc),
+            leg: 'platform',
+            timeoutMs: TX_FETCH_TIMEOUT_MS,
+          });
+          return NextResponse.json(
+            { hasAccess: false, reason: 'tx_fetch_timeout' },
+            { status: 503 },
+          );
+        }
+        logRejection('tx_failed', {
+          videoId,
+          txHash: truncateHash(platformTxHashStr),
+          walletAddress: truncateHash(walletLc),
+          stage: 'fetch',
+          leg: 'platform',
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return NextResponse.json(
+          { hasAccess: false, reason: 'tx_failed' },
+          { status: 400 },
+        );
+      }
+
+      if (!isUserTransactionResponse(platformTx) || platformTx.success !== true) {
+        logRejection('tx_failed', {
+          videoId,
+          txHash: truncateHash(platformTxHashStr),
+          walletAddress: truncateHash(walletLc),
+          stage: 'onchain',
+          leg: 'platform',
+        });
+        return NextResponse.json(
+          { hasAccess: false, reason: 'tx_failed' },
+          { status: 400 },
+        );
+      }
+
+      let canonicalPlatformSender: string;
+      try {
+        canonicalPlatformSender = AccountAddress.from(platformTx.sender).toStringLong();
+      } catch {
+        canonicalPlatformSender = '';
+      }
+      if (canonicalPlatformSender !== canonicalWallet) {
+        logRejection('wrong_sender', {
+          videoId,
+          txHash: truncateHash(platformTxHashStr),
+          walletAddress: truncateHash(walletLc),
+          leg: 'platform',
+          expectedSender: truncateHash(canonicalWallet),
+          actualSender: truncateHash(canonicalPlatformSender),
+        });
+        return NextResponse.json(
+          { hasAccess: false, reason: 'wrong_sender' },
+          { status: 400 },
+        );
+      }
+
+      platformUserTx = platformTx;
+    }
+
     // Derive primary_fungible_store addresses for (creator, SHELBYUSD)
     // and (treasury, SHELBYUSD). If the view call fails for either, we
     // fall back to aggregating deposits by `store` and requiring that
@@ -487,58 +609,48 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           )
         : null;
 
-    // Walk the transaction's events. We are looking for
-    // `0x1::fungible_asset::Deposit` events whose `store` field matches
-    // either the creator's FA store or the treasury's FA store. Any
-    // deposit event with a different fungible-asset metadata is ignored
-    // (a tx may move unrelated tokens alongside our transfer, e.g. gas
-    // rebates in a multi-action script). If NO FA deposit events are
-    // present at all, we reject with `wrong_token` because the claimed
-    // payment didn't actually transfer any fungible asset.
+    // Walk a transaction's events looking for `0x1::fungible_asset::Deposit`
+    // events whose `store` field matches the given target FA store. Any
+    // deposit event with a different fungible-asset metadata / store is
+    // ignored (a tx may move unrelated tokens alongside our transfer, e.g.
+    // gas rebates in a multi-action script).
     const FA_DEPOSIT_TYPE = '0x1::fungible_asset::Deposit';
 
-    let creatorReceived = 0;
-    let treasuryReceived = 0;
-    let sawAnyFaDeposit = false;
+    function sumDepositsToStore(
+      events: UserTransactionResponse['events'] | undefined,
+      targetStore: string | null,
+    ): { received: number; sawAnyFaDeposit: boolean } {
+      let received = 0;
+      let sawAnyFaDeposit = false;
+      for (const ev of events ?? []) {
+        if (!ev || typeof ev.type !== 'string') continue;
+        if (
+          ev.type !== FA_DEPOSIT_TYPE &&
+          !ev.type.endsWith('::fungible_asset::Deposit')
+        ) {
+          continue;
+        }
+        sawAnyFaDeposit = true;
 
-    for (const ev of userTx.events ?? []) {
-      if (!ev || typeof ev.type !== 'string') continue;
-      if (!ev.type.endsWith('fungible_asset::Deposit')) continue;
-      // Accept the canonical module path above, but tolerate a differing
-      // 0x-prefix rendering (`0x1::...` vs `0x01::...`) by checking the
-      // suffix. Strict check first to avoid an accidental false positive.
-      if (ev.type !== FA_DEPOSIT_TYPE && !ev.type.endsWith('::fungible_asset::Deposit')) {
-        continue;
+        const data = ev.data as { store?: unknown; amount?: unknown } | undefined;
+        if (!data || typeof data.store !== 'string') continue;
+
+        const storeAddr = canonicalizeAddress(data.store);
+        if (!storeAddr) continue;
+
+        const amount = toBaseUnits(data.amount);
+        if (amount == null || amount <= 0) continue;
+
+        if (targetStore && storeAddr === targetStore) {
+          received += amount;
+        }
       }
-      sawAnyFaDeposit = true;
-
-      const data = ev.data as { store?: unknown; amount?: unknown } | undefined;
-      if (!data || typeof data.store !== 'string') continue;
-
-      const storeAddr = canonicalizeAddress(data.store);
-      if (!storeAddr) continue;
-
-      const amount = toBaseUnits(data.amount);
-      if (amount == null || amount <= 0) continue;
-
-      if (creatorStore && storeAddr === creatorStore) {
-        creatorReceived += amount;
-      } else if (
-        treasuryStore &&
-        storeAddr === treasuryStore &&
-        expectedSplit.platform > 0
-      ) {
-        treasuryReceived += amount;
-      }
-      // Unmatched FA deposits are ignored — they belong to some other
-      // recipient (e.g. a refund path or unrelated token) and must not
-      // satisfy the creator/treasury checks.
+      return { received, sawAnyFaDeposit };
     }
 
-    if (!sawAnyFaDeposit) {
-      // No FA Deposit events at all — either the tx didn't transfer a
-      // fungible asset or the node response was unexpectedly empty.
-      // Either way the claimed payment didn't move SHELBYUSD.
+    const creatorLeg = sumDepositsToStore(userTx.events, creatorStore);
+
+    if (!creatorLeg.sawAnyFaDeposit) {
       logRejection('wrong_token', {
         videoId,
         txHash: truncateHash(txHash),
@@ -554,13 +666,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Req 6.2 / 8.4: creator share must be at least the expected floor.
     // Using `>=` rather than `===` tolerates users who tip above the
     // price — underpayment by even 1 base unit fails.
-    if (creatorReceived < expectedSplit.creator) {
+    if (creatorLeg.received < expectedSplit.creator) {
       logRejection('creator_share_too_low', {
         videoId,
         txHash: truncateHash(txHash),
         walletAddress: truncateHash(walletLc),
         expected: expectedSplit.creator,
-        received: creatorReceived,
+        received: creatorLeg.received,
       });
       return NextResponse.json(
         { hasAccess: false, reason: 'creator_share_too_low' },
@@ -572,19 +684,41 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // prices) we skip the platform check entirely — `buildPurchaseTransaction`
     // omits the platform transfer in that case, so requiring a deposit
     // event would incorrectly fail an otherwise-valid purchase.
-    if (expectedSplit.platform > 0 && treasuryReceived < expectedSplit.platform) {
-      logRejection('platform_share_too_low', {
-        videoId,
-        txHash: truncateHash(txHash),
-        walletAddress: truncateHash(walletLc),
-        expected: expectedSplit.platform,
-        received: treasuryReceived,
-      });
-      return NextResponse.json(
-        { hasAccess: false, reason: 'platform_share_too_low' },
-        { status: 400 },
-      );
+    let treasuryReceived = 0;
+    if (expectedSplit.platform > 0) {
+      const platformLeg = sumDepositsToStore(platformUserTx?.events, treasuryStore);
+      treasuryReceived = platformLeg.received;
+
+      if (!platformLeg.sawAnyFaDeposit) {
+        logRejection('wrong_token', {
+          videoId,
+          txHash: truncateHash(platformTxHashStr ?? ''),
+          walletAddress: truncateHash(walletLc),
+          leg: 'platform',
+          reason: 'no_fa_deposit_events',
+        });
+        return NextResponse.json(
+          { hasAccess: false, reason: 'wrong_token' },
+          { status: 400 },
+        );
+      }
+
+      if (treasuryReceived < expectedSplit.platform) {
+        logRejection('platform_share_too_low', {
+          videoId,
+          txHash: truncateHash(platformTxHashStr ?? ''),
+          walletAddress: truncateHash(walletLc),
+          expected: expectedSplit.platform,
+          received: treasuryReceived,
+        });
+        return NextResponse.json(
+          { hasAccess: false, reason: 'platform_share_too_low' },
+          { status: 400 },
+        );
+      }
     }
+
+    const creatorReceived = creatorLeg.received;
 
     // ── 7. Persist the receipt (task 3.6, Req 6.4/6.5/6.7) ──────────────
     // All on-chain checks have passed: the tx succeeded, the sender
