@@ -35,7 +35,7 @@
  * validation regex (Req 1.3).
  */
 export const DEFAULT_ACCESS_CONTROL_MODULE_ADDRESS =
-  '0x5211945b33c28c975544f65d361c3739a0244eb6779920128d72e7f70c088069';
+  '0x8e09cdeebdebcf4885c8d6b8a388a7a01e1b8c9327c886ea234b5d92bfa8d652';
 
 /**
  * Accepted Module_Address format — a `0x` prefix followed by 1 to 64
