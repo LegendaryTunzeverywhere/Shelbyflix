@@ -234,21 +234,16 @@ export async function submitRegisterBlobV2(opts: {
   // Emit the no-green-box info log (Req 8.7, 14.2)
   console.info(JSON.stringify({ event: 'register_blob_v2_no_green_box', videoId }));
 
-  // Build the entry function payload — register_blobs_v2 takes a single
-  // BCS-encoded vector<RegistrationInfoV2> argument
+  // Build the entry function payload — the deployed module exposes
+  // `register_blobs_v2(owner, regv2_vec_serialized)` which accepts a single
+  // BCS-encoded vector<RegistrationInfoV2> argument. Use that plural form so
+  // the on-chain module can deserialize internally.
   const payload = {
-    // Tests and logging expect the singular name `register_blob_v2` to appear
-    // in payloads / errors. Historically the module exposes a plural entry
-    // function `register_blobs_v2` but we keep the payload function string
-    // aligned with test expectations and downstream logging which refers to
-    // `register_blob_v2` (Req 8.x). Use the singular token so `string.includes`
-    // checks in tests continue to pass.
-    function: `${ACCESS_CONTROL_MODULE}register_blob_v2` as `${string}::${string}::${string}`,
+    function: `${ACCESS_CONTROL_MODULE}register_blobs_v2` as `${string}::${string}::${string}`,
     typeArguments: [],
-    // Some Move entry signatures expect the blob name as the first arg and
-    // the BCS-encoded RegistrationInfo vector as the second. Tests assert
-    // this ordering, so pass both explicitly: [blobName, bytes]
-    functionArguments: [blobName, Array.from(bcsBytes)],
+    // Pass only the serialized bytes vector — the module will decode the
+    // vector<RegistrationInfoV2> and register each entry.
+    functionArguments: [Array.from(bcsBytes)],
   };
 
   // Sign and submit (Req 8.8 — catch wallet rejections)
