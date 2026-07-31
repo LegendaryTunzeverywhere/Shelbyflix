@@ -3,6 +3,22 @@ import { VideoCategory } from '@/types';
 import type { VideoMetadata } from '@/types';
 import { csrfFetch } from './csrf-client';
 
+// ---------------------------------------------------------------------------
+// SECURITY: every query in this file runs on the anon-key Supabase client
+// (`./supabase`), which is readable by anyone with the public URL + anon
+// key — i.e. anyone with devtools open, not just this app's UI. NEVER
+// `.select('*')` on the `videos` table here: that previously included
+// `encryption_key` in the response for every video regardless of its
+// access_mode, letting anyone extract the decryption key for paid/
+// allowlisted/time-locked videos without ever passing an access check.
+// The key is now only ever served by GET /api/videos/:id/decryption-key,
+// which calls `resolveAccess()` first and reads the column via the
+// service-role client. Always select this explicit list (or a subset of
+// it) instead of '*' on `videos`.
+// ---------------------------------------------------------------------------
+const PUBLIC_VIDEO_COLUMNS =
+  'video_id, blob_id, blob_name, uploader_wallet, channel_id, channel_name, title, description, category, tags, shelby_url, thumbnail_url, duration, is_short, video_type, upload_timestamp, expiration_timestamp, availability_period, views, likes, dislikes, comment_count, price, access_mode, allowlist, unlock_at' as const;
+
 export async function saveVideo(metadata: VideoMetadata): Promise<void> {
   const response = await csrfFetch('/api/videos', {
     method: 'POST',
@@ -46,7 +62,7 @@ export async function saveVideo(metadata: VideoMetadata): Promise<void> {
 export async function getAllVideos(): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
     .from('videos')
-    .select('*')
+    .select(PUBLIC_VIDEO_COLUMNS)
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('upload_timestamp', { ascending: false });
   if (error) throw error;
@@ -57,14 +73,14 @@ export async function getVideoById(videoId: string): Promise<VideoMetadata | nul
   // Sanitise — video IDs are alphanumeric + underscores only
   if (!/^[\w-]+$/.test(videoId)) return null;
   const { data, error } = await supabase
-    .from('videos').select('*').eq('video_id', videoId).single();
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS).eq('video_id', videoId).single();
   if (error) return null;
   return recordToMetadata(data);
 }
 
 export async function getVideosByCategory(category: string): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
-    .from('videos').select('*').eq('category', category)
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS).eq('category', category)
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('upload_timestamp', { ascending: false });
   if (error) throw error;
@@ -73,7 +89,7 @@ export async function getVideosByCategory(category: string): Promise<VideoMetada
 
 export async function getShortVideos(): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
-    .from('videos').select('*')
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS)
     .or('is_short.eq.true,video_type.eq.short,duration.lt.60')
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('upload_timestamp', { ascending: false });
@@ -83,7 +99,7 @@ export async function getShortVideos(): Promise<VideoMetadata[]> {
 
 export async function getVideosByUploader(uploaderWallet: string): Promise<VideoMetadata[]> {
   const { data, error } = await supabase
-    .from('videos').select('*')
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS)
     .eq('uploader_wallet', uploaderWallet.toLowerCase())
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('upload_timestamp', { ascending: false });
@@ -102,7 +118,7 @@ export async function searchVideos(query: string): Promise<VideoMetadata[]> {
   if (!sanitised) return [];
 
   const { data, error } = await supabase
-    .from('videos').select('*')
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS)
     .or(`title.ilike.%${sanitised}%,description.ilike.%${sanitised}%`)
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('upload_timestamp', { ascending: false });
@@ -113,7 +129,7 @@ export async function searchVideos(query: string): Promise<VideoMetadata[]> {
 export async function getTrendingVideos(limit: number = 10): Promise<VideoMetadata[]> {
   const safeLimit = Math.min(Math.max(1, limit), 50);
   const { data, error } = await supabase
-    .from('videos').select('*')
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS)
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('views', { ascending: false }).limit(safeLimit);
   if (error) throw error;
@@ -123,7 +139,7 @@ export async function getTrendingVideos(limit: number = 10): Promise<VideoMetada
 export async function getRecentVideos(limit: number = 10): Promise<VideoMetadata[]> {
   const safeLimit = Math.min(Math.max(1, limit), 50);
   const { data, error } = await supabase
-    .from('videos').select('*')
+    .from('videos').select(PUBLIC_VIDEO_COLUMNS)
     .gt('expiration_timestamp', Date.now())  // Filter expired videos
     .order('upload_timestamp', { ascending: false }).limit(safeLimit);
   if (error) throw error;
@@ -166,7 +182,38 @@ export async function incrementViews(videoId: string, walletAddress?: string): P
   }
 }
 
-function recordToMetadata(record: VideoRecord): VideoMetadata {
+// Matches exactly the columns selected by PUBLIC_VIDEO_COLUMNS above (never
+// `encryption_key` — see the block comment near that constant).
+type PublicVideoRecord = Pick<
+  VideoRecord,
+  | 'video_id'
+  | 'blob_id'
+  | 'blob_name'
+  | 'uploader_wallet'
+  | 'channel_id'
+  | 'channel_name'
+  | 'title'
+  | 'description'
+  | 'category'
+  | 'tags'
+  | 'shelby_url'
+  | 'thumbnail_url'
+  | 'duration'
+  | 'is_short'
+  | 'upload_timestamp'
+  | 'expiration_timestamp'
+  | 'availability_period'
+  | 'views'
+  | 'likes'
+  | 'dislikes'
+  | 'comment_count'
+  | 'price'
+  | 'access_mode'
+  | 'allowlist'
+  | 'unlock_at'
+> & { video_type?: string };
+
+function recordToMetadata(record: PublicVideoRecord): VideoMetadata {
   // Normalize category: DB may contain arbitrary strings; map to enum or default to OTHER
   const rawCategory = record.category as unknown;
   let category: VideoCategory;
@@ -191,7 +238,14 @@ function recordToMetadata(record: VideoRecord): VideoMetadata {
     category,
     tags: record.tags,
     shelbyUrl: record.shelby_url,
-    encryptionKey: record.encryption_key,
+    // Deliberately NOT record.encryption_key — this file's queries no
+    // longer select that column (see PUBLIC_VIDEO_COLUMNS above). The
+    // real key is fetched separately, post-access-check, from
+    // GET /api/videos/:id/decryption-key. Kept as a required field on
+    // VideoMetadata for now to avoid a wider type change; every caller
+    // that needs the real key must fetch it from that endpoint rather
+    // than reading it off this object.
+    encryptionKey: '',
     thumbnailUrl: record.thumbnail_url,
     duration: record.duration,
     uploadTimestamp: record.upload_timestamp,
@@ -264,7 +318,7 @@ export async function getExpiredVideos(): Promise<VideoMetadata[]> {
   const now = Date.now();
   const { data, error } = await supabase
     .from('videos')
-    .select('*')
+    .select(PUBLIC_VIDEO_COLUMNS)
     .lt('expiration_timestamp', now);
   if (error) throw error;
   return data.map(recordToMetadata);
@@ -277,7 +331,7 @@ export async function getExpiredVideos(): Promise<VideoMetadata[]> {
 export async function getUploaderAllVideos(uploaderWallet: string, includeExpired = true): Promise<VideoMetadata[]> {
   let query = supabase
     .from('videos')
-    .select('*')
+    .select(PUBLIC_VIDEO_COLUMNS)
     .eq('uploader_wallet', uploaderWallet.toLowerCase());
 
   if (!includeExpired) {

@@ -23,10 +23,12 @@ function ShortPlayer({
   video,
   isActive,
   isMuted,
+  walletAddress,
 }: {
   video: VideoMetadata;
   isActive: boolean;
   isMuted: boolean;
+  walletAddress?: string | null;
 }) {
   const [streamUrl, setStreamUrl] = useState('');
   const [loading, setLoading] = useState(true);
@@ -42,7 +44,26 @@ function ShortPlayer({
     (async () => {
       try {
         const { downloadAndDecryptVideo } = await import('@/lib/shelby');
-        const blob = await downloadAndDecryptVideo(video.shelbyUrl, video.encryptionKey, video.blobName);
+
+        const keyParams = new URLSearchParams();
+        if (walletAddress) keyParams.set('wallet', walletAddress);
+        const keyRes = await fetch(
+          `/api/videos/${encodeURIComponent(video.videoId)}/decryption-key${
+            keyParams.toString() ? `?${keyParams.toString()}` : ''
+          }`,
+        );
+        if (!keyRes.ok) {
+          if (keyRes.status === 403) {
+            throw new Error('This video requires purchase or access approval.');
+          }
+          throw new Error(`Failed to fetch decryption key (${keyRes.status})`);
+        }
+        const keyPayload = (await keyRes.json()) as { encryptionKey?: string };
+        if (!keyPayload.encryptionKey) {
+          throw new Error('Decryption key unavailable');
+        }
+
+        const blob = await downloadAndDecryptVideo(video.shelbyUrl, keyPayload.encryptionKey, video.blobName);
         const url = URL.createObjectURL(blob);
         setStreamUrl(url);
       } catch (e) {
@@ -51,7 +72,7 @@ function ShortPlayer({
         setLoading(false);
       }
     })();
-  }, [isActive]);
+  }, [isActive, video.videoId, video.shelbyUrl, video.blobName, walletAddress]);
 
   useEffect(() => {
     const vid = videoRef.current;
@@ -280,7 +301,7 @@ function ShortsContent() {
               className="absolute inset-0 transition-transform duration-300 ease-out"
               style={{ transform: `translateY(${(idx - currentIndex) * 100}%)` }}
             >
-              <ShortPlayer video={short} isActive={idx === currentIndex} isMuted={isMuted} />
+              <ShortPlayer video={short} isActive={idx === currentIndex} isMuted={isMuted} walletAddress={address?.toString()} />
             </div>
           );
         })}

@@ -120,9 +120,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const { downloadAndDecryptVideo } = await import('@/lib/shelby');
         const { incrementViews } = await import('@/lib/video-service');
 
+        const keyParams = new URLSearchParams();
+        if (walletAddress) keyParams.set('wallet', walletAddress);
+        const keyRes = await fetch(
+          `/api/videos/${encodeURIComponent(video.videoId)}/decryption-key${
+            keyParams.toString() ? `?${keyParams.toString()}` : ''
+          }`,
+        );
+        if (!keyRes.ok) {
+          throw new Error(`Failed to fetch decryption key (${keyRes.status})`);
+        }
+        const keyPayload = (await keyRes.json()) as { encryptionKey?: string };
+        if (!keyPayload.encryptionKey) {
+          throw new Error('Decryption key unavailable');
+        }
+
         const decryptedBlob = await downloadAndDecryptVideo(
           video.shelbyUrl,
-          video.encryptionKey,
+          keyPayload.encryptionKey,
           video.blobName,
         );
 
@@ -175,7 +190,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // `payment_required` to `purchased` (after refetch) restarts the
     // download without restarting it on every identity change of the
     // `access` object.
-  }, [access?.hasAccess, access?.reason, video.videoId, video.shelbyUrl, video.encryptionKey, video.blobName, streamUrl]);
+  }, [access?.hasAccess, access?.reason, video.videoId, video.shelbyUrl, video.blobName, walletAddress, streamUrl]);
 
   // Attach the blob URL to the <video> element and kick off autoplay.
   useEffect(() => {

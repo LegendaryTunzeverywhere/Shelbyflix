@@ -33,6 +33,30 @@ export const SHELBYUSD_TOKEN = (
     : '0x1b18363a9f1fe5e6ebf247daba5cc1c18052bb232efdc4c50f556053922d98e1'
 ) as `${string}::${string}::${string}`;
 
+// Developer-friendly warning: if the env value looks like a plain address
+// (e.g. 0xabc...123) rather than a full Move type tag (`0x...::module::Type`),
+// wallet adapters (Petra, etc.) will fail to parse the typeTag during
+// simulation/signing. Show an actionable hint in the console so devs can
+// fix their `.env.local` quickly. We don't throw here to avoid breaking
+// unit tests that set a short-form address in their mocking environment.
+try {
+  const raw = process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS;
+  if (raw && /^0x[a-fA-F0-9]{1,64}$/.test(raw)) {
+    // Only warn in non-production or when running locally
+    // so deployed servers don't spam logs unnecessarily.
+    if ((process.env.NODE_ENV || 'development') !== 'production') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[lib/aptos] NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS appears to be an address-only value. ` +
+          `Wallet adapters expect a full Move type tag like 0x1::module::Resource. ` +
+          `Set NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS to the full token type (e.g. 0x1::shelby_usd::ShelbyUSD) in your .env.local to avoid typeTag parse errors.`
+      );
+    }
+  }
+} catch (_) {
+  // Ignore any incidental errors reading env during SSR import.
+}
+
 export const MODULE_ADDRESS = (
   process.env.NEXT_PUBLIC_MODULE_ADDRESS ??
   '0x15ff27e78780a703a5e064ff087ac6078ed4889f6f25fa40f2f4d1e39f73ff25'

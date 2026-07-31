@@ -30,7 +30,10 @@
     "lint": "next lint",
     "test": "vitest --run",
     "test:watch": "vitest",
-    "backfill": "tsx scripts/backfill-move-policies.ts"
+    "backfill": "tsx scripts/backfill-move-policies.ts",
+    "rotate-video-keys": "tsx scripts/rotate-video-keys.ts --dry-run",
+    "rotate-video-keys:plan": "tsx scripts/rotate-video-keys.ts --dry-run > scripts/rotate-video-keys.plan.json",
+    "rotate-video-keys:admin": "node scripts/rotate-video-keys-admin-server.mjs"
   },
   "dependencies": {
     "@aptos-labs/ace-sdk": "0.1.1",
