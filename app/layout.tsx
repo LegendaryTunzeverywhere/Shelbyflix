@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { AptosWalletProvider } from '@/components/AptosWalletProvider';
 import LayoutClient from '../components/LayoutClient';
+import { Analytics } from '@vercel/analytics/react';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -59,6 +60,7 @@ export default function RootLayout({
       <body className={inter.className} suppressHydrationWarning>
         <AptosWalletProvider>
           <LayoutClient>{children}</LayoutClient>
+          <Analytics />
         </AptosWalletProvider>
       </body>
     </html>
