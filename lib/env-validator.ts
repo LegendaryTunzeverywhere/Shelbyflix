@@ -90,6 +90,7 @@ const REQUIRED_ENV_VARS: EnvVarSpec[] = [
   { name: 'SUPABASE_SERVICE_ROLE_KEY', required: true, format: 'secret' },
   { name: 'NEXT_PUBLIC_SHELBYNET_NODE_URL', required: true, format: 'url' },
   { name: 'NEXT_PUBLIC_SHELBYNET_INDEXER_URL', required: true, format: 'url' },
+  { name: 'NEXT_PUBLIC_SHELBYNET_API_BASE', required: false, format: 'url' },
   { name: 'CRON_SECRET', required: true, format: 'secret', minLength: 32 },
   { name: 'NEXT_PUBLIC_GOOGLE_CLIENT_ID', required: true, format: 'string' },
 ];

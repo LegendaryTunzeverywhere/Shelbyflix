@@ -9,10 +9,11 @@ import {
 // Shelbynet Network Configuration
 // ---------------------------------------------------------------------------
 export const SHELBYNET_CONFIG = {
-  name:       process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'TESTNET',
+  name:       process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET',
   nodeUrl:    process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL!,
   indexerUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL!,
   faucetUrl:  process.env.NEXT_PUBLIC_SHELBYNET_FAUCET_URL!,
+  apiBase:    process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz',
 };
 
 const config = new AptosConfig({
@@ -62,8 +63,8 @@ export const MODULE_ADDRESS = (
   '0x15ff27e78780a703a5e064ff087ac6078ed4889f6f25fa40f2f4d1e39f73ff25'
 ) as string;
 
-export const NETWORK_NAME    = 'TESTNET';
-export const NETWORK_CHAIN   = 'TESTNET';
+export const NETWORK_NAME    = process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET';
+export const NETWORK_CHAIN   = process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET';
 export const SHELBY_FAUCET_URL = SHELBYNET_CONFIG.faucetUrl;
 export const SHELBY_DOCS_URL   = 'https://docs.shelby.xyz';
 
@@ -204,10 +205,11 @@ export async function waitForTransaction(txnHash: string): Promise<boolean> {
 export const networkInfo = {
   name:        NETWORK_NAME,
   chain:       NETWORK_CHAIN,
-  network:     'TESTNET',
+  network:     NETWORK_NAME,
   nodeUrl:     SHELBYNET_CONFIG.nodeUrl,
   indexerUrl:  SHELBYNET_CONFIG.indexerUrl,
   faucetUrl:   SHELBYNET_CONFIG.faucetUrl,
+  apiBase:     SHELBYNET_CONFIG.apiBase,
   explorerUrl: 'https://explorer.aptoslabs.com',
   faucetDocs:  'https://docs.shelby.xyz/apis/faucet',
   shelbyDocs:  SHELBY_DOCS_URL,

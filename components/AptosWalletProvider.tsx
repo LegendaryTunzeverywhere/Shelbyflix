@@ -12,12 +12,18 @@ export function AptosWalletProvider({ children }: { children: React.ReactNode })
     localStorage.removeItem('aptos-keyless-jwt');
   }, []);
 
+  // Determine network based on environment variable
+  // Note: Wallet adapters use Aptos Network enums. For Shelbynet-1, we still
+  // use Network.MAINNET for wallet connections since Shelbynet runs on Aptos mainnet infrastructure
+  const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
+  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.MAINNET;
+
   return (
     <AptosWalletAdapterProvider
       autoConnect={true}
       optInWallets={["Petra", "Nightly", "Continue with Google", "Continue with Apple"]}
       dappConfig={{
-        network: Network.TESTNET,
+        network,
         aptosConnectDappId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
       }}
       onError={(err) => {

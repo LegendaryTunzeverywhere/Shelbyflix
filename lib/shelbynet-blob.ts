@@ -34,11 +34,11 @@ export function getShelbyApiKey(): string {
 }
 
 // Use the Shelbynet node for submitting and confirming blob transactions.
-// Falls back to Aptos testnet if the env var is not set.
+// Falls back to shelbynet-1 mainnet if the env var is not set.
 const shelbynetAptos = new Aptos(new AptosConfig({
   network: Network.CUSTOM,
-  fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.testnet.aptoslabs.com/v1',
-  indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.testnet.aptoslabs.com/v1/graphql',
+  fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.shelbynet.shelby.xyz/v1',
+  indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.shelby.xyz/v1/graphql',
 }));
 
 /**
@@ -126,9 +126,13 @@ export async function registerBlob(
       // Parse the human-readable abort reason from the VM status string
       if (vmStatus.includes('E_INSUFFICIENT_FUNDS') || vmStatus.includes('0x2')) {
         const fileSizeMB = (commitments.raw_data_size / 1024 / 1024).toFixed(2);
+        const networkName = process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET';
+        const faucetUrl = networkName === 'TESTNET' 
+          ? 'https://faucet.testnet.shelby.xyz'
+          : 'https://faucet.shelbynet.shelby.xyz';
         throw new Error(
           `Insufficient ShelbyUSD balance to register this blob (${fileSizeMB} MB). ` +
-          `Please get more ShelbyUSD from the faucet at https://faucet.shelbynet.shelby.xyz, ` +
+          `Please get more ShelbyUSD from the faucet at ${faucetUrl}, ` +
           `then try again.`
         );
       }
@@ -197,8 +201,11 @@ export async function uploadBlobToShelbynet(
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
+  const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
+  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
+  
   const shelbyClient = new ShelbyClient({
-    network: Network.TESTNET,
+    network,
     apiKey: getShelbyApiKey(),
   });
 
@@ -308,9 +315,11 @@ async function pollBlobAvailable(
 
 /**
  * Get Shelbynet blob download URL.
+ * Uses the shelbynet-1 API endpoint.
  */
 export function getBlobStreamUrl(blobName: string, accountAddress: string): string {
-  return `https://api.testnet.shelby.xyz/shelby/v1/blobs/${accountAddress}/${encodeURIComponent(blobName)}`;
+  const apiBase = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz';
+  return `${apiBase}/shelby/v1/blobs/${accountAddress}/${encodeURIComponent(blobName)}`;
 }
 
 /**
