@@ -94,8 +94,21 @@ export async function registerBlob(
 
     const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
 
-    // Log payload arguments for debugging
+    // Fix Uint8Array arguments - convert to proper arrays for Move vector<u8>
     if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
+      payload.functionArguments = payload.functionArguments.map((arg: any) => {
+        // Convert Uint8Array or array-like objects to proper arrays
+        if (arg && typeof arg === 'object' && !Array.isArray(arg)) {
+          // Check if it's an array-like object (has numeric keys)
+          const keys = Object.keys(arg);
+          if (keys.length > 0 && keys.every(k => /^\d+$/.test(k))) {
+            const arr = Array.from({ length: keys.length }, (_, i) => arg[i]);
+            return arr;
+          }
+        }
+        return arg;
+      });
+      
       console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
     }
 
