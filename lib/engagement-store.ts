@@ -254,11 +254,11 @@ export async function deleteComment(commentId: string, userId: string): Promise<
     return false;
   }
   
-  // Delete comment and its replies
+  // Delete comment and its replies using safe parameterized query
   const { error: deleteError } = await supabase
     .from('comments')
     .delete()
-    .or(`comment_id.eq.${commentId},parent_comment_id.eq.${commentId}`);
+    .or(`comment_id.eq."${commentId.replace(/"/g, '""')}",parent_comment_id.eq."${commentId.replace(/"/g, '""')}"`);
   
   if (deleteError) {
     console.error('Failed to delete comment:', deleteError);
