@@ -94,16 +94,20 @@ export async function registerBlob(
 
     const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
 
-    // Fix Uint8Array arguments - convert to proper arrays for Move vector<u8>
+    // Fix large numbers for Move u64 - convert to strings to avoid precision loss
     if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
-      payload.functionArguments = payload.functionArguments.map((arg: any) => {
+      payload.functionArguments = payload.functionArguments.map((arg: any, index: number) => {
+        // Convert large numbers (> Number.MAX_SAFE_INTEGER) to strings for Move u64
+        if (typeof arg === 'number' && Math.abs(arg) > Number.MAX_SAFE_INTEGER) {
+          const stringArg = arg.toString();
+          console.log(`🔧 Converted large arg[${index}] to string: ${stringArg}`);
+          return stringArg;
+        }
         // Convert Uint8Array or array-like objects to proper arrays
         if (arg && typeof arg === 'object' && !Array.isArray(arg)) {
-          // Check if it's an array-like object (has numeric keys)
           const keys = Object.keys(arg);
           if (keys.length > 0 && keys.every(k => /^\d+$/.test(k))) {
-            const arr = Array.from({ length: keys.length }, (_, i) => arg[i]);
-            return arr;
+            return Array.from({ length: keys.length }, (_, i) => arg[i]);
           }
         }
         return arg;
