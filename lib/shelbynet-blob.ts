@@ -78,7 +78,7 @@ export async function registerBlob(
       blobMerkleRoot: commitments.blob_merkle_root,
       encoding: 0,
       numChunksets: expectedTotalChunksets(commitments.raw_data_size),
-      expirationMicros,
+      expirationMicros, // Keep as number for SDK
       blobSize: commitments.raw_data_size,
     } as Parameters<typeof ShelbyBlobClient.createRegisterBlobPayload>[0];
 
@@ -93,6 +93,19 @@ export async function registerBlob(
     }
 
     const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
+
+    // CRITICAL FIX: Convert numeric arguments to strings for Move u64 types
+    // The wallet/Move VM expects large numbers as strings, but the SDK creates them as numbers
+    if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
+      payload.functionArguments = payload.functionArguments.map((arg: any) => {
+        // Convert numbers to strings for Move u64/u128 types
+        if (typeof arg === 'number' || typeof arg === 'bigint') {
+          return arg.toString();
+        }
+        // Keep other types as-is (strings, arrays, objects)
+        return arg;
+      });
+    }
 
     // Submit the transaction
     const response = await signAndSubmitTransaction({ data: payload });
