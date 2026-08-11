@@ -72,56 +72,25 @@ export async function registerBlob(
   const attemptRegistration = async (contractAddress?: string): Promise<{ hash: string; blobId: string }> => {
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
 
-    const payloadParams = {
-      account: uploaderAddress,
-      blobName,
-      blobMerkleRoot: commitments.blob_merkle_root,
-      encoding: 0,
-      numChunksets: expectedTotalChunksets(commitments.raw_data_size),
-      expirationMicros, // Keep as number for SDK
-      blobSize: commitments.raw_data_size,
-    } as Parameters<typeof ShelbyBlobClient.createRegisterBlobPayload>[0];
+    // Create payload for register_multiple_blobs (the function that works on this contract)
+    const payload: InputGenerateTransactionPayloadData = {
+      function: `${contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'}::blob_metadata::register_multiple_blobs` as `${string}::${string}::${string}`,
+      typeArguments: [],
+      functionArguments: [
+        [blobName],                        // arg 0: array of blob names
+        null,                              // arg 1: sponsor (optional)
+        'shelbynet-1',                     // arg 2: location name
+        expirationMicros.toString(),       // arg 3: expiration micros (as string)
+        [commitments.blob_merkle_root],    // arg 4: array of merkle roots (hex strings)
+        ['1'],                             // arg 5: array of encodings
+        [commitments.raw_data_size.toString()], // arg 6: array of blob sizes
+        '0',                               // arg 7: oracle base rate
+        '0',                               // arg 8: premium bps  
+        '0',                               // arg 9: payment tier ID
+      ],
+    };
 
-    let typedPayload = payloadParams;
-    if (contractAddress) {
-      // The SDK expects an AccountAddress for the deployer field; translate
-      // the string env var into the AccountAddress instance used by the SDK.
-      typedPayload = {
-        ...payloadParams,
-        deployer: AccountAddress.fromString(contractAddress),
-      } as Parameters<typeof ShelbyBlobClient.createRegisterBlobPayload>[0];
-    }
-
-    const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
-
-    // Convert arguments for Move VM compatibility
-    if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
-      payload.functionArguments = payload.functionArguments.map((arg: any, index: number) => {
-        // Convert numbers to strings for Move u64/u128 types
-        if (typeof arg === 'number') {
-          const stringArg = arg.toString();
-          console.log(`🔧 Converted arg[${index}] from number to string: ${stringArg}`);
-          return stringArg;
-        }
-        // Convert bigint to string
-        if (typeof arg === 'bigint') {
-          const stringArg = arg.toString();
-          console.log(`🔧 Converted arg[${index}] from bigint to string: ${stringArg}`);
-          return stringArg;
-        }
-        // Convert Uint8Array to HEX STRING for Move vector<u8>
-        // Move often expects vector<u8> as hex string "0x..."
-        if (arg instanceof Uint8Array) {
-          const hexString = '0x' + Array.from(arg).map(b => b.toString(16).padStart(2, '0')).join('');
-          console.log(`🔧 Converted arg[${index}] from Uint8Array[${arg.length}] to hex string`);
-          return hexString;
-        }
-        // Keep other types as-is
-        return arg;
-      });
-      
-      console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
-    }
+    console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
 
     // Submit the transaction
     const response = await signAndSubmitTransaction({ data: payload });
