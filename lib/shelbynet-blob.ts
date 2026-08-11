@@ -209,14 +209,12 @@ export async function uploadBlobToShelbynet(
 
   // Create the Shelby RPC client
   const rpcClient = new ShelbyRPCClient({
-    network: Network.CUSTOM,
-    shelby: {
-      rpc: {
-        baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz',
-      },
-      indexer: {
-        baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.shelby.xyz/v1/graphql',
-      },
+    network: Network.SHELBYNET,
+    rpc: {
+      baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz',
+    },
+    indexer: {
+      baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.shelby.xyz/v1/graphql',
     },
   });
 
