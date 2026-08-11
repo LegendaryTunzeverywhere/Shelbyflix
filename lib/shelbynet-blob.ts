@@ -229,7 +229,11 @@ export async function uploadBlobToShelbynet(
   onProgress?: (progress: number) => void
 ): Promise<void> {
   const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
-  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
+  
+  // Try TESTNET first - the SDK might map SHELBYNET to testnet internally
+  const network = Network.TESTNET;
+  
+  console.log(`🔧 Using network: ${network}, API key present: ${!!getShelbyApiKey()}`);
   
   const shelbyClient = new ShelbyClient({
     network,
@@ -239,6 +243,8 @@ export async function uploadBlobToShelbynet(
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
 
   try {
+    console.log(`📤 Starting upload: ${blobName} (${blobData.length} bytes) for account ${uploaderAddress}`);
+    
     await shelbyClient.rpc.putBlob({
       account: uploaderAddress,
       blobName,
@@ -246,6 +252,7 @@ export async function uploadBlobToShelbynet(
     });
 
     onProgress?.(100);
+    console.log(`✅ Upload succeeded for ${blobName}`);
     return;
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Blob upload failed';
