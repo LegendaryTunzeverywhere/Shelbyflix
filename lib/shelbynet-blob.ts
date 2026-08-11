@@ -51,7 +51,7 @@ export async function registerBlob(
   const uid = blobUid ?? Date.now();
   console.log(`🔢 Generated/Using UID for blob registration: ${uid}`);
 
-  const attemptRegistration = async (contractAddress?: string): Promise<{ hash: string; blobId: string; blobUid: number }> {
+  const attemptRegistration = async (contractAddress?: string) => {
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
 
     // Convert merkle root from hex string to byte array (32 bytes)
