@@ -37,8 +37,9 @@ export async function registerBlob(
   blobName: string,
   commitments: BlobCommitments,
   uploaderAddress: AccountAddress,
-  expirationDays: number
-): Promise<{ hash: string; blobId: string }> {
+  expirationDays: number,
+  blobUid: number // UID must be provided and used for both registration and commit
+): Promise<{ hash: string; blobId: string; blobUid: number }> {
   const contractAddress = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS || 
     '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a';
 
@@ -147,8 +148,8 @@ export async function registerBlob(
 
   console.log(`✅ Blob registered successfully! Transaction: ${txHash}`);
 
-  const blobId = `blob_${Date.now()}_${blobName}`;
-  return { hash: txHash, blobId };
+  const blobId = `blob_${blobUid}_${blobName}`;
+  return { hash: txHash, blobId, blobUid };
 }
 
 /**
@@ -164,36 +165,29 @@ export async function uploadBlobToShelbynet(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
   encryptedBlob: Blob,
   blobName: string,
-  blobId: string,
+  blobUid: number, // UID from registration, must match
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
   console.log(`📤 Starting Shelbynet blob upload via commit_object`);
   console.log(`📦 Blob name: ${blobName}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
-  console.log(`🆔 Blob ID: ${blobId}`);
+  console.log(`🔢 Blob UID: ${blobUid}`);
 
   // Convert blob to byte array
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
   console.log(`📦 Converted to Uint8Array: ${blobData.length} bytes`);
 
-  // Extract timestamp from blobId for the uid
-  const blobUidMatch = blobId.match(/^blob_(\d+)_/);
-  if (!blobUidMatch) {
-    throw new Error(`Invalid blobId format: ${blobId}`);
-  }
-  const blobUid = parseInt(blobUidMatch[1], 10);
-  console.log(`🔢 Blob UID: ${blobUid}`);
-
   const contractAddress = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS || 
     '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a';
 
   // Chunk configuration
-  // Based on successful uploads observed: ack_bits: 65535 = 16 chunks per transaction
-  // But chunk size needs to be small enough to fit in ~60KB transaction limit
-  // With 16 chunks: 60KB / 16 = ~3.75KB per chunk
-  const CHUNK_SIZE = 3 * 1024; // 3KB per chunk
-  const CHUNKS_PER_TX = 16; // 16 chunks per transaction (matches successful uploads)
+  // Based on successful uploads: ack_bits needs to fit in u32 (max 32 bits)
+  // Transaction size limit appears to be around 100-150KB of data
+  // Strategy: Use 4KB chunks with 32 chunks per TX = 128KB per transaction
+  // This minimizes total transactions while staying under size limit
+  const CHUNK_SIZE = 4 * 1024; // 4KB per chunk
+  const CHUNKS_PER_TX = 32; // 32 chunks per transaction = 128KB raw data per TX
 
   // Split into chunks
   const allChunks: number[][] = [];
@@ -229,11 +223,17 @@ export async function uploadBlobToShelbynet(
 
   // Large file - send in multiple transactions
   const totalTxs = Math.ceil(totalChunks / CHUNKS_PER_TX);
+  const estimatedGasCost = (totalTxs * 0.012).toFixed(3);
+  const estimatedTimeMinutes = Math.ceil(totalTxs * 0.5); // ~30 seconds per TX including approval
+  
   console.log(`📤 Large file detected, will send ${totalTxs} transactions`);
   console.log(`   - Total chunks: ${totalChunks}`);
   console.log(`   - Chunks per TX: ${CHUNKS_PER_TX}`);
-  console.log(`   - This will require ${totalTxs} wallet approvals`);
-  console.log(`   - Estimated cost: ~${(totalTxs * 0.012).toFixed(3)} APT in gas fees`);
+  console.log(`   ⚠️  IMPORTANT: You must approve ALL ${totalTxs} transactions for the upload to complete!`);
+  console.log(`   - Estimated cost: ~${estimatedGasCost} APT in gas fees`);
+  console.log(`   - Estimated time: ~${estimatedTimeMinutes} minutes (including wallet approvals)`);
+  console.log(`   - If you cancel mid-way, the blob will be incomplete and not accessible`);
+  console.log(`   📝 The blob will only be accessible after ALL transactions are confirmed`);
 
   let chunksUploaded = 0;
 
@@ -243,18 +243,14 @@ export async function uploadBlobToShelbynet(
     const batchChunks = allChunks.slice(startChunk, endChunk);
     
     // Calculate ack_bits for this batch
-    // Set bits for the chunks we're uploading in this transaction
-    let ackBits = 0;
-    for (let i = 0; i < batchChunks.length; i++) {
-      const chunkIndex = startChunk + i;
-      if (chunkIndex < 32) { // ack_bits is u32, max 32 bits
-        ackBits |= (1 << chunkIndex);
-      }
-    }
+    // ack_bits represents which chunks IN THIS BATCH are acknowledged
+    // For a batch with N chunks, we set the first N bits
+    // Example: 4 chunks = 0b1111 = 15, 16 chunks = 0b1111111111111111 = 65535
+    const ackBits = (1 << batchChunks.length) - 1;
 
     console.log(`📤 Transaction ${txIndex + 1}/${totalTxs}:`);
     console.log(`   - Chunks: ${startChunk} to ${endChunk - 1} (${batchChunks.length} chunks)`);
-    console.log(`   - ack_bits: ${ackBits} (binary: ${ackBits.toString(2)})`);
+    console.log(`   - ack_bits: ${ackBits} (binary: ${ackBits.toString(2).padStart(16, '0')})`);
 
     await sendCommitTransaction(
       signAndSubmitTransaction,
@@ -287,11 +283,8 @@ async function sendCommitTransaction(
   blobName: string,
   ackBits: number,
   chunks: number[][],
-  overwrite: boolean = true
+  overwrite: boolean = false
 ): Promise<void> {
-  // Try prepending owner address to blob name - blobs might be stored as "{owner}/{name}"
-  // But actually, let's not modify the name - the issue is probably elsewhere
-  
   const payload: InputGenerateTransactionPayloadData = {
     function: `${contractAddress}::blob_metadata::commit_object` as `${string}::${string}::${string}`,
     typeArguments: [],
