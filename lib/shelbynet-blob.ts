@@ -94,20 +94,27 @@ export async function registerBlob(
 
     const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
 
-    // NOTE: a previous version of this code mutated `payload.functionArguments`
-    // here — converting the Uint8Array merkle-root argument into a plain
-    // number[] array, and large numbers into strings. That's backwards:
-    // `createRegisterBlobPayload` (from @shelby-protocol/sdk) already builds
-    // a fully correct `InputGenerateTransactionPayloadData`, deliberately
-    // constructing the merkle root as a real `Uint8Array`
-    // (`Hex.fromHexString(...).toUint8Array()`) so the wallet adapter
-    // correctly encodes it as `vector<u8>`. Converting it to a plain array
-    // strips that type signal and is the likely cause of the recurring
-    // "Simulation error / Generic error" on upload — pass the SDK's payload
-    // straight through instead.
+    // Convert numeric arguments to strings for Move u64 types
+    // Aptos Move VM expects large integers as strings to avoid JSON precision loss
     if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
-      // Display-only copy for debugging — never mutates the real payload
-      // that gets signed and submitted below.
+      payload.functionArguments = payload.functionArguments.map((arg: any, index: number) => {
+        // Convert numbers to strings for Move u64/u128 types
+        if (typeof arg === 'number') {
+          const stringArg = arg.toString();
+          console.log(`🔧 Converted arg[${index}] from number to string: ${stringArg}`);
+          return stringArg;
+        }
+        // Convert bigint to string
+        if (typeof arg === 'bigint') {
+          const stringArg = arg.toString();
+          console.log(`🔧 Converted arg[${index}] from bigint to string: ${stringArg}`);
+          return stringArg;
+        }
+        // Keep Uint8Array and other types as-is
+        return arg;
+      });
+      
+      // Log for debugging
       const forLogging = payload.functionArguments.map((arg: any) =>
         arg instanceof Uint8Array ? Array.from(arg) : arg,
       );
