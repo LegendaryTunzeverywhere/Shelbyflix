@@ -189,10 +189,11 @@ export async function uploadBlobToShelbynet(
     '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a';
 
   // Chunk configuration
-  // Transaction size limit on Aptos is ~60-64KB for payload
-  // We'll use conservative 8KB chunks and send 4 chunks per transaction
-  const CHUNK_SIZE = 8 * 1024; // 8KB per chunk
-  const CHUNKS_PER_TX = 4; // 4 chunks = ~32KB payload per transaction
+  // Based on successful uploads observed: ack_bits: 65535 = 16 chunks per transaction
+  // But chunk size needs to be small enough to fit in ~60KB transaction limit
+  // With 16 chunks: 60KB / 16 = ~3.75KB per chunk
+  const CHUNK_SIZE = 3 * 1024; // 3KB per chunk
+  const CHUNKS_PER_TX = 16; // 16 chunks per transaction (matches successful uploads)
 
   // Split into chunks
   const allChunks: number[][] = [];
@@ -231,6 +232,8 @@ export async function uploadBlobToShelbynet(
   console.log(`📤 Large file detected, will send ${totalTxs} transactions`);
   console.log(`   - Total chunks: ${totalChunks}`);
   console.log(`   - Chunks per TX: ${CHUNKS_PER_TX}`);
+  console.log(`   - This will require ${totalTxs} wallet approvals`);
+  console.log(`   - Estimated cost: ~${(totalTxs * 0.012).toFixed(3)} APT in gas fees`);
 
   let chunksUploaded = 0;
 
@@ -286,12 +289,15 @@ async function sendCommitTransaction(
   chunks: number[][],
   overwrite: boolean = true
 ): Promise<void> {
+  // Try prepending owner address to blob name - blobs might be stored as "{owner}/{name}"
+  // But actually, let's not modify the name - the issue is probably elsewhere
+  
   const payload: InputGenerateTransactionPayloadData = {
     function: `${contractAddress}::blob_metadata::commit_object` as `${string}::${string}::${string}`,
     typeArguments: [],
     functionArguments: [
       blobUid,      // u64 - blob creation timestamp
-      blobName,     // String - blob name
+      blobName,     // String - blob name (should match registration exactly)
       overwrite,    // bool - overwrite flag (true for subsequent batches)
       null,         // Option<String> - etag (None)
       ackBits,      // u32 - acknowledgment bits
@@ -299,7 +305,13 @@ async function sendCommitTransaction(
     ],
   };
 
-  console.log(`   📤 Submitting commit_object...`);
+  console.log(`   📤 Submitting commit_object with:`);
+  console.log(`      - UID: ${blobUid}`);
+  console.log(`      - Name: ${blobName}`);
+  console.log(`      - Overwrite: ${overwrite}`);
+  console.log(`      - Ack bits: ${ackBits}`);
+  console.log(`      - Chunks: ${chunks.length}`);
+  console.log(`      - Total bytes: ${chunks.reduce((sum, c) => sum + c.length, 0)}`);
 
   const response = await signAndSubmitTransaction({ data: payload });
   const txHash: unknown = (response as { hash?: unknown })?.hash;
@@ -328,6 +340,20 @@ async function sendCommitTransaction(
   if (txRes.success === false) {
     const vmStatus: string = txRes.vm_status ?? '';
     console.error(`   ❌ Transaction failed:`, vmStatus);
+    
+    // Parse specific error codes
+    if (vmStatus.includes('EBLOB_NOT_FOUND') || vmStatus.includes('not found')) {
+      throw new Error(
+        `Blob not found on-chain. This usually means:\n` +
+        `1. The blob name doesn't match the registration exactly\n` +
+        `2. The blob UID is incorrect\n` +
+        `3. The commit_object function is not meant to be called by uploaders\n\n` +
+        `Registered name: ${blobName}\n` +
+        `UID: ${blobUid}\n\n` +
+        `VM Status: ${vmStatus}`
+      );
+    }
+    
     throw new Error(`Commit transaction failed on-chain: ${vmStatus || 'Unknown VM error'}`);
   }
 
