@@ -229,52 +229,53 @@ export async function uploadBlobToShelbynet(
   onProgress?: (progress: number) => void
 ): Promise<void> {
   const apiKey = getShelbyApiKey();
-  const apiBase = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz';
+  const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
+  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
   
-  console.log(`📤 Starting upload: ${blobName} for account ${uploaderAddress}`);
-  console.log(`🔧 Using API base: ${apiBase}`);
+  console.log(`📤 Starting upload: ${blobName} on ${networkName}`);
+  console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
+  
+  const shelbyClient = new ShelbyClient({
+    network,
+    apiKey,
+  });
 
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
-  
-  // Use simple PUT to /blobs endpoint instead of multipart
-  const uploadUrl = `${apiBase}/shelby/v1/blobs/${uploaderAddress}/${encodeURIComponent(blobName)}`;
-  
-  console.log(`📡 Upload URL: ${uploadUrl}`);
-  
-  try {
-    const response = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/octet-stream',
-      },
-      body: blobData,
-    });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unable to read error response');
-      throw new Error(`Upload failed with status ${response.status}: ${errorText}`);
-    }
+  try {
+    console.log(`⏳ Calling shelbyClient.rpc.putBlob...`);
+    
+    await shelbyClient.rpc.putBlob({
+      account: uploaderAddress,
+      blobName,
+      blobData,
+    });
 
     onProgress?.(100);
     console.log(`✅ Upload succeeded for ${blobName}`);
     return;
   } catch (error) {
+    console.error(`❌ Upload error details:`, error);
+    console.error(`Error type: ${error?.constructor?.name}`);
+    console.error(`Error message:`, error instanceof Error ? error.message : String(error));
+    
     const msg = error instanceof Error ? error.message : 'Blob upload failed';
 
-    // Shelby's upstream timed out on /complete. The bytes are very likely
-    // already stored — poll the public URL to confirm before declaring
-    // failure. Treats any 408 / "Request Timed Out" / "Upstream took longer"
-    // as the same upstream-finalization-lag case.
+    // Check if it's a timeout/incomplete upload
     const isUpstreamTimeout =
       /\b408\b/.test(msg) ||
       /Request Timed Out/i.test(msg) ||
       /Upstream took longer/i.test(msg) ||
+      /incomplete/i.test(msg) ||
+      /timed out/i.test(msg) ||
       /complete multipart upload/i.test(msg);
 
     if (!isUpstreamTimeout) {
-      throw new Error(`Failed to start multipart upload!`);
+      throw new Error(`Blob upload failed: ${msg}`);
     }
+
+    // Upload may have succeeded but commit timed out - poll to verify
+    console.warn(`⏳ Upload may be incomplete. Polling blob availability...`);
 
     console.warn(
       `⏳ Shelby upstream timed out on /complete for ${blobName}. ` +
