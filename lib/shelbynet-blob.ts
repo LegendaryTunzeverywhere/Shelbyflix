@@ -3,45 +3,8 @@ import {
   createDefaultErasureCodingProvider,
   generateCommitments,
   ShelbyBlobClient,
-  ShelbyClient,
-  expectedTotalChunksets,
 } from '@shelby-protocol/sdk/browser';
 import { Aptos, AptosConfig, Network, AccountAddress, type InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
-
-export function getShelbyApiKey(): string {
-  const isBrowser = typeof window !== 'undefined';
-
-  console.log(`🔍 Getting API key... (isBrowser: ${isBrowser})`);
-  console.log(`📝 Environment vars:`, {
-    NEXT_PUBLIC_SHELBY_API_KEY: process.env.NEXT_PUBLIC_SHELBY_API_KEY ? `${process.env.NEXT_PUBLIC_SHELBY_API_KEY.substring(0, 10)}... (${process.env.NEXT_PUBLIC_SHELBY_API_KEY.length} chars)` : 'undefined',
-    SHELBY_API_KEY: process.env.SHELBY_API_KEY ? `${process.env.SHELBY_API_KEY.substring(0, 10)}... (${process.env.SHELBY_API_KEY.length} chars)` : 'undefined',
-  });
-
-  if (isBrowser) {
-    const publicKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
-    if (publicKey) {
-      console.log(`✅ Using NEXT_PUBLIC_SHELBY_API_KEY from browser`);
-      return publicKey;
-    }
-  }
-
-  const serverKey = process.env.SHELBY_API_KEY?.trim();
-  if (serverKey) {
-    console.log(`✅ Using SHELBY_API_KEY from server`);
-    return serverKey;
-  }
-
-  const legacyKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
-  if (legacyKey) {
-    console.log(`✅ Using NEXT_PUBLIC_SHELBY_API_KEY as fallback`);
-    return legacyKey;
-  }
-
-  console.error(`❌ No API key found in environment!`);
-  throw new Error(
-    'Missing Shelby API key. Set SHELBY_API_KEY for server-side use, or NEXT_PUBLIC_SHELBY_API_KEY for browser-based uploads such as the website upload flow.'
-  );
-}
 
 // Use the Shelbynet node for submitting and confirming blob transactions.
 // Falls back to shelbynet-1 mainnet if the env var is not set.
@@ -95,7 +58,7 @@ export async function registerBlob(
       // Convert hex string to byte array
       merkleRootBytes = [];
       for (let i = 0; i < hex.length; i += 2) {
-        merkleRootBytes.push(parseInt(hex.substr(i, 2), 16));
+        merkleRootBytes.push(parseInt(hex.substring(i, i + 2), 16));
       }
       
       if (merkleRootBytes.length !== 32) {
@@ -129,6 +92,7 @@ export async function registerBlob(
       ],
     };
 
+    console.log('Registering blob with primary contract:', contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a');
     console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
 
     // Submit the transaction
@@ -210,115 +174,118 @@ export async function registerBlob(
   }
 }
 
-/**
- * Upload encrypted blob to Shelbynet storage.
- * Only call this AFTER registerBlob has confirmed successfully on-chain.
- *
- * ── 408 / "complete multipart upload" handling ──────────────────────────────
- * Shelby's API gateway has a 300s upstream timeout on the `/complete` step of
- * a multipart upload. When the internal storage service (erasure coding +
- * chunk distribution) takes longer than that, the gateway returns 408 even
- * though the bytes we uploaded are already sitting on their servers. In that
- * case the finalization usually completes on Shelby's side within a minute
- * or two after the timeout — we just never got the acknowledgement.
- *
- * To avoid losing otherwise-good uploads to this race, on 408 we poll the
- * blob's public URL with HEAD requests for up to `FINALIZATION_POLL_MS`.
- * If it starts returning 200 the upload is real and we return success.
- * If the poll budget runs out without the blob becoming available, we
- * surface a clear error so the caller can retry.
- */
+// Chunk size for blob data - 256KB per chunk
+const CHUNK_SIZE = 256 * 1024;
 
-const FINALIZATION_POLL_MS = 180_000; // 3 minutes — well beyond typical lag
+const FINALIZATION_POLL_MS = 180_000; // 3 minutes
 const FINALIZATION_POLL_INTERVAL_MS = 5_000;
 
+/**
+ * Upload encrypted blob to Shelbynet storage using commit_object transaction.
+ * This is how Shelbynet actually works - blob data is embedded in the transaction
+ * rather than uploaded via HTTP multipart upload API.
+ * 
+ * Only call this AFTER registerBlob has confirmed successfully on-chain.
+ */
 export async function uploadBlobToShelbynet(
+  signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
   encryptedBlob: Blob,
   blobName: string,
+  blobId: string,
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
-  const apiKey = getShelbyApiKey();
   const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
-  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
   
-  console.log(`📤 Starting upload: ${blobName} on ${networkName}`);
+  console.log(`📤 Starting commit_object upload: ${blobName} on ${networkName}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
-  console.log(`🔑 API key present: ${!!apiKey}, length: ${apiKey?.length}, starts with: ${apiKey?.substring(0, 10)}...`);
+  console.log(`🆔 Blob ID: ${blobId}`);
   
-  const shelbyClient = new ShelbyClient({
-    network,
-    apiKey,
-  });
-
+  // Convert blob to byte array
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
+  
+  // Chunk the blob data into 256KB chunks
+  const chunks: number[][] = [];
+  for (let offset = 0; offset < blobData.length; offset += CHUNK_SIZE) {
+    const chunkEnd = Math.min(offset + CHUNK_SIZE, blobData.length);
+    const chunk = Array.from(blobData.slice(offset, chunkEnd));
+    chunks.push(chunk);
+  }
+  
+  console.log(`📦 Split blob into ${chunks.length} chunks of up to ${CHUNK_SIZE} bytes each`);
+  
+  // Extract blob_uid from blobId (format: blob_<timestamp>_<name>)
+  const blobUidMatch = blobId.match(/^blob_(\d+)_/);
+  const blobUid = blobUidMatch ? parseInt(blobUidMatch[1], 10) : Date.now();
+  
+  // Calculate ack_bits: all chunks acknowledged (use 65535 or calculate based on chunk count)
+  // For up to 16 chunks, use (1 << chunkCount) - 1
+  // For more chunks, Shelbynet uses 65535 (0xFFFF) to indicate all chunks
+  const ackBits = chunks.length <= 16 ? (1 << chunks.length) - 1 : 65535;
+  
+  console.log(`🔧 Blob UID: ${blobUid}, ack_bits: ${ackBits}`);
+  
+  onProgress?.(30);
+
+  const primaryContractAddress = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS;
+  const contractAddress = primaryContractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a';
 
   try {
-    console.log(`⏳ Calling shelbyClient.rpc.putBlob...`);
+    // Create commit_object transaction payload
+    const payload: InputGenerateTransactionPayloadData = {
+      function: `${contractAddress}::blob_metadata::commit_object` as `${string}::${string}::${string}`,
+      typeArguments: [],
+      functionArguments: [
+        blobUid,        // arg 0: u64 - blob_uid
+        blobName,       // arg 1: String - object name
+        true,           // arg 2: bool - overwrite flag (true to allow overwriting)
+        null,           // arg 3: Option<vector<u8>> - etag (None)
+        ackBits,        // arg 4: u32 - ack_bits (all chunks)
+        chunks,         // arg 5: vector<vector<u8>> - chunked blob data
+      ],
+    };
+
+    console.log(`📤 Submitting commit_object transaction with ${chunks.length} chunks...`);
+    onProgress?.(50);
     
-    await shelbyClient.rpc.putBlob({
-      account: uploaderAddress,
-      blobName,
-      blobData,
-    });
+    const response = await signAndSubmitTransaction({ data: payload });
+    const txHash: unknown = (response as { hash?: unknown })?.hash;
+    
+    if (typeof txHash !== 'string' || txHash.length === 0) {
+      throw new Error('Wallet returned no transaction hash for commit_object');
+    }
+
+    console.log(`⏳ Waiting for commit_object transaction to confirm: ${txHash}`);
+    onProgress?.(75);
+    
+    // Wait for the transaction to be confirmed on-chain
+    let txResult: { success?: boolean; vm_status?: string } | unknown;
+    try {
+      txResult = await shelbynetAptos.waitForTransaction({
+        transactionHash: txHash,
+        options: { checkSuccess: false },
+      });
+    } catch (waitError) {
+      throw new Error(
+        `Blob commit transaction did not confirm: ${waitError instanceof Error ? waitError.message : String(waitError)}`
+      );
+    }
+
+    // Check if the transaction succeeded
+    const txRes = txResult as { success?: boolean; vm_status?: string };
+    if (txRes.success === false) {
+      const vmStatus: string = txRes.vm_status ?? '';
+      throw new Error(
+        `Blob commit failed on-chain: ${vmStatus || 'Unknown VM error'}`
+      );
+    }
 
     onProgress?.(100);
-    console.log(`✅ Upload succeeded for ${blobName}`);
-    return;
+    console.log(`✅ Blob committed successfully: ${blobName}`);
   } catch (error) {
-    console.error(`❌ Upload error details:`, error);
-    console.error(`Error type: ${error?.constructor?.name}`);
-    console.error(`Error message:`, error instanceof Error ? error.message : String(error));
-    
-    const msg = error instanceof Error ? error.message : 'Blob upload failed';
-
-    // Check if it's a timeout/incomplete upload
-    const isUpstreamTimeout =
-      /\b408\b/.test(msg) ||
-      /Request Timed Out/i.test(msg) ||
-      /Upstream took longer/i.test(msg) ||
-      /incomplete/i.test(msg) ||
-      /timed out/i.test(msg) ||
-      /complete multipart upload/i.test(msg);
-
-    if (!isUpstreamTimeout) {
-      throw new Error(`Blob upload failed: ${msg}`);
-    }
-
-    // Upload may have succeeded but commit timed out - poll to verify
-    console.warn(`⏳ Upload may be incomplete. Polling blob availability...`);
-
-    console.warn(
-      `⏳ Shelby upstream timed out on /complete for ${blobName}. ` +
-      `Polling ${getBlobStreamUrl(blobName, uploaderAddress)} for up to ` +
-      `${Math.round(FINALIZATION_POLL_MS / 1000)}s to see if it finalises…`
-    );
-    onProgress?.(95);
-
-    const became = await pollBlobAvailable(
-      blobName,
-      uploaderAddress,
-      FINALIZATION_POLL_MS,
-      FINALIZATION_POLL_INTERVAL_MS,
-      (elapsedMs, budgetMs) => {
-        // Nudge progress between 95–99% while polling so the UI doesn't
-        // look frozen. Never reach 100% until we actually confirm.
-        const frac = Math.min(1, elapsedMs / budgetMs);
-        onProgress?.(95 + Math.floor(frac * 4));
-      }
-    );
-
-    if (became) {
-      console.log(`✅ ${blobName} finalised on Shelbynet despite upstream 408`);
-      onProgress?.(100);
-      return;
-    }
-
-    throw new Error(
-      `Shelbynet finalisation stalled. The blob was uploaded but never became ` +
-      `available within ${Math.round(FINALIZATION_POLL_MS / 1000)}s. This is ` +
-      `usually a temporary Shelby-side issue — try re-uploading in a few minutes.`
-    );
+    console.error(`❌ commit_object error:`, error);
+    const msg = error instanceof Error ? error.message : 'Blob commit failed';
+    throw new Error(`Blob upload failed: ${msg}`);
   }
 }
 

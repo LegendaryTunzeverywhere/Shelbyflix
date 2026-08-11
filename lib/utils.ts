@@ -31,8 +31,8 @@ export interface ShelbyUploadResponse {
  * Flow:
  *  1. Encrypt the video
  *  2. Compute BlobCommitments via the official SDK (erasure coding + Merkle root)
- *  3. Register on-chain with the SDK-computed Merkle root
- *  4. Upload via shelbyClient.rpc.putBlob — RPC validates against on-chain root
+ *  3. Register on-chain with the SDK-computed Merkle root (register_blob transaction)
+ *  4. Upload via commit_object transaction with chunked blob data embedded
  */
 export async function uploadToShelby(
   file: File,
@@ -100,14 +100,14 @@ export async function uploadToShelby(
       metadata.availabilityPeriod || 30
     );
 
-    // Step 8: Upload encrypted video to Shelbynet storage
-    // The SDK's putBlob validates the upload against the on-chain Merkle root.
+    // Step 8: Upload encrypted video to Shelbynet storage using commit_object
     onProgress?.({ stage: 'uploading', progress: 50, message: 'Uploading to Shelbynet storage...' });
 
     await uploadBlobToShelbynet(
+      signAndSubmitTransaction,
       encryptedBlob,
       blobName,
-      uploaderAddress,
+      blobId,
       (uploadProgress) => {
         onProgress?.({
           stage: 'uploading',
