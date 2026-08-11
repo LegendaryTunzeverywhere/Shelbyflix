@@ -155,11 +155,10 @@ export async function registerBlob(
  * Upload encrypted blob to Shelbynet by committing it on-chain.
  * 
  * After registerBlob completes, we need to submit the actual blob data
- * via a commit_object transaction. This uploads the data to storage providers
- * who watch the chain for new blobs.
+ * via commit_object transaction(s). For large files, we split into smaller
+ * chunks and send multiple transactions.
  * 
- * For large files, we split into smaller chunks to fit within transaction limits.
- * Each chunk batch is submitted as a separate commit_object transaction.
+ * Each transaction includes a batch of chunks and ack_bits to track progress.
  */
 export async function uploadBlobToShelbynet(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
@@ -189,86 +188,150 @@ export async function uploadBlobToShelbynet(
   const contractAddress = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS || 
     '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a';
 
-  // For small files (< 50KB), send in one transaction
-  // For larger files, we'd need multiple transactions or off-chain storage
-  const MAX_INLINE_SIZE = 50 * 1024; // 50KB
-  
-  if (blobData.length > MAX_INLINE_SIZE) {
-    // Large file - needs different approach
-    console.warn(`⚠️ File is ${(blobData.length / 1024).toFixed(2)}KB, larger than ${MAX_INLINE_SIZE / 1024}KB inline limit`);
-    throw new Error(
-      `File is too large (${(blobData.length / 1024 / 1024).toFixed(2)} MB) for inline commit_object upload. ` +
-      `Shelbynet currently requires files to be uploaded via storage providers after registration. ` +
-      `The blob has been registered on-chain, but the actual data upload mechanism is not yet implemented. ` +
-      `Please check Shelby documentation for the correct upload flow for files larger than 50KB.`
-    );
+  // Chunk configuration
+  // Transaction size limit on Aptos is ~60-64KB for payload
+  // We'll use conservative 8KB chunks and send 4 chunks per transaction
+  const CHUNK_SIZE = 8 * 1024; // 8KB per chunk
+  const CHUNKS_PER_TX = 4; // 4 chunks = ~32KB payload per transaction
+
+  // Split into chunks
+  const allChunks: number[][] = [];
+  for (let offset = 0; offset < blobData.length; offset += CHUNK_SIZE) {
+    const end = Math.min(offset + CHUNK_SIZE, blobData.length);
+    const chunk = Array.from(blobData.subarray(offset, end));
+    allChunks.push(chunk);
   }
 
-  // Small file - send inline
-  console.log(`✅ File is small enough (${(blobData.length / 1024).toFixed(2)}KB), sending inline`);
-  
+  const totalChunks = allChunks.length;
+  console.log(`📦 Split into ${totalChunks} chunks of ${CHUNK_SIZE} bytes each`);
+
+  // If small enough, send all in one transaction
+  if (totalChunks <= CHUNKS_PER_TX) {
+    console.log(`✅ File small enough (${totalChunks} chunks), sending in single transaction`);
+    
+    const ackBits = (1 << totalChunks) - 1; // Set all bits up to totalChunks
+    console.log(`   - ack_bits: ${ackBits} (binary: ${ackBits.toString(2)})`);
+    
+    await sendCommitTransaction(
+      signAndSubmitTransaction,
+      contractAddress,
+      blobUid,
+      blobName,
+      ackBits,
+      allChunks
+    );
+    
+    onProgress?.(100);
+    console.log(`✅ Upload complete!`);
+    return;
+  }
+
+  // Large file - send in multiple transactions
+  const totalTxs = Math.ceil(totalChunks / CHUNKS_PER_TX);
+  console.log(`📤 Large file detected, will send ${totalTxs} transactions`);
+  console.log(`   - Total chunks: ${totalChunks}`);
+  console.log(`   - Chunks per TX: ${CHUNKS_PER_TX}`);
+
+  let chunksUploaded = 0;
+
+  for (let txIndex = 0; txIndex < totalTxs; txIndex++) {
+    const startChunk = txIndex * CHUNKS_PER_TX;
+    const endChunk = Math.min(startChunk + CHUNKS_PER_TX, totalChunks);
+    const batchChunks = allChunks.slice(startChunk, endChunk);
+    
+    // Calculate ack_bits for this batch
+    // Set bits for the chunks we're uploading in this transaction
+    let ackBits = 0;
+    for (let i = 0; i < batchChunks.length; i++) {
+      const chunkIndex = startChunk + i;
+      if (chunkIndex < 32) { // ack_bits is u32, max 32 bits
+        ackBits |= (1 << chunkIndex);
+      }
+    }
+
+    console.log(`📤 Transaction ${txIndex + 1}/${totalTxs}:`);
+    console.log(`   - Chunks: ${startChunk} to ${endChunk - 1} (${batchChunks.length} chunks)`);
+    console.log(`   - ack_bits: ${ackBits} (binary: ${ackBits.toString(2)})`);
+
+    await sendCommitTransaction(
+      signAndSubmitTransaction,
+      contractAddress,
+      blobUid,
+      blobName,
+      ackBits,
+      batchChunks,
+      txIndex > 0 // overwrite = true for subsequent batches
+    );
+
+    chunksUploaded += batchChunks.length;
+    const progress = Math.floor((chunksUploaded / totalChunks) * 100);
+    onProgress?.(progress);
+    
+    console.log(`   ✅ Transaction confirmed (${chunksUploaded}/${totalChunks} chunks uploaded)`);
+  }
+
+  onProgress?.(100);
+  console.log(`✅ Upload complete! All ${totalChunks} chunks uploaded in ${totalTxs} transactions`);
+}
+
+/**
+ * Helper function to send a single commit_object transaction
+ */
+async function sendCommitTransaction(
+  signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
+  contractAddress: string,
+  blobUid: number,
+  blobName: string,
+  ackBits: number,
+  chunks: number[][],
+  overwrite: boolean = true
+): Promise<void> {
   const payload: InputGenerateTransactionPayloadData = {
     function: `${contractAddress}::blob_metadata::commit_object` as `${string}::${string}::${string}`,
     typeArguments: [],
     functionArguments: [
-      blobUid,              // u64 - blob creation timestamp
-      blobName,             // String - blob name
-      true,                 // bool - overwrite flag
-      null,                 // Option<String> - etag (None)
-      65535,                // u32 - ack_bits (all bits set for single chunk)
-      [Array.from(blobData)], // vector<vector<u8>> - chunks (single chunk with all data)
+      blobUid,      // u64 - blob creation timestamp
+      blobName,     // String - blob name
+      overwrite,    // bool - overwrite flag (true for subsequent batches)
+      null,         // Option<String> - etag (None)
+      ackBits,      // u32 - acknowledgment bits
+      chunks,       // vector<vector<u8>> - chunk data
     ],
   };
 
-  console.log(`📤 Submitting commit_object transaction...`);
-  console.log(`   - UID: ${blobUid}`);
-  console.log(`   - Name: ${blobName}`);
-  console.log(`   - Chunks: 1`);
-  console.log(`   - Total size: ${blobData.length} bytes`);
-  
-  onProgress?.(20);
+  console.log(`   📤 Submitting commit_object...`);
 
-  try {
-    const response = await signAndSubmitTransaction({ data: payload });
-    const txHash: unknown = (response as { hash?: unknown })?.hash;
+  const response = await signAndSubmitTransaction({ data: payload });
+  const txHash: unknown = (response as { hash?: unknown })?.hash;
 
-    if (typeof txHash !== 'string' || txHash.length === 0) {
-      throw new Error('Wallet returned no transaction hash for commit_object');
-    }
-
-    console.log(`⏳ Waiting for commit_object transaction: ${txHash}`);
-    onProgress?.(50);
-
-    // Wait for transaction confirmation
-    let txResult: { success?: boolean; vm_status?: string } | unknown;
-    try {
-      txResult = await shelbynetAptos.waitForTransaction({
-        transactionHash: txHash,
-        options: { checkSuccess: false },
-      });
-    } catch (waitError) {
-      throw new Error(
-        `Commit transaction did not confirm: ${waitError instanceof Error ? waitError.message : String(waitError)}`
-      );
-    }
-
-    onProgress?.(90);
-
-    // Check transaction result
-    const txRes = txResult as { success?: boolean; vm_status?: string };
-    if (txRes.success === false) {
-      const vmStatus: string = txRes.vm_status ?? '';
-      console.error(`❌ Commit transaction failed:`, vmStatus);
-      throw new Error(`Blob commit failed on-chain: ${vmStatus || 'Unknown VM error'}`);
-    }
-
-    console.log(`✅ Blob committed successfully! Transaction: ${txHash}`);
-    onProgress?.(100);
-
-  } catch (error) {
-    console.error(`❌ Commit_object error:`, error);
-    throw error;
+  if (typeof txHash !== 'string' || txHash.length === 0) {
+    throw new Error('Wallet returned no transaction hash for commit_object');
   }
+
+  console.log(`   ⏳ Waiting for transaction: ${txHash}`);
+
+  // Wait for confirmation
+  let txResult: { success?: boolean; vm_status?: string } | unknown;
+  try {
+    txResult = await shelbynetAptos.waitForTransaction({
+      transactionHash: txHash,
+      options: { checkSuccess: false },
+    });
+  } catch (waitError) {
+    throw new Error(
+      `Transaction did not confirm: ${waitError instanceof Error ? waitError.message : String(waitError)}`
+    );
+  }
+
+  // Check result
+  const txRes = txResult as { success?: boolean; vm_status?: string };
+  if (txRes.success === false) {
+    const vmStatus: string = txRes.vm_status ?? '';
+    console.error(`   ❌ Transaction failed:`, vmStatus);
+    throw new Error(`Commit transaction failed on-chain: ${vmStatus || 'Unknown VM error'}`);
+  }
+
+  console.log(`   ✅ Transaction confirmed: ${txHash}`);
 }
 
 /**
