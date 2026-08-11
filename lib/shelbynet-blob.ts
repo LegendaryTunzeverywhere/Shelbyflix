@@ -109,11 +109,12 @@ export async function registerBlob(
           console.log(`🔧 Converted arg[${index}] from bigint to string: ${stringArg}`);
           return stringArg;
         }
-        // Convert Uint8Array to array for Move vector<u8>
+        // Convert Uint8Array to HEX STRING for Move vector<u8>
+        // Move often expects vector<u8> as hex string "0x..."
         if (arg instanceof Uint8Array) {
-          const arrayArg = Array.from(arg);
-          console.log(`🔧 Converted arg[${index}] from Uint8Array to array[${arrayArg.length}]`);
-          return arrayArg;
+          const hexString = '0x' + Array.from(arg).map(b => b.toString(16).padStart(2, '0')).join('');
+          console.log(`🔧 Converted arg[${index}] from Uint8Array[${arg.length}] to hex string`);
+          return hexString;
         }
         // Keep other types as-is
         return arg;
