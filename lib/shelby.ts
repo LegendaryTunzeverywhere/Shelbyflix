@@ -375,7 +375,7 @@ export async function uploadToShelby(
       message: 'Registering on Shelbynet... (approve wallet)',
     });
 
-    const { hash: registerHash, blobId } = await registerBlob(
+    const { hash: registerHash, blobId, blobUid } = await registerBlob(
       signAndSubmitTransaction,
       blobName,
       commitments,
@@ -425,7 +425,7 @@ export async function uploadToShelby(
       signAndSubmitTransaction,
       encryptedBlob,
       blobName,
-      blobId,
+      blobUid, // Pass the UID from registerBlob
       uploaderAddress,
       (uploadProgress) => {
         onProgress?.({

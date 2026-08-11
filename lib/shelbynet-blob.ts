@@ -31,18 +31,27 @@ export { ShelbyBlobClient };
  * Register a blob on Shelbynet blockchain.
  * Waits for the transaction to be confirmed on-chain and throws a clear error
  * if the Move VM aborts (e.g. E_INSUFFICIENT_FUNDS).
+ * 
+ * ⚠️ CRITICAL: The UID must be generated BEFORE calling register_blob and must
+ * be the same UID used later in commit_object. Using Date.now() ensures uniqueness.
  */
 export async function registerBlob(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
   blobName: string,
   commitments: BlobCommitments,
   uploaderAddress: AccountAddress,
-  expirationDays: number
-): Promise<{ hash: string; blobId: string }> {
+  expirationDays: number,
+  blobUid?: number // Optional: if not provided, we'll generate one
+): Promise<{ hash: string; blobId: string; blobUid: number }> {
   const primaryContractAddress   = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS;
   const fallbackContractAddress  = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS_FALLBACK;
 
-  const attemptRegistration = async (contractAddress?: string): Promise<{ hash: string; blobId: string }> => {
+  // Generate UID for this blob if not provided
+  // This MUST be used in both register_blob and commit_object
+  const uid = blobUid ?? Date.now();
+  console.log(`🔢 Generated/Using UID for blob registration: ${uid}`);
+
+  const attemptRegistration = async (contractAddress?: string): Promise<{ hash: string; blobId: string; blobUid: number }> {
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
 
     // Convert merkle root from hex string to byte array (32 bytes)
@@ -144,8 +153,8 @@ export async function registerBlob(
       );
     }
 
-    const blobId = `blob_${Date.now()}_${blobName}`;
-    return { hash: txHash, blobId };
+    const blobId = `blob_${uid}_${blobName}`;
+    return { hash: txHash, blobId, blobUid: uid };
   };
 
   try {
@@ -184,15 +193,14 @@ export async function registerBlob(
  * For large files, we split into smaller chunks to fit within transaction limits.
  * Each chunk batch is submitted as a separate commit_object transaction.
  * 
- * CRITICAL: commit_object must use the FULL blob name (uploaderAddress/blobName)
- * to match what was registered in register_blob. The contract internally prefixes
- * the blob name with the uploader's address.
+ * CRITICAL: commit_object must use the SAME UID that was passed to register_blob.
+ * This UID links the blob data to the registered blob metadata on-chain.
  */
 export async function uploadBlobToShelbynet(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
   encryptedBlob: Blob,
   blobName: string,
-  blobId: string,
+  blobUid: number, // The UID from registerBlob - MUST match!
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
@@ -200,24 +208,11 @@ export async function uploadBlobToShelbynet(
   console.log(`📦 Blob name: ${blobName}`);
   console.log(`👤 Uploader address: ${uploaderAddress}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
-  console.log(`🆔 Blob ID: ${blobId}`);
-
-  // Construct the FULL blob name: uploaderAddress/blobName
-  // This must match what the contract expects after register_blob
-  const fullBlobName = `${uploaderAddress}/${blobName}`;
-  console.log(`📝 Full blob name: ${fullBlobName}`);
+  console.log(`🔢 Blob UID (from registerBlob): ${blobUid}`);
 
   // Convert blob to byte array
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
   console.log(`📦 Converted to Uint8Array: ${blobData.length} bytes`);
-
-  // Extract timestamp from blobId for the uid
-  const blobUidMatch = blobId.match(/^blob_(\d+)_/);
-  if (!blobUidMatch) {
-    throw new Error(`Invalid blobId format: ${blobId}`);
-  }
-  const blobUid = parseInt(blobUidMatch[1], 10);
-  console.log(`🔢 Blob UID: ${blobUid}`);
 
   const contractAddress = process.env.NEXT_PUBLIC_BLOB_CONTRACT_ADDRESS || 
     '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a';
@@ -273,8 +268,8 @@ export async function uploadBlobToShelbynet(
       function: `${contractAddress}::blob_metadata::commit_object` as `${string}::${string}::${string}`,
       typeArguments: [],
       functionArguments: [
-        blobUid,              // u64 - blob creation timestamp
-        fullBlobName,         // String - FULL blob name (uploaderAddress/blobName)
+        blobUid,              // u64 - blob creation timestamp (MUST match register_blob UID!)
+        blobName,             // String - blob name (same as register_blob, NOT full path)
         false,                // bool - overwrite flag (false to append chunks)
         null,                 // Option<String> - etag (None)
         ackBits,              // u32 - ack_bits (which chunks to acknowledge)
@@ -284,7 +279,7 @@ export async function uploadBlobToShelbynet(
 
     console.log(`   📤 Submitting commit_object with:`);
     console.log(`      - UID: ${blobUid}`);
-    console.log(`      - Full Name: ${fullBlobName}`);
+    console.log(`      - Blob Name: ${blobName}`);
     console.log(`      - Overwrite: false`);
     console.log(`      - Ack bits: ${ackBits}`);
     console.log(`      - Chunks: ${batchChunks.length}`);
