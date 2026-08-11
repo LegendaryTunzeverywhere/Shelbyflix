@@ -109,11 +109,11 @@ export async function uploadToShelby(
       blobName,
       blobId,
       uploaderAddress,
-      (uploadProgress) => {
+      (progress: number) => {
         onProgress?.({
           stage: 'uploading',
-          progress: 50 + uploadProgress * 0.45, // 50% → 95%
-          message: `Uploading to Shelbynet... ${uploadProgress}%`,
+          progress: 50 + progress * 0.45, // 50% → 95%
+          message: `Uploading to Shelbynet... ${Math.floor(progress)}%`,
         });
       }
     );
