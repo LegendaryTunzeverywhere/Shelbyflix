@@ -11,23 +11,33 @@ import { Aptos, AptosConfig, Network, AccountAddress, type InputGenerateTransact
 export function getShelbyApiKey(): string {
   const isBrowser = typeof window !== 'undefined';
 
+  console.log(`🔍 Getting API key... (isBrowser: ${isBrowser})`);
+  console.log(`📝 Environment vars:`, {
+    NEXT_PUBLIC_SHELBY_API_KEY: process.env.NEXT_PUBLIC_SHELBY_API_KEY ? `${process.env.NEXT_PUBLIC_SHELBY_API_KEY.substring(0, 10)}... (${process.env.NEXT_PUBLIC_SHELBY_API_KEY.length} chars)` : 'undefined',
+    SHELBY_API_KEY: process.env.SHELBY_API_KEY ? `${process.env.SHELBY_API_KEY.substring(0, 10)}... (${process.env.SHELBY_API_KEY.length} chars)` : 'undefined',
+  });
+
   if (isBrowser) {
     const publicKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
     if (publicKey) {
+      console.log(`✅ Using NEXT_PUBLIC_SHELBY_API_KEY from browser`);
       return publicKey;
     }
   }
 
   const serverKey = process.env.SHELBY_API_KEY?.trim();
   if (serverKey) {
+    console.log(`✅ Using SHELBY_API_KEY from server`);
     return serverKey;
   }
 
   const legacyKey = process.env.NEXT_PUBLIC_SHELBY_API_KEY?.trim();
   if (legacyKey) {
+    console.log(`✅ Using NEXT_PUBLIC_SHELBY_API_KEY as fallback`);
     return legacyKey;
   }
 
+  console.error(`❌ No API key found in environment!`);
   throw new Error(
     'Missing Shelby API key. Set SHELBY_API_KEY for server-side use, or NEXT_PUBLIC_SHELBY_API_KEY for browser-based uploads such as the website upload flow.'
   );
