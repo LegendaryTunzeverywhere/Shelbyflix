@@ -213,23 +213,70 @@ export async function uploadBlobToShelbynet(
   const rpcBaseUrl = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz';
   const uploadUrl = `${rpcBaseUrl}/shelby/v1/blobs/${uploaderAddress}/${encodeURIComponent(blobName)}`;
 
-  console.log(`📤 Uploading to storage API: ${uploadUrl}`);
+  console.log(`📤 Upload URL: ${uploadUrl}`);
+  
+  // Storage providers need time to index the registration from the blockchain
+  // We'll wait and then check if the blob is registered before uploading
+  console.log(`⏳ Waiting for storage providers to index the registration...`);
+  
+  const maxRetries = 10;
+  const retryDelay = 3000; // 3 seconds between retries
+  let registered = false;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    await new Promise(resolve => setTimeout(resolve, retryDelay));
+    
+    console.log(`🔍 Attempt ${i + 1}/${maxRetries}: Checking if blob is registered...`);
+    
+    try {
+      // Check if the blob metadata exists via GET
+      const checkResponse = await fetch(uploadUrl, { method: 'HEAD' });
+      
+      if (checkResponse.status === 200 || checkResponse.status === 204) {
+        console.log(`✅ Blob is registered and ready for upload`);
+        registered = true;
+        break;
+      } else if (checkResponse.status === 404) {
+        console.log(`⏳ Blob not yet indexed (404), waiting...`);
+      } else {
+        console.log(`⚠️  Unexpected status: ${checkResponse.status}, retrying...`);
+      }
+    } catch (error) {
+      console.log(`⚠️  Check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (!registered) {
+    throw new Error(
+      `Blob registration did not propagate to storage providers after ${maxRetries * retryDelay / 1000} seconds. ` +
+      `The blockchain transaction succeeded, but storage providers haven't indexed it yet. Please try again in a minute.`
+    );
+  }
+
+  onProgress?.(60);
 
   try {
+    console.log(`📤 Sending PUT request with ${blobData.length} bytes...`);
     const response = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/octet-stream',
+        'Content-Length': String(blobData.length),
       },
       body: blobData,
     });
 
+    console.log(`📡 Response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error');
+      console.error(`❌ Upload failed response:`, errorText);
       throw new Error(`Storage upload failed (${response.status}): ${errorText}`);
     }
 
+    const responseText = await response.text();
     console.log(`✅ Blob uploaded successfully to Shelbynet storage`);
+    console.log(`📝 Response:`, responseText || '(empty response)');
     onProgress?.(100);
   } catch (error) {
     console.error(`❌ Storage upload error:`, error);
