@@ -183,6 +183,10 @@ export async function registerBlob(
  * 
  * For large files, we split into smaller chunks to fit within transaction limits.
  * Each chunk batch is submitted as a separate commit_object transaction.
+ * 
+ * CRITICAL: commit_object must use the FULL blob name (uploaderAddress/blobName)
+ * to match what was registered in register_blob. The contract internally prefixes
+ * the blob name with the uploader's address.
  */
 export async function uploadBlobToShelbynet(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
@@ -194,8 +198,14 @@ export async function uploadBlobToShelbynet(
 ): Promise<void> {
   console.log(`📤 Starting Shelbynet blob upload via commit_object`);
   console.log(`📦 Blob name: ${blobName}`);
+  console.log(`👤 Uploader address: ${uploaderAddress}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
   console.log(`🆔 Blob ID: ${blobId}`);
+
+  // Construct the FULL blob name: uploaderAddress/blobName
+  // This must match what the contract expects after register_blob
+  const fullBlobName = `${uploaderAddress}/${blobName}`;
+  console.log(`📝 Full blob name: ${fullBlobName}`);
 
   // Convert blob to byte array
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
@@ -264,7 +274,7 @@ export async function uploadBlobToShelbynet(
       typeArguments: [],
       functionArguments: [
         blobUid,              // u64 - blob creation timestamp
-        blobName,             // String - blob name
+        fullBlobName,         // String - FULL blob name (uploaderAddress/blobName)
         false,                // bool - overwrite flag (false to append chunks)
         null,                 // Option<String> - etag (None)
         ackBits,              // u32 - ack_bits (which chunks to acknowledge)
@@ -274,7 +284,7 @@ export async function uploadBlobToShelbynet(
 
     console.log(`   📤 Submitting commit_object with:`);
     console.log(`      - UID: ${blobUid}`);
-    console.log(`      - Name: ${blobName}`);
+    console.log(`      - Full Name: ${fullBlobName}`);
     console.log(`      - Overwrite: false`);
     console.log(`      - Ack bits: ${ackBits}`);
     console.log(`      - Chunks: ${batchChunks.length}`);
