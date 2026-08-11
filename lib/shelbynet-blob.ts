@@ -230,8 +230,8 @@ export async function registerBlob(
 /**
  * Upload encrypted blob to Shelbynet storage after registration.
  * 
- * Uses the official Shelby SDK's RPC client with proper multipart upload protocol.
- * This must be called AFTER the blob has been registered on-chain via register_blob.
+ * After the blob is successfully registered on-chain, upload the actual data
+ * to Shelbynet's storage API using a simple PUT request.
  */
 export async function uploadBlobToShelbynet(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
@@ -241,7 +241,7 @@ export async function uploadBlobToShelbynet(
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
-  console.log(`📤 Starting Shelbynet blob upload via SDK RPC client`);
+  console.log(`📤 Starting Shelbynet blob upload via storage API`);
   console.log(`📦 Blob name: ${blobName}`);
   console.log(`👤 Uploader address: ${uploaderAddress}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
@@ -250,54 +250,42 @@ export async function uploadBlobToShelbynet(
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
   console.log(`📦 Converted to Uint8Array: ${blobData.length} bytes`);
 
-  // Create the Shelby RPC client with correct base URL
-  // The SDK expects the base URL to include "/shelby" at the end
-  const rpcBaseUrl = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE 
-    ? `${process.env.NEXT_PUBLIC_SHELBYNET_API_BASE}/shelby`
-    : 'https://api.shelbynet.shelby.xyz/shelby';
-  
-  const rpcClient = new ShelbyRPCClient({
-    network: Network.SHELBYNET,
-    rpc: {
-      baseUrl: rpcBaseUrl,
-    },
-    indexer: {
-      baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.aptoslabs.com/nocode/v1/public/cmforrguw0042s601fn71f9l2/v1/graphql',
-    },
-  });
+  // Construct the upload URL - use the shelby/v1/blobs endpoint
+  const uploadUrl = `https://api.shelbynet.shelby.xyz/shelby/v1/blobs/${uploaderAddress}/${encodeURIComponent(blobName)}`;
+  console.log(`📤 Upload URL: ${uploadUrl}`);
+
+  onProgress?.(60);
 
   try {
-    console.log(`📤 Uploading via SDK putBlob (with multipart support)...`);
+    console.log(`📤 Uploading blob data (${blobData.length} bytes) via PUT...`);
     
-    await rpcClient.putBlob({
-      account: AccountAddress.from(uploaderAddress),
-      blobName,
-      blobData,
-      totalBytes: blobData.length,
-      onProgress: (progress) => {
-        const percent = (progress.uploadedBytes / progress.totalBytes) * 100;
-        console.log(`📊 Upload progress: ${percent.toFixed(1)}% (${progress.uploadedBytes}/${progress.totalBytes} bytes)`);
-        onProgress?.(50 + (percent * 0.5)); // Map to 50-100% range
+    const response = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
       },
+      body: blobData,
     });
 
+    console.log(`📡 Response status: ${response.status} ${response.statusText}`);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error(`❌ Upload failed response:`, errorText);
+      
+      throw new Error(`Storage upload failed (${response.status}): ${errorText}`);
+    }
+
+    const responseText = await response.text().catch(() => '');
     console.log(`✅ Blob uploaded successfully to Shelbynet storage`);
+    if (responseText) {
+      console.log(`📝 Response:`, responseText);
+    }
     onProgress?.(100);
   } catch (error) {
     console.error(`❌ Storage upload error:`, error);
-    
-    // Provide helpful error messages
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (errorMsg.includes('404') || errorMsg.includes('not found')) {
-      throw new Error(
-        `Blob upload failed: Storage providers couldn't find the registered blob. ` +
-        `This usually means the registration transaction succeeded on-chain but hasn't ` +
-        `propagated to storage providers yet. Wait 1-2 minutes and try uploading again.`
-      );
-    }
-    
     throw new Error(
-      `Failed to upload blob to storage: ${errorMsg}`
+      `Failed to upload blob to storage: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
