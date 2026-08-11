@@ -3,6 +3,7 @@ import {
   createDefaultErasureCodingProvider,
   generateCommitments,
   ShelbyBlobClient,
+  ShelbyRPCClient,
 } from '@shelby-protocol/sdk/browser';
 import { Aptos, AptosConfig, Network, AccountAddress, type InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 
@@ -25,7 +26,7 @@ export async function computeBlobCommitments(data: ArrayBuffer): Promise<BlobCom
   return generateCommitments(provider, buffer);
 }
 
-export { ShelbyBlobClient };
+export { ShelbyBlobClient, ShelbyRPCClient };
 
 /**
  * Register a blob on Shelbynet blockchain.
@@ -186,10 +187,8 @@ export async function registerBlob(
 /**
  * Upload encrypted blob to Shelbynet storage after registration.
  * 
- * After registerBlob completes on-chain, we upload the actual blob data
- * to Shelbynet's storage providers via the RPC API (not via blockchain transactions).
- * 
- * This uses the official Shelby SDK's RPC client to upload blob data.
+ * Uses the official Shelby SDK's RPC client with proper multipart upload protocol.
+ * This must be called AFTER the blob has been registered on-chain via register_blob.
  */
 export async function uploadBlobToShelbynet(
   signAndSubmitTransaction: (payload: { data: InputGenerateTransactionPayloadData }) => Promise<{ hash?: string }>,
@@ -199,89 +198,60 @@ export async function uploadBlobToShelbynet(
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
-  console.log(`📤 Starting Shelbynet blob upload via RPC storage API`);
+  console.log(`📤 Starting Shelbynet blob upload via SDK RPC client`);
   console.log(`📦 Blob name: ${blobName}`);
   console.log(`👤 Uploader address: ${uploaderAddress}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
 
-  // Convert blob to byte array
+  // Convert blob to Uint8Array
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
   console.log(`📦 Converted to Uint8Array: ${blobData.length} bytes`);
 
-  // Use the Shelby SDK's RPC client to upload
-  // After register_blob completes, storage providers watch the chain and are ready to accept the upload
-  const rpcBaseUrl = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz';
-  const uploadUrl = `${rpcBaseUrl}/shelby/v1/blobs/${uploaderAddress}/${encodeURIComponent(blobName)}`;
-
-  console.log(`📤 Upload URL: ${uploadUrl}`);
-  
-  // Storage providers need time to index the registration from the blockchain
-  // We'll wait and then check if the blob is registered before uploading
-  console.log(`⏳ Waiting for storage providers to index the registration...`);
-  
-  const maxRetries = 10;
-  const retryDelay = 3000; // 3 seconds between retries
-  let registered = false;
-  
-  for (let i = 0; i < maxRetries; i++) {
-    await new Promise(resolve => setTimeout(resolve, retryDelay));
-    
-    console.log(`🔍 Attempt ${i + 1}/${maxRetries}: Checking if blob is registered...`);
-    
-    try {
-      // Check if the blob metadata exists via GET
-      const checkResponse = await fetch(uploadUrl, { method: 'HEAD' });
-      
-      if (checkResponse.status === 200 || checkResponse.status === 204) {
-        console.log(`✅ Blob is registered and ready for upload`);
-        registered = true;
-        break;
-      } else if (checkResponse.status === 404) {
-        console.log(`⏳ Blob not yet indexed (404), waiting...`);
-      } else {
-        console.log(`⚠️  Unexpected status: ${checkResponse.status}, retrying...`);
-      }
-    } catch (error) {
-      console.log(`⚠️  Check failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  if (!registered) {
-    throw new Error(
-      `Blob registration did not propagate to storage providers after ${maxRetries * retryDelay / 1000} seconds. ` +
-      `The blockchain transaction succeeded, but storage providers haven't indexed it yet. Please try again in a minute.`
-    );
-  }
-
-  onProgress?.(60);
+  // Create the Shelby RPC client
+  const rpcClient = new ShelbyRPCClient({
+    network: Network.CUSTOM,
+    shelby: {
+      rpc: {
+        baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz',
+      },
+      indexer: {
+        baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.shelby.xyz/v1/graphql',
+      },
+    },
+  });
 
   try {
-    console.log(`📤 Sending PUT request with ${blobData.length} bytes...`);
-    const response = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': String(blobData.length),
+    console.log(`📤 Uploading via SDK putBlob (with multipart support)...`);
+    
+    await rpcClient.putBlob({
+      account: AccountAddress.from(uploaderAddress),
+      blobName,
+      blobData,
+      totalBytes: blobData.length,
+      onProgress: (progress) => {
+        const percent = (progress.uploadedBytes / progress.totalBytes) * 100;
+        console.log(`📊 Upload progress: ${percent.toFixed(1)}% (${progress.uploadedBytes}/${progress.totalBytes} bytes)`);
+        onProgress?.(50 + (percent * 0.5)); // Map to 50-100% range
       },
-      body: blobData,
     });
 
-    console.log(`📡 Response status: ${response.status} ${response.statusText}`);
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.error(`❌ Upload failed response:`, errorText);
-      throw new Error(`Storage upload failed (${response.status}): ${errorText}`);
-    }
-
-    const responseText = await response.text();
     console.log(`✅ Blob uploaded successfully to Shelbynet storage`);
-    console.log(`📝 Response:`, responseText || '(empty response)');
     onProgress?.(100);
   } catch (error) {
     console.error(`❌ Storage upload error:`, error);
+    
+    // Provide helpful error messages
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+      throw new Error(
+        `Blob upload failed: Storage providers couldn't find the registered blob. ` +
+        `This usually means the registration transaction succeeded on-chain but hasn't ` +
+        `propagated to storage providers yet. Wait 1-2 minutes and try uploading again.`
+      );
+    }
+    
     throw new Error(
-      `Failed to upload blob to storage: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to upload blob to storage: ${errorMsg}`
     );
   }
 }
