@@ -108,6 +108,7 @@ export async function uploadToShelby(
       encryptedBlob,
       blobName,
       blobId,
+      uploaderAddress,
       (uploadProgress) => {
         onProgress?.({
           stage: 'uploading',
