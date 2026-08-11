@@ -234,6 +234,7 @@ export async function uploadBlobToShelbynet(
   
   console.log(`📤 Starting upload: ${blobName} on ${networkName}`);
   console.log(`📊 Blob size: ${encryptedBlob.size} bytes`);
+  console.log(`🔑 API key present: ${!!apiKey}, length: ${apiKey?.length}, starts with: ${apiKey?.substring(0, 10)}...`);
   
   const shelbyClient = new ShelbyClient({
     network,
