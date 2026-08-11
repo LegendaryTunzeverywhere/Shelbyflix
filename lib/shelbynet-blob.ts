@@ -94,26 +94,24 @@ export async function registerBlob(
 
     const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
 
-    // Fix large numbers for Move u64 - convert to strings to avoid precision loss
+    // NOTE: a previous version of this code mutated `payload.functionArguments`
+    // here — converting the Uint8Array merkle-root argument into a plain
+    // number[] array, and large numbers into strings. That's backwards:
+    // `createRegisterBlobPayload` (from @shelby-protocol/sdk) already builds
+    // a fully correct `InputGenerateTransactionPayloadData`, deliberately
+    // constructing the merkle root as a real `Uint8Array`
+    // (`Hex.fromHexString(...).toUint8Array()`) so the wallet adapter
+    // correctly encodes it as `vector<u8>`. Converting it to a plain array
+    // strips that type signal and is the likely cause of the recurring
+    // "Simulation error / Generic error" on upload — pass the SDK's payload
+    // straight through instead.
     if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
-      payload.functionArguments = payload.functionArguments.map((arg: any, index: number) => {
-        // Convert large numbers (> Number.MAX_SAFE_INTEGER) to strings for Move u64
-        if (typeof arg === 'number' && Math.abs(arg) > Number.MAX_SAFE_INTEGER) {
-          const stringArg = arg.toString();
-          console.log(`🔧 Converted large arg[${index}] to string: ${stringArg}`);
-          return stringArg;
-        }
-        // Convert Uint8Array or array-like objects to proper arrays
-        if (arg && typeof arg === 'object' && !Array.isArray(arg)) {
-          const keys = Object.keys(arg);
-          if (keys.length > 0 && keys.every(k => /^\d+$/.test(k))) {
-            return Array.from({ length: keys.length }, (_, i) => arg[i]);
-          }
-        }
-        return arg;
-      });
-      
-      console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
+      // Display-only copy for debugging — never mutates the real payload
+      // that gets signed and submitted below.
+      const forLogging = payload.functionArguments.map((arg: any) =>
+        arg instanceof Uint8Array ? Array.from(arg) : arg,
+      );
+      console.log('📦 Payload function arguments:', JSON.stringify(forLogging, null, 2));
     }
 
     // Submit the transaction
