@@ -358,7 +358,6 @@ export async function uploadToShelby(
     // Step 5: Generate IDs & names
     const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const blobName = `${videoId}_${file.name}`;
-    const blobUid = Date.now(); // Generate UID once, use for both registration and commit
 
 
     // Step 6: Compute blob commitments via official SDK
@@ -381,8 +380,7 @@ export async function uploadToShelby(
       blobName,
       commitments,
       resolvedAccount,
-      metadata.availabilityPeriod || 30,
-      blobUid // Pass the same UID to be used for commit_object
+      metadata.availabilityPeriod || 30
     );
 
     // Step 7b: Move-flag — register access policy on the access_control module
@@ -427,7 +425,7 @@ export async function uploadToShelby(
       signAndSubmitTransaction,
       encryptedBlob,
       blobName,
-      blobUid, // Use the same UID that was used for registration
+      blobId,
       uploaderAddress,
       (uploadProgress) => {
         onProgress?.({
