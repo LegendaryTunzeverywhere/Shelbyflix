@@ -228,28 +228,33 @@ export async function uploadBlobToShelbynet(
   uploaderAddress: string,
   onProgress?: (progress: number) => void
 ): Promise<void> {
-  const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
+  const apiKey = getShelbyApiKey();
+  const apiBase = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz';
   
-  // Try TESTNET first - the SDK might map SHELBYNET to testnet internally
-  const network = Network.TESTNET;
-  
-  console.log(`🔧 Using network: ${network}, API key present: ${!!getShelbyApiKey()}`);
-  
-  const shelbyClient = new ShelbyClient({
-    network,
-    apiKey: getShelbyApiKey(),
-  });
+  console.log(`📤 Starting upload: ${blobName} for account ${uploaderAddress}`);
+  console.log(`🔧 Using API base: ${apiBase}`);
 
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
-
+  
+  // Use simple PUT to /blobs endpoint instead of multipart
+  const uploadUrl = `${apiBase}/shelby/v1/blobs/${uploaderAddress}/${encodeURIComponent(blobName)}`;
+  
+  console.log(`📡 Upload URL: ${uploadUrl}`);
+  
   try {
-    console.log(`📤 Starting upload: ${blobName} (${blobData.length} bytes) for account ${uploaderAddress}`);
-    
-    await shelbyClient.rpc.putBlob({
-      account: uploaderAddress,
-      blobName,
-      blobData,
+    const response = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: blobData,
     });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unable to read error response');
+      throw new Error(`Upload failed with status ${response.status}: ${errorText}`);
+    }
 
     onProgress?.(100);
     console.log(`✅ Upload succeeded for ${blobName}`);
