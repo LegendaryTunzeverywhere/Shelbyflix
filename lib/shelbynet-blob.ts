@@ -4,6 +4,8 @@ import {
   generateCommitments,
   ShelbyBlobClient,
   ShelbyRPCClient,
+  getAptosTransactionExplorerUrl,
+  getShelbyBlobExplorerUrl,
 } from '@shelby-protocol/sdk/browser';
 import { Aptos, AptosConfig, Network, AccountAddress, type InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
 
@@ -112,12 +114,17 @@ export async function registerBlob(
       throw new Error('Wallet returned no transaction hash for registerBlob');
     }
 
+    console.log(`📝 Registration transaction submitted: ${txHash}`);
+    console.log(`🔗 Aptos explorer: ${getAptosTransactionExplorerUrl('shelbynet', txHash)}`);
+    console.log(`🔗 Or view at: https://explorer.shelby.xyz/txn/${txHash}`);
+
     // ── CRITICAL: Wait for the transaction to be confirmed on-chain ──────────
     // Without this, a Move abort (e.g. E_INSUFFICIENT_FUNDS) is invisible —
     // we'd get a hash back and immediately try to upload, which fails because
     // the blob was never registered.
     let txResult: { success?: boolean; vm_status?: string } | unknown;
     try {
+      console.log(`⏳ Waiting for transaction confirmation...`);
       txResult = await shelbynetAptos.waitForTransaction({
         transactionHash: txHash,
         options: { checkSuccess: false }, // we check manually below for a better error message
@@ -131,6 +138,8 @@ export async function registerBlob(
 
     // Check the on-chain result — a Move abort still produces a tx entry with success=false
     const txRes = txResult as { success?: boolean; vm_status?: string };
+    console.log(`📊 Transaction result:`, { success: txRes.success, vm_status: txRes.vm_status });
+    
     if (txRes.success === false) {
       const vmStatus: string = txRes.vm_status ?? '';
 
@@ -155,6 +164,40 @@ export async function registerBlob(
     }
 
     const blobId = `blob_${uid}_${blobName}`;
+    console.log(`✅ Blob registered successfully on-chain`);
+    console.log(`📝 Blob ID: ${blobId}`);
+    console.log(`🔗 Transaction: ${txHash}`);
+    console.log(`🔗 Blob explorer: ${getShelbyBlobExplorerUrl('shelbynet', uploaderAddress.toString(), blobName)}`);
+    
+    // Verify the blob exists on-chain before returning
+    console.log(`🔍 Verifying blob registration on-chain...`);
+    try {
+      const blobClient = new ShelbyBlobClient({
+        network: Network.SHELBYNET,
+        aptos: {
+          network: Network.CUSTOM,
+          fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.shelbynet.shelby.xyz/v1',
+        },
+      });
+      
+      const metadata = await blobClient.getBlobMetadata({
+        account: uploaderAddress,
+        name: blobName,
+      });
+      
+      if (metadata) {
+        console.log(`✅ Blob metadata found on-chain:`, {
+          owner: metadata.owner.toString(),
+          size: metadata.size,
+          encoding: metadata.encoding,
+        });
+      } else {
+        console.warn(`⚠️  Blob metadata not found on-chain yet (may need time to propagate)`);
+      }
+    } catch (verifyError) {
+      console.warn(`⚠️  Could not verify blob on-chain:`, verifyError instanceof Error ? verifyError.message : String(verifyError));
+    }
+    
     return { hash: txHash, blobId, blobUid: uid };
   };
 
@@ -207,14 +250,19 @@ export async function uploadBlobToShelbynet(
   const blobData = new Uint8Array(await encryptedBlob.arrayBuffer());
   console.log(`📦 Converted to Uint8Array: ${blobData.length} bytes`);
 
-  // Create the Shelby RPC client
+  // Create the Shelby RPC client with correct base URL
+  // The SDK expects the base URL to include "/shelby" at the end
+  const rpcBaseUrl = process.env.NEXT_PUBLIC_SHELBYNET_API_BASE 
+    ? `${process.env.NEXT_PUBLIC_SHELBYNET_API_BASE}/shelby`
+    : 'https://api.shelbynet.shelby.xyz/shelby';
+  
   const rpcClient = new ShelbyRPCClient({
     network: Network.SHELBYNET,
     rpc: {
-      baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz',
+      baseUrl: rpcBaseUrl,
     },
     indexer: {
-      baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.shelby.xyz/v1/graphql',
+      baseUrl: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.aptoslabs.com/nocode/v1/public/cmforrguw0042s601fn71f9l2/v1/graphql',
     },
   });
 
