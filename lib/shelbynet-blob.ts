@@ -94,8 +94,7 @@ export async function registerBlob(
 
     const payload = ShelbyBlobClient.createRegisterBlobPayload(typedPayload);
 
-    // Convert numeric arguments to strings for Move u64 types
-    // Aptos Move VM expects large integers as strings to avoid JSON precision loss
+    // Convert arguments for Move VM compatibility
     if (payload.functionArguments && Array.isArray(payload.functionArguments)) {
       payload.functionArguments = payload.functionArguments.map((arg: any, index: number) => {
         // Convert numbers to strings for Move u64/u128 types
@@ -110,15 +109,17 @@ export async function registerBlob(
           console.log(`🔧 Converted arg[${index}] from bigint to string: ${stringArg}`);
           return stringArg;
         }
-        // Keep Uint8Array and other types as-is
+        // Convert Uint8Array to array for Move vector<u8>
+        if (arg instanceof Uint8Array) {
+          const arrayArg = Array.from(arg);
+          console.log(`🔧 Converted arg[${index}] from Uint8Array to array[${arrayArg.length}]`);
+          return arrayArg;
+        }
+        // Keep other types as-is
         return arg;
       });
       
-      // Log for debugging
-      const forLogging = payload.functionArguments.map((arg: any) =>
-        arg instanceof Uint8Array ? Array.from(arg) : arg,
-      );
-      console.log('📦 Payload function arguments:', JSON.stringify(forLogging, null, 2));
+      console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
     }
 
     // Submit the transaction
