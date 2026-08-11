@@ -101,21 +101,21 @@ export async function registerBlob(
       throw new Error('Invalid merkle root format: expected string or byte array');
     }
 
-    // Create payload for register_multiple_blobs (the function that works on this contract)
+    // Create payload for register_blob (singular - matches successful transactions)
     const payload: InputGenerateTransactionPayloadData = {
-      function: `${contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'}::blob_metadata::register_multiple_blobs` as `${string}::${string}::${string}`,
+      function: `${contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'}::blob_metadata::register_blob` as `${string}::${string}::${string}`,
       typeArguments: [],
       functionArguments: [
-        [blobName],                        // arg 0: array of blob names
-        null,                              // arg 1: sponsor (optional)
-        'shelbynet-1',                     // arg 2: location name
-        expirationMicros.toString(),       // arg 3: expiration micros (as string)
-        [merkleRootBytes],                 // arg 4: array of merkle roots (as byte arrays)
-        ['1'],                             // arg 5: array of encodings
-        [commitments.raw_data_size.toString()], // arg 6: array of blob sizes
-        '0',                               // arg 7: oracle base rate
-        '0',                               // arg 8: premium bps  
-        '0',                               // arg 9: payment tier ID
+        blobName,                          // arg 0: String - blob name (not array)
+        'shelbynet-1',                     // arg 1: Option<String> - location name (SDK wraps in Some)
+        null,                              // arg 2: Option<String> - sponsor (None)
+        expirationMicros,                  // arg 3: u64 - expiration micros
+        merkleRootBytes,                   // arg 4: vector<u8> - merkle root (32 bytes, not nested array)
+        1,                                 // arg 5: u32 - encoding
+        commitments.raw_data_size,         // arg 6: u64 - blob size
+        0,                                 // arg 7: u8 - oracle base rate
+        0,                                 // arg 8: u8 - premium bps
+        0,                                 // arg 9: u8 - payment tier ID
       ],
     };
 
