@@ -72,6 +72,35 @@ export async function registerBlob(
   const attemptRegistration = async (contractAddress?: string): Promise<{ hash: string; blobId: string }> => {
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
 
+    // Convert merkle root from hex string to byte array (32 bytes)
+    let merkleRootBytes: number[];
+    const merkleRoot = commitments.blob_merkle_root;
+    
+    if (typeof merkleRoot === 'string') {
+      // Remove 0x prefix if present
+      const hex = merkleRoot.startsWith('0x') 
+        ? merkleRoot.slice(2) 
+        : merkleRoot;
+      
+      // Convert hex string to byte array
+      merkleRootBytes = [];
+      for (let i = 0; i < hex.length; i += 2) {
+        merkleRootBytes.push(parseInt(hex.substr(i, 2), 16));
+      }
+      
+      if (merkleRootBytes.length !== 32) {
+        throw new Error(`Invalid merkle root length: ${merkleRootBytes.length} bytes (expected 32)`);
+      }
+    } else if (ArrayBuffer.isView(merkleRoot) || Array.isArray(merkleRoot)) {
+      // Handle Uint8Array or regular array
+      merkleRootBytes = Array.from(merkleRoot as ArrayLike<number>);
+      if (merkleRootBytes.length !== 32) {
+        throw new Error(`Invalid merkle root length: ${merkleRootBytes.length} bytes (expected 32)`);
+      }
+    } else {
+      throw new Error('Invalid merkle root format: expected string or byte array');
+    }
+
     // Create payload for register_multiple_blobs (the function that works on this contract)
     const payload: InputGenerateTransactionPayloadData = {
       function: `${contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'}::blob_metadata::register_multiple_blobs` as `${string}::${string}::${string}`,
@@ -81,7 +110,7 @@ export async function registerBlob(
         null,                              // arg 1: sponsor (optional)
         'shelbynet-1',                     // arg 2: location name
         expirationMicros.toString(),       // arg 3: expiration micros (as string)
-        [commitments.blob_merkle_root],    // arg 4: array of merkle roots (hex strings)
+        [merkleRootBytes],                 // arg 4: array of merkle roots (as byte arrays)
         ['1'],                             // arg 5: array of encodings
         [commitments.raw_data_size.toString()], // arg 6: array of blob sizes
         '0',                               // arg 7: oracle base rate
