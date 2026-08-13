@@ -57,55 +57,44 @@ export async function registerBlob(
   const attemptRegistration = async (contractAddress?: string) => {
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
 
-    // Convert merkle root from hex string to byte array (32 bytes)
-    let merkleRootBytes: number[];
     const merkleRoot = commitments.blob_merkle_root;
-    
-    if (typeof merkleRoot === 'string') {
-      // Remove 0x prefix if present
-      const hex = merkleRoot.startsWith('0x') 
-        ? merkleRoot.slice(2) 
-        : merkleRoot;
-      
-      // Convert hex string to byte array
-      merkleRootBytes = [];
-      for (let i = 0; i < hex.length; i += 2) {
-        merkleRootBytes.push(parseInt(hex.substring(i, i + 2), 16));
-      }
-      
-      if (merkleRootBytes.length !== 32) {
-        throw new Error(`Invalid merkle root length: ${merkleRootBytes.length} bytes (expected 32)`);
-      }
-    } else if (ArrayBuffer.isView(merkleRoot) || Array.isArray(merkleRoot)) {
-      // Handle Uint8Array or regular array
-      merkleRootBytes = Array.from(merkleRoot as ArrayLike<number>);
-      if (merkleRootBytes.length !== 32) {
-        throw new Error(`Invalid merkle root length: ${merkleRootBytes.length} bytes (expected 32)`);
-      }
-    } else {
-      throw new Error('Invalid merkle root format: expected string or byte array');
+    if (typeof merkleRoot !== 'string') {
+      throw new Error('Invalid merkle root format: expected a hex string');
     }
 
-    // Create payload for register_blob (singular - matches successful transactions)
-    const payload: InputGenerateTransactionPayloadData = {
-      function: `${contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'}::blob_metadata::register_blob` as `${string}::${string}::${string}`,
-      typeArguments: [],
-      functionArguments: [
-        blobName,                          // arg 0: String - blob name (not array)
-        'shelbynet-1',                     // arg 1: Option<String> - location name (SDK wraps in Some)
-        null,                              // arg 2: Option<String> - sponsor (None)
-        expirationMicros,                  // arg 3: u64 - expiration micros
-        merkleRootBytes,                   // arg 4: vector<u8> - merkle root (32 bytes, not nested array)
-        1,                                 // arg 5: u32 - encoding
-        commitments.raw_data_size,         // arg 6: u64 - blob size
-        0,                                 // arg 7: u8 - oracle base rate
-        0,                                 // arg 8: u8 - premium bps
-        0,                                 // arg 9: u8 - payment tier ID
-      ],
-    };
+    // ---------------------------------------------------------------------
+    // FIX: this previously hand-built a raw 10-argument payload with fields
+    // that don't exist in the real register_blob function — 'shelbynet-1'
+    // as a "location name", null as a "sponsor", plus made-up "oracle base
+    // rate" / "premium bps" / "payment tier ID" arguments. None of that
+    // matches the actual on-chain function. Confirmed by reading the
+    // installed @shelby-protocol/sdk source directly:
+    // ShelbyBlobClient.createRegisterBlobPayload() builds exactly 7
+    // arguments — blobName, expirationMicros, a Uint8Array merkle root,
+    // numChunksets, blobSize, a hardcoded 0 (labeled "// TODO // payment
+    // tier" in Shelby's own source), and encoding. Building this by hand
+    // is guessing at an ABI we can just ask the SDK to build correctly.
+    // ---------------------------------------------------------------------
+    const payload = ShelbyBlobClient.createRegisterBlobPayload({
+      deployer: contractAddress ? AccountAddress.fromString(contractAddress) : undefined,
+      account: uploaderAddress,
+      blobName,
+      blobMerkleRoot: merkleRoot,
+      blobSize: commitments.raw_data_size,
+      expirationMicros,
+      numChunksets: commitments.chunkset_commitments.length,
+      encoding: 0,
+    });
 
-    console.log('Registering blob with primary contract:', contractAddress || '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a');
-    console.log('📦 Payload function arguments:', JSON.stringify(payload.functionArguments, null, 2));
+    console.log('Registering blob with contract:', contractAddress || '(SDK default: SHELBY_DEPLOYER)');
+    console.log(
+      '📦 Payload function arguments:',
+      JSON.stringify(
+        payload.functionArguments?.map((arg) => (arg instanceof Uint8Array ? Array.from(arg) : arg)),
+        null,
+        2,
+      ),
+    );
 
     // Submit the transaction
     const response = await signAndSubmitTransaction({ data: payload });
