@@ -560,7 +560,7 @@ export async function deleteFromShelby(
     throw new Error('Missing blob name for Shelby deletion');
   }
 
-  const payload = ShelbyBlobClient.createDeleteBlobPayload({ blobName });
+  const payload = ShelbyBlobClient.createDeleteObjectPayload({ blobName });
 
   let txHash: string;
   try {

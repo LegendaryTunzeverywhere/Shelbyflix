@@ -66,14 +66,24 @@ export async function registerBlob(
     // FIX: this previously hand-built a raw 10-argument payload with fields
     // that don't exist in the real register_blob function — 'shelbynet-1'
     // as a "location name", null as a "sponsor", plus made-up "oracle base
-    // rate" / "premium bps" / "payment tier ID" arguments. None of that
-    // matches the actual on-chain function. Confirmed by reading the
-    // installed @shelby-protocol/sdk source directly:
-    // ShelbyBlobClient.createRegisterBlobPayload() builds exactly 7
-    // arguments — blobName, expirationMicros, a Uint8Array merkle root,
-    // numChunksets, blobSize, a hardcoded 0 (labeled "// TODO // payment
-    // tier" in Shelby's own source), and encoding. Building this by hand
-    // is guessing at an ABI we can just ask the SDK to build correctly.
+    // rate" / "premium bps" / "payment tier ID" arguments. Turns out the
+    // *concept* of a location argument was real (see selectedLocation
+    // below) — it was just built against a stale SDK version with the
+    // wrong shape. Upgraded @shelby-protocol/sdk from ^0.2.4 to ^0.4.1,
+    // which added: (a) selectedLocation/locationHint arguments (both
+    // optional — left unset here rather than guessing at valid values),
+    // and (b) a required trailing `encryption` argument as of the
+    // contract's encryption upgrade (SDK's internal reference: "#1739").
+    // Omitting `encryption` defaults to "Unencrypted" on-chain — but our
+    // blobs ARE encrypted (client-side AES-256-GCM, see lib/encryption.ts),
+    // so every blob registered so far has been mismarked. The SDK exposes
+    // exactly two valid values: "Unencrypted" | "AES_GCM_V1" — ours maps
+    // directly to AES_GCM_V1. This mismatch (content encrypted, but
+    // declared Unencrypted on-chain) is the most likely explanation for
+    // blobs showing "not found" in the explorer after an apparently
+    // successful upload — the storage/indexing layer may reject or
+    // mis-handle blobs whose declared encryption doesn't match their
+    // actual content.
     // ---------------------------------------------------------------------
     const payload = ShelbyBlobClient.createRegisterBlobPayload({
       deployer: contractAddress ? AccountAddress.fromString(contractAddress) : undefined,
@@ -84,6 +94,7 @@ export async function registerBlob(
       expirationMicros,
       numChunksets: commitments.chunkset_commitments.length,
       encoding: 0,
+      encryption: 'AES_GCM_V1',
     });
 
     console.log('Registering blob with contract:', contractAddress || '(SDK default: SHELBY_DEPLOYER)');
@@ -169,7 +180,7 @@ export async function registerBlob(
         },
       });
       
-      const metadata = await blobClient.getBlobMetadata({
+      const metadata = await blobClient.getFullObjectMetadata({
         account: uploaderAddress,
         name: blobName,
       });
@@ -179,7 +190,17 @@ export async function registerBlob(
           owner: metadata.owner.toString(),
           size: metadata.size,
           encoding: metadata.encoding,
+          encryption: metadata.encryption,
+          isWritten: metadata.isWritten,
         });
+        if (!metadata.isWritten) {
+          console.warn(
+            `⚠️  Blob is registered but NOT YET COMMITTED (isWritten: false). ` +
+            `This blob will not resolve by name (e.g. in the explorer) until ` +
+            `commit_object is called with the storage-provider acks from the ` +
+            `chunkset upload. See TODO in uploadToShelby() for the missing step.`,
+          );
+        }
       } else {
         console.warn(`⚠️  Blob metadata not found on-chain yet (may need time to propagate)`);
       }
