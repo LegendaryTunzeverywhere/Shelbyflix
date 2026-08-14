@@ -1,9 +1,6 @@
 import type { VideoMetadata, UploadProgress, AccessMode } from '@/types';
 import {
-  registerBlob,
-  uploadBlobToShelbynet,
   getBlobStreamUrl,
-  computeBlobCommitments,
   ShelbyBlobClient,
 } from './shelbynet-blob';
 import { AccountAddress } from '@aptos-labs/ts-sdk';
@@ -319,6 +316,7 @@ export async function uploadToShelby(
   metadata: Partial<VideoMetadata>,
   uploaderAccount: AccountAddress | { toString: () => string },
   signAndSubmitTransaction: any,
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<ShelbyUploadResponse> {
   try {
@@ -342,6 +340,7 @@ export async function uploadToShelby(
     onProgress?.({ stage: 'encrypting', progress: 20, message: 'Encrypting video...' });
 
     const encryptedBlob = await encryptFile(file, encryptionKey);
+    const encryptedBuffer = await encryptedBlob.arrayBuffer();
 
     // Step 4: Generate thumbnail
     onProgress?.({ stage: 'encrypting', progress: 30, message: 'Generating thumbnail...' });
@@ -360,34 +359,74 @@ export async function uploadToShelby(
     const blobName = `${videoId}_${file.name}`;
 
 
-    // Step 6: Compute blob commitments via official SDK
-    // This applies Clay erasure coding before hashing — the only way to get a
-    // Merkle root that matches what the Shelbynet storage API will compute.
-    onProgress?.({ stage: 'uploading', progress: 35, message: 'Computing blob commitments...' });
+    // Step 6: Upload to Shelby via the server-side platform account.
+    //
+    // Shelby's chunk-upload authentication requires a raw Ed25519 signature
+    // over server-issued challenge bytes with no framing — wallet-standard
+    // signMessage() always wraps input in a structured frame before signing
+    // (a deliberate anti-blind-signing protection every browser wallet
+    // implements), so no browser wallet can ever satisfy it. See
+    // .env.example (SHELBY_PLATFORM_PRIVATE_KEY) for the full explanation.
+    // Registration, chunk upload, and commit_object all now happen
+    // server-side under a dedicated platform account — Shelbyflix pays
+    // Shelby's storage fees. This does NOT affect content control: access
+    // policy, pricing, and purchase proceeds are still entirely governed
+    // by the creator's own wallet via access_control below.
+    onProgress?.({ stage: 'uploading', progress: 35, message: 'Preparing upload...' });
 
-    const encryptedBuffer = await encryptedBlob.arrayBuffer();
-    const commitments = await computeBlobCommitments(encryptedBuffer);
+    const fileHashHex = await sha256Hex(encryptedBuffer);
+    const uploadAuthMessage = `ShelbyFlix upload: ${fileHashHex}`;
+    const nonce = crypto.randomUUID();
 
-    // Step 7: Register blob on Shelbynet blockchain
-    onProgress?.({
-      stage: 'uploading',
-      progress: 40,
-      message: 'Registering on Shelbynet... (approve wallet)',
-    });
+    onProgress?.({ stage: 'uploading', progress: 38, message: 'Sign to authorize upload... (approve wallet)' });
 
-    const { hash: registerHash, blobId, blobUid } = await registerBlob(
-      signAndSubmitTransaction,
-      blobName,
-      commitments,
-      resolvedAccount,
-      metadata.availabilityPeriod || 30
-    );
+    const signed = await signMessage({ message: uploadAuthMessage, nonce });
+    const walletPublicKey =
+      signed?.publicKey ??
+      (resolvedAccount as any)?.publicKey?.toString?.() ??
+      (metadata as any)._walletPublicKey;
 
-    // Step 7b: Move-flag — register access policy on the access_control module
-    // BEFORE uploading the blob data. This ensures the access policy is set
-    // before the content is available on the storage layer. Only for non-public
-    // modes (allowlist, timelock, purchasable) since public videos don't need
-    // access gating before the blob is uploaded.
+    if (!signed?.signature || !signed?.fullMessage || !walletPublicKey) {
+      throw new Error(
+        'Wallet did not return a usable signature for upload authorization. ' +
+        'Your connected wallet may not support signMessage.',
+      );
+    }
+
+    onProgress?.({ stage: 'uploading', progress: 42, message: 'Uploading to Shelby storage...' });
+
+    const uploadForm = new FormData();
+    uploadForm.append('file', new File([encryptedBlob], blobName, { type: 'application/octet-stream' }));
+    uploadForm.append('walletAddress', uploaderAddress);
+    uploadForm.append('publicKey', String(walletPublicKey));
+    uploadForm.append('signature', String(signed.signature));
+    uploadForm.append('signedMessage', String(signed.fullMessage));
+    uploadForm.append('blobName', blobName);
+    uploadForm.append('expirationDays', String(metadata.availabilityPeriod || 30));
+
+    const uploadResponse = await fetch('/api/uploads', { method: 'POST', body: uploadForm });
+    const uploadResult = await uploadResponse.json().catch(() => ({}));
+
+    if (!uploadResponse.ok || !uploadResult?.success) {
+      throw new Error(uploadResult?.error || `Shelby upload failed (${uploadResponse.status})`);
+    }
+
+    if (uploadResult.isWritten === false) {
+      console.warn(
+        `Blob "${blobName}" uploaded but not yet showing as committed (isWritten: false). ` +
+        `It should resolve shortly, but may briefly show "not found" in the explorer.`,
+      );
+    }
+
+    onProgress?.({ stage: 'uploading', progress: 60, message: 'Upload complete, finalizing...' });
+
+    const blobId = blobName;
+
+    // Step 7b: Move-flag — register access policy on the access_control module.
+    // Runs AFTER the Shelby-layer upload now (order reversed from the old
+    // flow, since upload no longer needs blob metadata from a prior
+    // client-side registration step). Only for non-public modes (allowlist,
+    // timelock, purchasable) since public videos don't need access gating.
     if (
       process.env.NEXT_PUBLIC_ACCESS_BACKEND === 'move' &&
       metadata.accessMode &&
@@ -417,25 +456,6 @@ export async function uploadToShelby(
       // Store the chain tx hash for downstream use
       (metadata as any)._chainTxHash = chainResult.txHash;
     }
-
-    // Step 8: Upload encrypted video to Shelbynet storage using commit_object
-    onProgress?.({ stage: 'uploading', progress: 50, message: 'Uploading to Shelbynet storage...' });
-
-    await uploadBlobToShelbynet(
-      signAndSubmitTransaction,
-      encryptedBlob,
-      blobName,
-      blobUid, // Pass the UID from registerBlob
-      uploaderAddress,
-      (uploadProgress) => {
-        onProgress?.({
-          stage: 'uploading',
-          progress: 50 + uploadProgress * 0.45, // 50% → 95%
-          message: `Uploading to Shelbynet... ${uploadProgress}%`,
-        });
-      }
-    );
-
 
     // Step 9: Generate Shelbynet URL
     const shelbyUrl = getBlobStreamUrl(blobName, uploaderAddress);
@@ -608,6 +628,19 @@ export async function deleteFromShelby(
 /**
  * Validate video file
  */
+/**
+ * SHA-256 hash of a buffer, as lowercase hex — matches sha256Hex() in
+ * app/api/uploads/route.ts exactly, since the client-signed message must
+ * hash-match what the server independently recomputes from the received
+ * bytes.
+ */
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export function validateVideoFile(file: File): { valid: boolean; error?: string } {
   const MAX_SIZE = parseInt(process.env.NEXT_PUBLIC_MAX_VIDEO_SIZE || '104857600');
   const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];

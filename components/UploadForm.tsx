@@ -32,7 +32,7 @@ function formatTime(seconds: number) {
 export default function UploadForm() {
   const router = useRouter();
   const { success, error } = useNotification();
-  const { address, connected, user, signAndSubmitTransaction, account } = useWallet();
+  const { address, connected, user, signAndSubmitTransaction, signMessage, account } = useWallet();
 
   const [videoType, setVideoType] = useState<VideoType>('long');
   const [file, setFile] = useState<File | null>(null);
@@ -297,6 +297,7 @@ export default function UploadForm() {
         } as any,
         address,
         signAndSubmitTransaction,
+        signMessage,
         setUploadProgress
       );
 

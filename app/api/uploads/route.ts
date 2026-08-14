@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey } from '@aptos-labs/ts-sdk';
+import { Ed25519PublicKey, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
 import { hexToBytes } from '@/lib/shared-utils';
 
 // ---------------------------------------------------------------------------
@@ -10,6 +10,10 @@ const ALLOWED_MIME_TYPES = new Set([
   'video/webm',
   'video/quicktime',  // .mov
   'video/x-msvideo', // .avi
+  // Encrypted blobs are opaque ciphertext (AES-256-GCM output), so the
+  // browser typically sends them as generic binary — magic-byte sniffing
+  // below only applies when the plaintext MIME type is asserted.
+  'application/octet-stream',
 ]);
 
 /**
@@ -17,6 +21,40 @@ const ALLOWED_MIME_TYPES = new Set([
  * Also enforced at the middleware level via Content-Length header check.
  */
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
+
+let cachedPlatformAccount: Account | null = null;
+
+/**
+ * The Shelby-level owner-of-record for every blob this app registers.
+ *
+ * Shelby's chunk-upload authentication (ShelbyRPCClient.signChallenge)
+ * requires a raw Ed25519 signature over arbitrary server-issued bytes, with
+ * no framing. Wallet-standard signMessage() (what Petra and every other
+ * Aptos wallet extension expose) always wraps input in a structured frame
+ * before signing — a deliberate anti-blind-signing security boundary, not
+ * a gap in any particular wallet. That means no browser-connected wallet
+ * can ever satisfy Shelby's storage-layer ownership check, regardless of
+ * which account "should" conceptually own the content. This dedicated
+ * server-held account exists specifically to bridge that gap: Shelbyflix
+ * pays Shelby's registration/storage fees and is the on-chain "owner" for
+ * Shelby's bookkeeping purposes only. Actual content control — access
+ * policy, pricing, purchase proceeds — remains entirely with each
+ * creator's own wallet via the separate access_control Move module.
+ */
+function getPlatformAccount(): Account {
+  if (cachedPlatformAccount) return cachedPlatformAccount;
+
+  const raw = process.env.SHELBY_PLATFORM_PRIVATE_KEY;
+  if (!raw || raw.trim().length === 0) {
+    throw new Error(
+      'SHELBY_PLATFORM_PRIVATE_KEY is not configured. See .env.example for setup instructions.',
+    );
+  }
+
+  const privateKey = new Ed25519PrivateKey(raw.trim());
+  cachedPlatformAccount = Account.fromPrivateKey({ privateKey });
+  return cachedPlatformAccount;
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/uploads
@@ -45,10 +83,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const walletAddress = formData.get('walletAddress') as string | null;
     const publicKey     = formData.get('publicKey') as string | null;
     const signature     = formData.get('signature') as string | null;
-    const signedMessage = formData.get('signedMessage') as string | null;
+    // The exact bytes the wallet actually signed. Wallet-standard signMessage
+    // (Petra, and every AIP-62-compliant wallet) wraps the requested
+    // `message` in its own framing before signing (commonly including a
+    // nonce and app info) — the wallet's own SDK call returns this exact
+    // wrapped string as `fullMessage`. We verify the signature against
+    // THAT, rather than assuming any particular wrapping format ourselves —
+    // different wallets may construct it differently, and guessing at a
+    // cryptographic wire format here would be the same mistake this app's
+    // Shelby integration made repeatedly elsewhere in this codebase.
+    const fullMessage   = formData.get('signedMessage') as string | null;
 
     // ── Validate required fields ─────────────────────────────────────────
-    if (!file || !walletAddress || !publicKey || !signature || !signedMessage) {
+    if (!file || !walletAddress || !publicKey || !signature || !fullMessage) {
       return NextResponse.json(
         { error: 'Missing required fields: file, walletAddress, publicKey, signature, signedMessage' },
         { status: 400 }
@@ -71,35 +118,49 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // ── Validate MIME type (from field, then magic-byte sniff) ───────────
     if (!ALLOWED_MIME_TYPES.has(file.type)) {
       return NextResponse.json(
-        { error: `Unsupported file type: ${file.type}. Allowed: mp4, webm, mov, avi` },
+        { error: `Unsupported file type: ${file.type}. Allowed: mp4, webm, mov, avi, or encrypted octet-stream` },
         { status: 415 }
       );
     }
 
-    // Magic-byte check (first 12 bytes) to prevent MIME spoofing
     const fileBuffer = await file.arrayBuffer();
-    const header = new Uint8Array(fileBuffer.slice(0, 12));
-    if (!isVideoMagicBytes(header)) {
-      return NextResponse.json(
-        { error: 'File content does not match a recognised video format' },
-        { status: 415 }
-      );
+
+    // Encrypted blobs (AES-256-GCM ciphertext, see lib/encryption.ts) are
+    // pseudorandom bytes by construction — they will never match a video
+    // magic-byte signature, that's the point of encryption. Magic-byte
+    // sniffing only makes sense for plaintext uploads. The wallet signature
+    // verified below already ties this exact request to a specific,
+    // pre-committed file hash, which is the real integrity/auth guarantee
+    // here regardless of whether the content is encrypted.
+    if (file.type !== 'application/octet-stream') {
+      const header = new Uint8Array(fileBuffer.slice(0, 12));
+      if (!isVideoMagicBytes(header)) {
+        return NextResponse.json(
+          { error: 'File content does not match a recognised video format' },
+          { status: 415 }
+        );
+      }
     }
 
-    // ── Verify the signed message format ─────────────────────────────────
-    // Client must sign "ShelbyFlix upload: <sha256-of-file-hex>"
+    // ── Verify the signed content is bound to THIS exact file ───────────
+    // Client must have requested a signature over "ShelbyFlix upload: <hash>"
+    // — we can't assume exact equality with fullMessage since the wallet's
+    // own wrapping is opaque to us, so we check containment instead. This
+    // still cryptographically binds the signature to this specific file:
+    // the signature only validates against the exact fullMessage bytes
+    // (checked below), and fullMessage must contain our expected content.
     const fileHash = await sha256Hex(fileBuffer);
     const expectedMessage = `ShelbyFlix upload: ${fileHash}`;
 
-    if (signedMessage !== expectedMessage) {
+    if (!fullMessage.includes(expectedMessage)) {
       return NextResponse.json(
         { error: 'Signed message does not match file hash. Possible tampering.' },
         { status: 401 }
       );
     }
 
-    // ── Verify Ed25519 signature ──────────────────────────────────────────
-    const messageBytes = new TextEncoder().encode(signedMessage);
+    // ── Verify Ed25519 signature against the exact bytes the wallet signed ─
+    const messageBytes = new TextEncoder().encode(fullMessage);
     let signatureValid = false;
     try {
       const pubKey  = new Ed25519PublicKey(publicKey);
@@ -114,15 +175,95 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
     }
 
-    // ── Upload not yet implemented server-side ──────────────────────────
-    // Uploads are currently handled client-side via `lib/utils.ts` → `uploadToShelby()`.
-    // The client uploads directly to the Shelbynet CDN after wallet-signing the file hash.
-    // This server-side endpoint will be activated once Shelbynet server-side integration
-    // is complete. Until then, return 501 to avoid misleading clients.
-    return NextResponse.json(
-      { error: 'Upload endpoint not yet implemented. Use client-side Shelbynet upload.' },
-      { status: 501 }
-    );
+    // ── Extract Shelby-specific fields ───────────────────────────────────
+    const blobName = formData.get('blobName') as string | null;
+    const expirationDaysRaw = formData.get('expirationDays') as string | null;
+
+    if (!blobName || typeof blobName !== 'string' || blobName.trim().length === 0) {
+      return NextResponse.json({ error: 'Missing required field: blobName' }, { status: 400 });
+    }
+
+    const expirationDays = expirationDaysRaw ? Number(expirationDaysRaw) : 30;
+    if (!Number.isFinite(expirationDays) || expirationDays <= 0 || expirationDays > 365) {
+      return NextResponse.json(
+        { error: 'expirationDays must be a positive number, at most 365' },
+        { status: 400 },
+      );
+    }
+
+    // ── Perform the upload using the platform account ───────────────────
+    // The wallet signature already verified above proves the connected
+    // creator authorized THIS specific file to be uploaded — the platform
+    // account only handles Shelby's storage-layer bookkeeping from here.
+    let platformAccount: Account;
+    try {
+      platformAccount = getPlatformAccount();
+    } catch (err) {
+      console.error('Platform account unavailable:', err);
+      return NextResponse.json(
+        { error: 'Shelby upload is not configured on this server' },
+        { status: 503 },
+      );
+    }
+
+    const { ShelbyNodeClient } = await import('@shelby-protocol/sdk/node');
+    const { Network } = await import('@aptos-labs/ts-sdk');
+
+    const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
+    const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
+
+    const client = new ShelbyNodeClient({
+      network,
+      apiKey: process.env.SHELBY_API_KEY,
+    });
+
+    const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
+
+    try {
+      await client.upload({
+        blobData: new Uint8Array(fileBuffer),
+        signer: platformAccount,
+        blobName,
+        expirationMicros,
+      });
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error(`Shelby upload failed for blob "${blobName}":`, msg);
+
+      if (/insufficient/i.test(msg) || /E_INSUFFICIENT_FUNDS/i.test(msg)) {
+        return NextResponse.json(
+          { error: 'Platform storage account has insufficient ShelbyUSD/gas. Contact support.' },
+          { status: 503 },
+        );
+      }
+      if (/already exists/i.test(msg) || /BlobAlreadyExists/i.test(msg)) {
+        return NextResponse.json({ error: 'A blob with this name is already registered' }, { status: 409 });
+      }
+
+      return NextResponse.json({ error: `Shelby upload failed: ${msg}` }, { status: 502 });
+    }
+
+    // Verify the blob actually reached the committed (isWritten) state
+    // before reporting success — a registered-but-uncommitted blob would
+    // otherwise look successful here but be unreachable/"not found"
+    // everywhere else (explorer, download, etc.).
+    let isWritten = false;
+    try {
+      const metadata = await client.coordination.getFullObjectMetadata({
+        account: platformAccount.accountAddress,
+        name: blobName,
+      });
+      isWritten = metadata?.isWritten ?? false;
+    } catch (err) {
+      console.warn(`Post-upload metadata check failed for "${blobName}":`, err);
+    }
+
+    return NextResponse.json({
+      success: true,
+      blobName,
+      owner: platformAccount.accountAddress.toString(),
+      isWritten,
+    });
 
   } catch (err) {
     console.error('Upload route error:', err);
