@@ -420,16 +420,42 @@ export async function uploadToShelby(
 
     onProgress?.({ stage: 'uploading', progress: 42, message: 'Uploading to Shelby storage...' });
 
-    const uploadForm = new FormData();
-    uploadForm.append('file', new File([encryptedBlob], blobName, { type: 'application/octet-stream' }));
-    uploadForm.append('walletAddress', uploaderAddress);
-    uploadForm.append('publicKey', String(walletPublicKey));
-    uploadForm.append('signature', String(signed.signature));
-    uploadForm.append('signedMessage', String(signed.fullMessage));
-    uploadForm.append('blobName', blobName);
-    uploadForm.append('expirationDays', String(metadata.availabilityPeriod || 30));
+    // Vercel serverless functions have a hard 4.5MB request body limit,
+    // enforced at the infrastructure level (cannot be raised via
+    // vercel.json or code). Encrypted video files routinely exceed that,
+    // so the encrypted blob is staged directly to Vercel Blob storage from
+    // the browser first — this upload goes straight to blob storage, not
+    // through any of our own serverless functions, so it isn't subject to
+    // that limit. /api/uploads then works with just the resulting URL.
+    const { upload } = await import('@vercel/blob/client');
+    const staged = await upload(blobName, encryptedBlob, {
+      access: 'public',
+      handleUploadUrl: '/api/uploads/blob-token',
+      contentType: 'application/octet-stream',
+      onUploadProgress: ({ percentage }) => {
+        onProgress?.({
+          stage: 'uploading',
+          progress: 42 + percentage * 0.13, // 42% → 55%
+          message: `Staging upload... ${Math.round(percentage)}%`,
+        });
+      },
+    });
 
-    const uploadResponse = await fetch('/api/uploads', { method: 'POST', body: uploadForm });
+    onProgress?.({ stage: 'uploading', progress: 55, message: 'Registering on Shelby...' });
+
+    const uploadResponse = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        blobUrl: staged.url,
+        walletAddress: uploaderAddress,
+        publicKey: String(walletPublicKey),
+        signature: String(signed.signature),
+        signedMessage: String(signed.fullMessage),
+        blobName,
+        expirationDays: metadata.availabilityPeriod || 30,
+      }),
+    });
     const uploadResult = await uploadResponse.json().catch(() => ({}));
 
     if (!uploadResponse.ok || !uploadResult?.success) {
