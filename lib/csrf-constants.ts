@@ -21,9 +21,11 @@ export const CSRF_COOKIE_MAX_AGE = 86400;
  * - /api/admin/cleanup-expired: uses x-cron-secret header auth
  * - /api/auth/challenge: issues nonces (no state change, read-like semantics)
  * - /api/auth/check-access: wallet signature verification (has its own auth)
+ * - /api/users: wallet-based user creation (called during initial setup before CSRF token is available)
  */
 export const CSRF_EXEMPT_PATHS: string[] = [
   '/api/admin/cleanup-expired',
   '/api/auth/challenge',
   '/api/auth/check-access',
+  '/api/users',
 ];
