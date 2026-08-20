@@ -24,16 +24,26 @@ export async function isUsernameAvailable(username: string): Promise<boolean> {
 
 /**
  * Get user by wallet address
+ * Now uses the API route to bypass RLS issues
  */
 export async function getUserByWallet(walletAddress: string): Promise<User | null> {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('wallet_address', walletAddress.toLowerCase())
-    .single();
-  
-  if (error) return null;
-  return data;
+  try {
+    const response = await fetch(`/api/users?walletAddress=${encodeURIComponent(walletAddress)}`);
+    
+    if (response.status === 404) {
+      return null;
+    }
+    
+    if (!response.ok) {
+      console.error('Error fetching user:', await response.text());
+      return null;
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to fetch user:', error);
+    return null;
+  }
 }
 
 /**
@@ -52,6 +62,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 
 /**
  * Create new user
+ * Now uses the API route to bypass RLS since wallet auth doesn't integrate with Supabase auth
  */
 export async function createUser(
   walletAddress: string,
@@ -59,35 +70,24 @@ export async function createUser(
   displayName?: string
 ): Promise<User | null> {
   try {
-    // Check if user already exists
-    const existing = await getUserByWallet(walletAddress);
-    if (existing) {
-      return existing;
+    const response = await fetch('/api/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        walletAddress,
+        username,
+        displayName,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to create user');
     }
-    
-    // Check if username is taken
-    const available = await isUsernameAvailable(username);
-    if (!available) {
-      throw new Error('Username already taken');
-    }
-    
-    // Create new user
-    const { data, error } = await supabase
-      .from('users')
-      .insert({
-        wallet_address: walletAddress.toLowerCase(),
-        username: username.toLowerCase(),
-        display_name: displayName || username,
-      })
-      .select()
-      .single();
-    
-    if (error) {
-      console.error('Error creating user:', error);
-      throw error;
-    }
-    
-    return data;
+
+    return await response.json();
   } catch (error) {
     console.error('Failed to create user:', error);
     throw error;
