@@ -298,6 +298,7 @@ export default function UploadForm() {
         address,
         signAndSubmitTransaction,
         signMessage,
+        account?.publicKey?.toString(),
         setUploadProgress
       );
 

@@ -317,6 +317,7 @@ export async function uploadToShelby(
   uploaderAccount: AccountAddress | { toString: () => string },
   signAndSubmitTransaction: any,
   signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  walletPublicKeyHex: string | undefined,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<ShelbyUploadResponse> {
   try {
@@ -381,15 +382,39 @@ export async function uploadToShelby(
     onProgress?.({ stage: 'uploading', progress: 38, message: 'Sign to authorize upload... (approve wallet)' });
 
     const signed = await signMessage({ message: uploadAuthMessage, nonce });
-    const walletPublicKey =
-      signed?.publicKey ??
-      (resolvedAccount as any)?.publicKey?.toString?.() ??
-      (metadata as any)._walletPublicKey;
+
+    // Diagnostic: log exactly what the wallet returned (minus secret material)
+    // so a future failure here is immediately debuggable instead of guessed
+    // at. This matters because different wallet providers — the Petra
+    // browser extension vs. AptosConnect's Google/Apple social-login
+    // wallets, which are Aptos Keyless accounts under the hood — may not
+    // implement signMessage identically or return the same field set, even
+    // though both go through the same useWallet() interface.
+    console.log('🔏 signMessage() response shape:', {
+      hasSignature: !!signed?.signature,
+      hasFullMessage: !!signed?.fullMessage,
+      hasPublicKey: !!signed?.publicKey,
+      keys: signed ? Object.keys(signed) : null,
+    });
+
+    // signed.publicKey is only present on some wallet implementations.
+    // walletPublicKeyHex (passed in from the connected account's own
+    // account.publicKey, NOT derivable from uploaderAccount/resolvedAccount
+    // — those are AccountAddress values by this point and never carry a
+    // public key) is the reliable fallback.
+    const walletPublicKey = signed?.publicKey ?? walletPublicKeyHex;
 
     if (!signed?.signature || !signed?.fullMessage || !walletPublicKey) {
+      const missing = [
+        !signed?.signature && 'signature',
+        !signed?.fullMessage && 'fullMessage',
+        !walletPublicKey && 'publicKey',
+      ].filter(Boolean).join(', ');
       throw new Error(
-        'Wallet did not return a usable signature for upload authorization. ' +
-        'Your connected wallet may not support signMessage.',
+        `Wallet did not return a usable signature for upload authorization ` +
+        `(missing: ${missing}). This can happen with some social-login/` +
+        `Keyless-based wallet connections that don't fully support message ` +
+        `signing — try connecting with the Petra browser extension instead.`,
       );
     }
 
