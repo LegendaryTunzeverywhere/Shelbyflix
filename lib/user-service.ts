@@ -96,6 +96,7 @@ export async function createUser(
 
 /**
  * Update user profile
+ * Now uses the API route to bypass RLS issues
  */
 export async function updateUserProfile(
   walletAddress: string,
@@ -107,27 +108,37 @@ export async function updateUserProfile(
     bio?: string;
   }
 ): Promise<User | null> {
-  // If updating username, check availability
-  if (updates.username) {
-    const currentUser = await getUserByWallet(walletAddress);
-    if (currentUser && currentUser.username.toLowerCase() !== updates.username.toLowerCase()) {
-      const available = await isUsernameAvailable(updates.username);
-      if (!available) {
-        throw new Error('Username already taken');
+  try {
+    // If updating username, check availability
+    if (updates.username) {
+      const currentUser = await getUserByWallet(walletAddress);
+      if (currentUser && currentUser.username.toLowerCase() !== updates.username.toLowerCase()) {
+        const available = await isUsernameAvailable(updates.username);
+        if (!available) {
+          throw new Error('Username already taken');
+        }
       }
     }
+
+    const response = await fetch('/api/users', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        walletAddress,
+        updates,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to update profile');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to update user profile:', error);
+    throw error;
   }
-  
-  const { data, error } = await supabase
-    .from('users')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('wallet_address', walletAddress.toLowerCase())
-    .select()
-    .single();
-  
-  if (error) throw error;
-  return data;
 }

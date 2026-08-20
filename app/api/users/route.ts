@@ -130,3 +130,81 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+/**
+ * PATCH /api/users
+ * Update user profile (avatar, banner, bio, etc.)
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { walletAddress, updates } = body;
+
+    // Validate inputs
+    if (!walletAddress || !updates) {
+      return NextResponse.json(
+        { error: 'walletAddress and updates are required' },
+        { status: 400 }
+      );
+    }
+
+    const walletLc = normalizeAddress(walletAddress);
+    const admin = getSupabaseAdmin();
+
+    // Verify user exists
+    const { data: existingUser } = await admin
+      .from('users')
+      .select('*')
+      .eq('wallet_address', walletLc)
+      .maybeSingle();
+
+    if (!existingUser) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // If updating username, check availability
+    if (updates.username && updates.username.toLowerCase() !== existingUser.username.toLowerCase()) {
+      const { data: existingUsername } = await admin
+        .from('users')
+        .select('username')
+        .eq('username', updates.username.toLowerCase())
+        .maybeSingle();
+
+      if (existingUsername) {
+        return NextResponse.json(
+          { error: 'Username already taken' },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Update user profile
+    const { data: updatedUser, error } = await admin
+      .from('users')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('wallet_address', walletLc)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating user:', error);
+      return NextResponse.json(
+        { error: 'Failed to update user', details: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(updatedUser, { status: 200 });
+  } catch (error) {
+    console.error('Failed to update user:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
