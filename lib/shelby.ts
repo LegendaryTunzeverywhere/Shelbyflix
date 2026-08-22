@@ -16,6 +16,7 @@ import type { AccessPolicy, RegistrationInfoV2 } from './move-bcs';
 import { ACCESS_CONTROL_MODULE } from './move-contract';
 import { logChainWriteSuccess } from './move-logging';
 import { getAptosClient } from './aptos-client';
+import { csrfFetch } from './csrf-client';
 
 export interface ShelbyUploadResponse {
   videoId: string;
@@ -443,9 +444,8 @@ export async function uploadToShelby(
 
     onProgress?.({ stage: 'uploading', progress: 55, message: 'Registering on Shelby...' });
 
-    const uploadResponse = await fetch('/api/uploads', {
+    const uploadResponse = await csrfFetch('/api/uploads', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         blobUrl: staged.url,
         walletAddress: uploaderAddress,
@@ -509,7 +509,19 @@ export async function uploadToShelby(
     }
 
     // Step 9: Generate Shelbynet URL
-    const shelbyUrl = getBlobStreamUrl(blobName, uploaderAddress);
+    //
+    // FIX: this previously used `uploaderAddress` (the creator's own
+    // wallet), which was correct before the server-side platform-account
+    // architecture change but is wrong now — Shelby's storage ledger keys
+    // blobs by (owner_address, blobName), and the actual on-chain owner is
+    // now the platform account (client.upload() in /api/uploads/route.ts
+    // signs with platformAccount, not the creator's wallet). A URL built
+    // with the creator's address would point at an owner that doesn't
+    // actually hold the blob, producing "not found" on every playback
+    // attempt. uploadResult.owner (returned by the route) is the real
+    // owner address to use here.
+    const shelbyOwnerAddress = uploadResult.owner || uploaderAddress;
+    const shelbyUrl = getBlobStreamUrl(blobName, shelbyOwnerAddress);
 
     // Step 10: Complete
     onProgress?.({ stage: 'complete', progress: 100, message: 'Upload complete!' });
