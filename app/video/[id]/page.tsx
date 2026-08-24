@@ -178,7 +178,7 @@ function RelatedVideoCard({ video }: { video: VideoMetadata }) {
 export default function VideoPage() {
   const params = useParams();
   const router = useRouter();
-  const { address, signAndSubmitTransaction } = useWallet();
+  const { address, signAndSubmitTransaction, signMessage, account } = useWallet();
 
   const [video, setVideo] = useState<VideoMetadata | null>(null);
   const [related, setRelated] = useState<VideoMetadata[]>([]);
@@ -234,7 +234,7 @@ export default function VideoPage() {
     
     try {
       const { deleteVideo } = await import('@/lib/video-service');
-      await deleteVideo(video.videoId, video.blobName, signAndSubmitTransaction, video.shelbyUrl);
+      await deleteVideo(video.videoId, signMessage, address.toString(), account?.publicKey?.toString());
       
       // Clear local state
       setVideo(null);

@@ -1,7 +1,6 @@
 import type { VideoMetadata, UploadProgress, AccessMode } from '@/types';
 import {
   getBlobStreamUrl,
-  ShelbyBlobClient,
 } from './shelbynet-blob';
 import { AccountAddress } from '@aptos-labs/ts-sdk';
 import {
@@ -621,72 +620,13 @@ export function clearVideoCache(): void {
   videoCache.clear();
 }
 
-/**
- * Delete video (Shelbynet blobs expire automatically)
- */
-export async function deleteFromShelby(
-  videoId: string,
-  shelbyUrl: string,
-  blobName: string,
-  signAndSubmitTransaction: any
-): Promise<boolean> {
-  const cacheKey = `video_${blobName}`;
-  if (videoCache.has(cacheKey)) {
-    videoCache.delete(cacheKey);
-  }
-
-  if (!signAndSubmitTransaction) {
-    throw new Error('No signer available to delete Shelby blob');
-  }
-
-  if (!blobName) {
-    throw new Error('Missing blob name for Shelby deletion');
-  }
-
-  const payload = ShelbyBlobClient.createDeleteObjectPayload({ blobName });
-
-  let txHash: string;
-  try {
-    const response = await signAndSubmitTransaction({ data: payload });
-    txHash = response.hash;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (
-      message.toLowerCase().includes('user rejected') ||
-      message.toLowerCase().includes('user denied') ||
-      message.toLowerCase().includes('rejected by user') ||
-      message.toLowerCase().includes('cancelled')
-    ) {
-      throw new Error('Shelby deletion cancelled by user');
-    }
-    throw new Error(`Shelby deletion failed: ${message}`);
-  }
-
-  const aptos = getAptosClient();
-  let txResult: any;
-  try {
-    txResult = await aptos.waitForTransaction({
-      transactionHash: txHash,
-      options: { checkSuccess: false },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Shelby deletion commit failed: ${message}`);
-  }
-
-  if (txResult.success === false) {
-    const vmStatus: string = txResult.vm_status ?? '';
-    throw new Error(`Shelby deletion aborted on-chain: ${vmStatus || 'Unknown VM error'}`);
-  }
-
-  logChainWriteSuccess('delete_blob', {
-    videoId,
-    txHash,
-    version: txResult.version ?? 0,
-  });
-
-  return true;
-}
+// deleteFromShelby was removed: it had the caller's own wallet sign a
+// Shelby delete_object transaction directly, which can never succeed
+// post-architecture-change (the platform account is the actual on-chain
+// blob owner, not the uploader's wallet — see lib/shelby-platform.ts).
+// Deletion now goes through the authenticated server route
+// (app/api/videos/[id]/route.ts) via lib/video-service.ts's deleteVideo,
+// which performs the Shelby deletion signed by the platform account.
 
 /**
  * Validate video file

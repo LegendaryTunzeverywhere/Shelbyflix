@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
+import { Ed25519PublicKey, type Account } from '@aptos-labs/ts-sdk';
 import { del } from '@vercel/blob';
 import { hexToBytes } from '@/lib/shared-utils';
+import { getPlatformAccount } from '@/lib/shelby-platform';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
@@ -12,40 +13,6 @@ import { hexToBytes } from '@/lib/shared-utils';
  * Also enforced at the middleware level via Content-Length header check.
  */
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
-
-let cachedPlatformAccount: Account | null = null;
-
-/**
- * The Shelby-level owner-of-record for every blob this app registers.
- *
- * Shelby's chunk-upload authentication (ShelbyRPCClient.signChallenge)
- * requires a raw Ed25519 signature over arbitrary server-issued bytes, with
- * no framing. Wallet-standard signMessage() (what Petra and every other
- * Aptos wallet extension expose) always wraps input in a structured frame
- * before signing — a deliberate anti-blind-signing security boundary, not
- * a gap in any particular wallet. That means no browser-connected wallet
- * can ever satisfy Shelby's storage-layer ownership check, regardless of
- * which account "should" conceptually own the content. This dedicated
- * server-held account exists specifically to bridge that gap: Shelbyflix
- * pays Shelby's registration/storage fees and is the on-chain "owner" for
- * Shelby's bookkeeping purposes only. Actual content control — access
- * policy, pricing, purchase proceeds — remains entirely with each
- * creator's own wallet via the separate access_control Move module.
- */
-function getPlatformAccount(): Account {
-  if (cachedPlatformAccount) return cachedPlatformAccount;
-
-  const raw = process.env.SHELBY_PLATFORM_PRIVATE_KEY;
-  if (!raw || raw.trim().length === 0) {
-    throw new Error(
-      'SHELBY_PLATFORM_PRIVATE_KEY is not configured. See .env.example for setup instructions.',
-    );
-  }
-
-  const privateKey = new Ed25519PrivateKey(raw.trim());
-  cachedPlatformAccount = Account.fromPrivateKey({ privateKey });
-  return cachedPlatformAccount;
-}
 
 // ---------------------------------------------------------------------------
 // POST /api/uploads

@@ -125,7 +125,7 @@ function ChannelVideoRow({
 export default function ChannelPage() {
   const params = useParams();
   const router = useRouter();
-  const { address, user, signAndSubmitTransaction, refreshUser } = useWallet();
+  const { address, user, signAndSubmitTransaction, signMessage, account, refreshUser } = useWallet();
 
   const channelAddress = (params.address as string).toLowerCase();
   const isOwner = address?.toString().toLowerCase() === channelAddress;
@@ -447,6 +447,9 @@ export default function ChannelPage() {
         <DeleteVideoModal
           video={deletingVideo}
           signAndSubmitTransaction={signAndSubmitTransaction}
+          signMessage={signMessage}
+          walletAddress={address?.toString() ?? ''}
+          walletPublicKeyHex={account?.publicKey?.toString()}
           onClose={() => setDeletingVideo(null)}
           onSuccess={() => handleDeleteSuccess(deletingVideo.videoId)}
         />

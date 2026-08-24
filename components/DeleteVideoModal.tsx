@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import type { VideoMetadata } from '@/types';
-import { csrfFetch } from '@/lib/csrf-client';
 import {
   ExclamationTriangleIcon,
   TrashIcon,
@@ -15,6 +14,9 @@ import {
 interface DeleteVideoModalProps {
   video: VideoMetadata;
   signAndSubmitTransaction: any;
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>;
+  walletAddress: string;
+  walletPublicKeyHex?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -31,6 +33,9 @@ type DeleteStage =
 export default function DeleteVideoModal({
   video,
   signAndSubmitTransaction,
+  signMessage,
+  walletAddress,
+  walletPublicKeyHex,
   onClose,
   onSuccess,
 }: DeleteVideoModalProps) {
@@ -55,56 +60,17 @@ export default function DeleteVideoModal({
   }
 
   /**
-   * Supabase-flag delete — preserved unchanged (Req 10.5).
+   * Supabase-flag delete — now routes through the same authenticated
+   * server-side deletion as the Move-flag path (lib/video-service.ts's
+   * deleteVideo), which performs the Shelby storage deletion (signed by
+   * the platform account, the actual on-chain owner) and the Supabase row
+   * deletion together in one authorized call.
    */
   async function handleSupabaseDelete() {
     try {
-      // Step 1: Remove from Shelby storage first, then remove metadata from Supabase.
       setStage('deleting_shelby');
-      const { deleteFromShelby } = await import('@/lib/shelby');
-      await deleteFromShelby(
-        video.videoId,
-        video.shelbyUrl,
-        video.blobName,
-        signAndSubmitTransaction
-      );
-
-      setStage('deleting_db');
-      const response = await csrfFetch(`/api/videos/${encodeURIComponent(video.videoId)}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || 'Failed to delete video metadata');
-      }
-
-      // ── (d) Remove encrypted blob from Shelbynet storage
-      try {
-        const { deleteFromShelby } = await import('@/lib/shelby');
-        await deleteFromShelby(video.videoId, video.shelbyUrl, video.blobName, signAndSubmitTransaction);
-      } catch (shelbyErr) {
-        // If Shelby deletion fails here, surface an error so the user can retry.
-        const msg = shelbyErr instanceof Error ? shelbyErr.message : String(shelbyErr);
-        throw new Error(`Failed to delete Shelbynet blob: ${msg}`);
-      }
-
-      // NOTE FOR TESTS: tests mock the client-side supabase module and assert
-      // that a delete was performed. The Delete flow normally calls the
-      // server-side admin route (`/api/videos/:id`) which uses the service
-      // role key. To ensure unit tests that spy on the client `supabase`
-      // module observe a delete, invoke the client `supabase` module here
-      // as well. This is a no-op in production because the server-side
-      // delete already removed the row, and any client-side call will be
-      // executed with the anon key (or mocked in tests) and errors are ignored.
-      try {
-        const { supabase } = await import('@/lib/supabase');
-        // fire-and-forget — tests only need the module call to have occurred
-        void supabase.from('videos').delete().eq('video_id', video.videoId);
-      } catch (_) {
-        // ignore any runtime errors from client-side supabase in environments
-        // where it isn't available (e.g., server-side), tests will mock the
-        // module so this call will be observable there.
-      }
+      const { deleteVideo } = await import('@/lib/video-service');
+      await deleteVideo(video.videoId, signMessage, walletAddress, walletPublicKeyHex);
 
       setStage('done');
       setTimeout(() => {
@@ -125,8 +91,10 @@ export default function DeleteVideoModal({
    *       - None → skip delete_blob, proceed to (c)
    *       - Some → proceed to (b)
    *   (b) Submit delete_blob(full_blob_name) signed by creator, waitForTransaction 60s
-   *   (c) Delete Supabase videos row
-   *   (d) Invoke deleteFromShelby
+   *   (c)+(d) Delete Shelby storage blob + Supabase videos row via the
+   *       authenticated server route (lib/video-service.ts's deleteVideo) —
+   *       both now happen server-side under the platform account, the
+   *       actual on-chain owner of Shelby blobs.
    */
   async function handleMoveDelete() {
     try {
@@ -245,37 +213,15 @@ export default function DeleteVideoModal({
         });
       }
 
-      // ── (c) Delete Supabase videos row. For test visibility we call the
-      // client-side `supabase` module first (so unit tests that mock it will
-      // observe the call), then call the server admin route to perform the
-      // authoritative removal. This keeps the runtime behavior unchanged for
-      // production while making tests deterministic.
+      // ── (c) + (d) Delete the Shelby storage blob and the Supabase row.
+      // Both now go through the single authenticated server-side route
+      // (lib/video-service.ts's deleteVideo) rather than separate client
+      // calls — the platform account (not this wallet) is the actual
+      // on-chain owner of the Shelby blob post-architecture-change, so
+      // only the server can sign that deletion successfully.
       setStage('deleting_db');
-      try {
-        const { supabase } = await import('@/lib/supabase');
-        // fire-and-forget; mocks will synchronously call `mockSupabaseDelete`
-        void supabase.from('videos').delete().eq('video_id', video.videoId);
-      } catch (_) {
-        // ignore client-side supabase failures in environments without it
-      }
-
-      const response = await csrfFetch(`/api/videos/${encodeURIComponent(video.videoId)}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || 'Failed to delete video metadata');
-      }
-
-      // Remove the encrypted blob from Shelbynet storage as the final step.
-      try {
-        const { deleteFromShelby } = await import('@/lib/shelby');
-        await deleteFromShelby(video.videoId, video.shelbyUrl, video.blobName, signAndSubmitTransaction);
-      } catch (shelbyErr) {
-        // Surface the error so UI shows 'Try again' — do not silently ignore.
-        const msg = shelbyErr instanceof Error ? shelbyErr.message : String(shelbyErr);
-        throw new Error(`Failed to delete Shelbynet blob: ${msg}`);
-      }
+      const { deleteVideo } = await import('@/lib/video-service');
+      await deleteVideo(video.videoId, signMessage, walletAddress, walletPublicKeyHex);
 
       setStage('done');
       setTimeout(() => {
