@@ -31,7 +31,17 @@ export async function POST(request: Request): Promise<NextResponse> {
         // leaving stray blobs reachable indefinitely if a client never
         // completes the follow-up /api/uploads call.
         return {
-          allowedContentTypes: ['application/octet-stream'],
+          // FIX: no allowedContentTypes restriction. This was set to
+          // ['application/octet-stream'] (matching the contentType the
+          // client explicitly declares), but the actual blob pathname
+          // carries the original filename's extension (e.g. "...Scene.mp4")
+          // — if Vercel Blob validates/infers content type from the
+          // pathname's extension rather than (or in addition to) the
+          // explicitly-declared contentType, that mismatch would explain
+          // the 400 seen on the actual PUT step. We don't need this
+          // restriction anyway: integrity is already verified downstream
+          // by the wallet signature check in /api/uploads (bound to the
+          // exact file hash), not by content-type enforcement here.
           maximumSizeInBytes: MAX_STAGED_BLOB_SIZE_BYTES,
           addRandomSuffix: true,
           validUntil: Date.now() + 15 * 60 * 1000, // 15 minutes
