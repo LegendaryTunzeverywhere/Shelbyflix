@@ -22,19 +22,16 @@ export const CSRF_COOKIE_MAX_AGE = 86400;
  * - /api/auth/challenge: issues nonces (no state change, read-like semantics)
  * - /api/auth/check-access: wallet signature verification (has its own auth)
  * - /api/users: wallet-based user creation (called during initial setup before CSRF token is available)
- * - /api/uploads/blob-token: called internally by @vercel/blob/client's
- *   upload() helper via a plain fetch() to whatever handleUploadUrl is
- *   configured — that's third-party SDK code we don't control, so it has
- *   no way to read our csrf-token cookie and attach the x-csrf-token
- *   header. This route only issues short-lived, single-use Vercel Blob
- *   client tokens and never touches file bytes or app state, so the
- *   actual security-relevant work (the Shelby upload itself) still goes
- *   through the normal CSRF-protected /api/uploads route.
+ *
+ * NOTE: /api/uploads/staging-token (the Supabase Storage-based replacement
+ * for the old Vercel Blob staging flow) does NOT need an exemption — it's
+ * called via lib/shelby.ts's own csrfFetch(), unlike the old Vercel Blob
+ * approach where a third-party SDK's internal fetch() couldn't attach our
+ * CSRF header.
  */
 export const CSRF_EXEMPT_PATHS: string[] = [
   '/api/admin/cleanup-expired',
   '/api/auth/challenge',
   '/api/auth/check-access',
   '/api/users',
-  '/api/uploads/blob-token',
 ];

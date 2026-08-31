@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Ed25519PublicKey, type Account } from '@aptos-labs/ts-sdk';
-import { del } from '@vercel/blob';
 import { hexToBytes } from '@/lib/shared-utils';
 import { getPlatformAccount } from '@/lib/shelby-platform';
+import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import { STAGING_BUCKET } from '@/lib/upload-staging';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
@@ -18,8 +19,9 @@ const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 // POST /api/uploads
 //
 // JSON body fields expected:
-//   - blobUrl       : URL of the encrypted file staged via Vercel Blob
-//                      client upload (see /api/uploads/blob-token) (string)
+//   - stagingPath   : path of the encrypted file within the Supabase
+//                      Storage staging bucket (see
+//                      /api/uploads/staging-token) (string)
 //   - walletAddress : 0x-prefixed Aptos address (string)
 //   - publicKey     : hex Ed25519 public key (string)
 //   - signature     : hex Ed25519 signature over the message below (string)
@@ -35,11 +37,16 @@ const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 // serverless functions have a hard 4.5MB request body limit enforced at
 // the infrastructure level (cannot be raised via vercel.json or code —
 // confirmed against Vercel's own docs), which every real video upload
-// would exceed. The browser instead stages the encrypted blob directly to
-// Vercel Blob storage (bypassing this limit entirely) and sends just the
-// resulting URL here — a small JSON payload, well under the limit. This
-// route fetches the actual bytes server-to-server, which isn't subject to
-// the same client-request body cap.
+// would exceed. The browser instead stages the encrypted blob to a
+// private Supabase Storage bucket first (bypassing this limit entirely)
+// and sends just a path reference here — a small JSON payload, well
+// under the limit. This route downloads the actual bytes server-side via
+// the authenticated Supabase admin client, which isn't subject to the
+// same client-request body cap.
+//
+// (Previously staged via Vercel Blob's client-upload flow instead —
+// switched away after hitting a confirmed, currently unresolved CORS bug
+// on Vercel's own infrastructure; see community.vercel.com/t/46967.)
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -54,7 +61,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const {
-      blobUrl,
+      stagingPath,
       walletAddress,
       publicKey,
       signature,
@@ -74,28 +81,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // ── Validate required fields ─────────────────────────────────────────
     if (
-      typeof blobUrl !== 'string' || !blobUrl ||
+      typeof stagingPath !== 'string' || !stagingPath ||
       typeof walletAddress !== 'string' || !walletAddress ||
       typeof publicKey !== 'string' || !publicKey ||
       typeof signature !== 'string' || !signature ||
       typeof fullMessage !== 'string' || !fullMessage
     ) {
       return NextResponse.json(
-        { error: 'Missing required fields: blobUrl, walletAddress, publicKey, signature, signedMessage' },
+        { error: 'Missing required fields: stagingPath, walletAddress, publicKey, signature, signedMessage' },
         { status: 400 }
       );
     }
-
-    // Staged blobs only ever come from our own Blob store — reject anything
-    // else outright rather than letting this route fetch an arbitrary URL.
-    let parsedBlobUrl: URL;
-    try {
-      parsedBlobUrl = new URL(blobUrl);
-    } catch {
-      return NextResponse.json({ error: 'Invalid blobUrl' }, { status: 400 });
-    }
-    if (!/\.public\.blob\.vercel-storage\.com$/.test(parsedBlobUrl.hostname)) {
-      return NextResponse.json({ error: 'blobUrl is not a recognised Vercel Blob URL' }, { status: 400 });
+    // Same sanitisation as the staging-token route — alphanumeric,
+    // underscore, hyphen, dot only. Prevents path traversal within the
+    // staging bucket.
+    if (!/^[\w.-]+$/.test(stagingPath)) {
+      return NextResponse.json({ error: 'Invalid stagingPath' }, { status: 400 });
     }
 
     // ── Validate wallet address format ───────────────────────────────────
@@ -106,17 +107,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // ── Fetch the staged file server-to-server ───────────────────────────
     // Not subject to the client-request body limit — this is an outbound
     // fetch initiated by our own server, not an inbound request body.
+    // Uses the service-role admin client since the staging bucket is
+    // private, not the public-URL pattern Vercel Blob used.
     let fileBuffer: ArrayBuffer;
     let contentLength: number;
     try {
-      const blobResponse = await fetch(blobUrl);
-      if (!blobResponse.ok) {
-        return NextResponse.json(
-          { error: `Failed to fetch staged upload (${blobResponse.status})` },
-          { status: 502 },
-        );
+      const admin = getSupabaseAdmin();
+      const { data: stagedBlob, error: downloadError } = await admin.storage
+        .from(STAGING_BUCKET)
+        .download(stagingPath);
+
+      if (downloadError || !stagedBlob) {
+        console.error('Failed to download staged upload:', downloadError);
+        return NextResponse.json({ error: 'Failed to fetch staged upload' }, { status: 502 });
       }
-      fileBuffer = await blobResponse.arrayBuffer();
+      fileBuffer = await stagedBlob.arrayBuffer();
       contentLength = fileBuffer.byteLength;
     } catch (err) {
       console.error('Failed to fetch staged blob:', err);
@@ -226,7 +231,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     } catch (err: any) {
       const msg = err?.message || String(err);
       console.error(`Shelby upload failed for blob "${blobName}":`, msg);
-      await cleanupStagedBlob(blobUrl);
+      await cleanupStagedBlob(stagingPath);
 
       if (/insufficient/i.test(msg) || /E_INSUFFICIENT_FUNDS/i.test(msg)) {
         return NextResponse.json(
@@ -243,7 +248,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // The staged Vercel Blob was only ever a bridge past the function body
     // limit — once Shelby has the bytes, it serves no further purpose.
-    await cleanupStagedBlob(blobUrl);
+    await cleanupStagedBlob(stagingPath);
 
     // Verify the blob actually reached the committed (isWritten) state
     // before reporting success — a registered-but-uncommitted blob would
@@ -285,15 +290,23 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
 }
 
 /**
- * Best-effort deletion of a staged Vercel Blob upload. Never throws — a
- * failed cleanup shouldn't mask the real upload result, and staged blobs
- * also carry a 15-minute validUntil (see blob-token/route.ts) as a backstop
- * if this doesn't run for any reason.
+ * Best-effort deletion of a staged Supabase Storage upload. Never throws —
+ * a failed cleanup shouldn't mask the real upload result. Unlike the old
+ * Vercel Blob approach (which had a validUntil-based auto-expiry as a
+ * backstop), this staging bucket has no automatic expiry configured, so a
+ * failed cleanup here does leave the staged file behind — acceptable
+ * since it's a small ciphertext blob in a private bucket, not a
+ * correctness or security issue, but worth revisiting if stale staged
+ * files ever need periodic sweeping.
  */
-async function cleanupStagedBlob(blobUrl: string): Promise<void> {
+async function cleanupStagedBlob(stagingPath: string): Promise<void> {
   try {
-    await del(blobUrl);
+    const admin = getSupabaseAdmin();
+    const { error } = await admin.storage.from(STAGING_BUCKET).remove([stagingPath]);
+    if (error) {
+      console.warn(`Failed to clean up staged upload at ${stagingPath}:`, error);
+    }
   } catch (err) {
-    console.warn(`Failed to clean up staged blob at ${blobUrl}:`, err);
+    console.warn(`Failed to clean up staged upload at ${stagingPath}:`, err);
   }
 }

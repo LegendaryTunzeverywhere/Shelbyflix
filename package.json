@@ -47,7 +47,6 @@
     "@tailwindcss/forms": "0.5.11",
     "@tailwindcss/postcss": "4.2.1",
     "@vercel/analytics": "^2.0.1",
-    "@vercel/blob": "^2.8.0",
     "@wallet-standard/core": "^1.1.1",
     "date-fns": "4.1.0",
     "dotenv": "16.4.7",

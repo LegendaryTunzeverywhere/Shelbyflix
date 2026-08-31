@@ -423,30 +423,47 @@ export async function uploadToShelby(
     // Vercel serverless functions have a hard 4.5MB request body limit,
     // enforced at the infrastructure level (cannot be raised via
     // vercel.json or code). Encrypted video files routinely exceed that,
-    // so the encrypted blob is staged directly to Vercel Blob storage from
-    // the browser first — this upload goes straight to blob storage, not
-    // through any of our own serverless functions, so it isn't subject to
-    // that limit. /api/uploads then works with just the resulting URL.
-    const { upload } = await import('@vercel/blob/client');
-    const staged = await upload(blobName, encryptedBlob, {
-      access: 'public',
-      handleUploadUrl: '/api/uploads/blob-token',
-      contentType: 'application/octet-stream',
-      onUploadProgress: ({ percentage }) => {
-        onProgress?.({
-          stage: 'uploading',
-          progress: 42 + percentage * 0.13, // 42% → 55%
-          message: `Staging upload... ${Math.round(percentage)}%`,
-        });
-      },
+    // so the encrypted blob is staged first, bypassing our own functions
+    // for the large payload — /api/uploads then works with just a
+    // reference to the staged file.
+    //
+    // FIX: this previously staged through Vercel Blob's client-upload flow
+    // (@vercel/blob/client's upload()). That hit a confirmed, currently
+    // unresolved bug on Vercel's own infrastructure: the actual PUT to
+    // their blob API returns a response with no Access-Control-Allow-Origin
+    // header, which every browser blocks as a CORS failure — reported
+    // independently by another developer with an identical environment and
+    // identical symptoms, acknowledged by Vercel support as needing
+    // internal investigation with no fix available
+    // (community.vercel.com/t/46967). Replaced with the equivalent pattern
+    // via Supabase Storage instead (already a dependency here, and not
+    // affected by that Vercel-specific bug): request a signed upload URL
+    // from our own server, then PUT directly to Supabase Storage using it.
+    const tokenResponse = await csrfFetch('/api/uploads/staging-token', {
+      method: 'POST',
+      body: JSON.stringify({ pathname: blobName }),
     });
+    const tokenResult = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok || !tokenResult?.signedUrl) {
+      throw new Error(tokenResult?.error || `Failed to get staging upload token (${tokenResponse.status})`);
+    }
+
+    const { supabase } = await import('./supabase');
+    const { error: stagingError } = await supabase.storage
+      .from(tokenResult.bucket)
+      .uploadToSignedUrl(tokenResult.path, tokenResult.token, encryptedBlob, {
+        contentType: 'application/octet-stream',
+      });
+    if (stagingError) {
+      throw new Error(`Failed to stage upload: ${stagingError.message}`);
+    }
 
     onProgress?.({ stage: 'uploading', progress: 55, message: 'Registering on Shelby...' });
 
     const uploadResponse = await csrfFetch('/api/uploads', {
       method: 'POST',
       body: JSON.stringify({
-        blobUrl: staged.url,
+        stagingPath: tokenResult.path,
         walletAddress: uploaderAddress,
         publicKey: String(walletPublicKey),
         signature: String(signed.signature),
