@@ -246,8 +246,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: `Shelby upload failed: ${msg}` }, { status: 502 });
     }
 
-    // The staged Vercel Blob was only ever a bridge past the function body
-    // limit — once Shelby has the bytes, it serves no further purpose.
+    // The staged Supabase Storage upload was only ever a bridge past the
+    // function body limit — once Shelby has the bytes, it serves no
+    // further purpose.
     await cleanupStagedBlob(stagingPath);
 
     // Verify the blob actually reached the committed (isWritten) state

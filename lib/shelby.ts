@@ -357,7 +357,16 @@ export async function uploadToShelby(
 
     // Step 5: Generate IDs & names
     const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const blobName = `${videoId}_${file.name}`;
+    // Sanitize the filename portion — blobName is used as a path/identifier
+    // by multiple downstream systems (the Supabase staging bucket, Shelby's
+    // own on-chain blob_name, access_control's blob_name_suffix), and real
+    // filenames commonly contain spaces, parentheses, and other characters
+    // some of those don't accept (e.g. the staging-token route's own path-
+    // traversal-prevention regex only allows \w . -). Sanitizing once here
+    // keeps blobName consistently safe everywhere it's used, rather than
+    // needing every consumer to independently handle arbitrary filenames.
+    const sanitizedFileName = file.name.replace(/[^\w.-]/g, '_');
+    const blobName = `${videoId}_${sanitizedFileName}`;
 
 
     // Step 6: Upload to Shelby via the server-side platform account.
