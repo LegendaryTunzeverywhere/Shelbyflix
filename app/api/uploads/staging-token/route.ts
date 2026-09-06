@@ -32,8 +32,6 @@ import { STAGING_BUCKET } from '@/lib/upload-staging';
 //      before, just pointed at a different (working) vendor.
 // ---------------------------------------------------------------------------
 
-const MAX_STAGED_BLOB_SIZE_BYTES = 100 * 1024 * 1024; // matches validateVideoFile's cap
-
 let bucketEnsured = false;
 
 async function ensureStagingBucket(): Promise<void> {
@@ -42,7 +40,21 @@ async function ensureStagingBucket(): Promise<void> {
   const admin = getSupabaseAdmin();
   const { error } = await admin.storage.createBucket(STAGING_BUCKET, {
     public: false,
-    fileSizeLimit: MAX_STAGED_BLOB_SIZE_BYTES,
+    // FIX: no explicit fileSizeLimit here. Supabase enforces a project-wide
+    // "Global file size limit" (Storage Settings in the dashboard) that
+    // takes precedence over any bucket-level value — requesting a
+    // bucket-level limit that exceeds the account's actual global cap
+    // causes createBucket itself to fail with "The object exceeded the
+    // maximum allowed size", at token-generation time, before any file is
+    // even sent (this is exactly what happened when this was set to
+    // MAX_STAGED_BLOB_SIZE_BYTES = 100MB against an account whose global
+    // limit is lower, commonly defaulting to 50MB on new projects).
+    // Letting the bucket inherit the account's global default avoids that
+    // conflict entirely. The real size limit we care about is still
+    // enforced downstream by MAX_FILE_SIZE_BYTES in /api/uploads — if your
+    // Supabase project's global limit is below the video size cap you
+    // want to support, raise it in Storage Settings -> Global file size
+    // limit (not something this code can do on your behalf).
     allowedMimeTypes: ['application/octet-stream'],
   });
 
