@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey, type Account } from '@aptos-labs/ts-sdk';
-import { hexToBytes } from '@/lib/shared-utils';
+import { deserializePublicKey, deserializeSignature, type Account } from '@aptos-labs/ts-sdk';
 import { getPlatformAccount } from '@/lib/shelby-platform';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { STAGING_BUCKET } from '@/lib/upload-staging';
@@ -164,13 +163,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // ── Verify Ed25519 signature against the exact bytes the wallet signed ─
+    // Verify signature against the exact bytes the wallet signed.
+    //
+    // FIX: this previously hardcoded new Ed25519PublicKey(publicKey) and
+    // manually hex-decoded the signature, assuming both were raw 32/64-byte
+    // Ed25519 values. That assumption was wrong for every wallet tested
+    // (both Petra extension and social login hit an identical failure) --
+    // modern Aptos accounts commonly return publicKey/signature in
+    // AnyPublicKey/AnySignature-wrapped BCS format (a type-variant byte
+    // plus the underlying key), not raw Ed25519 bytes, which made the
+    // Ed25519PublicKey constructor throw on the length/format mismatch.
+    // deserializePublicKey/deserializeSignature auto-detect the actual
+    // type from the BCS encoding and construct the correct subclass,
+    // whose own verifySignature is then used polymorphically -- this
+    // works for Ed25519, Secp256k1, and AnyPublicKey-wrapped variants
+    // uniformly. (True Keyless accounts still need the separate async
+    // verifySignatureAsync flow, not attempted here.)
     const messageBytes = new TextEncoder().encode(fullMessage);
     let signatureValid = false;
     try {
-      const pubKey  = new Ed25519PublicKey(publicKey);
-      const sigBytes = hexToBytes(signature.startsWith('0x') ? signature.slice(2) : signature);
-      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sigBytes } as any);
+      const pubKey = deserializePublicKey(publicKey);
+      const sig = deserializeSignature(signature);
+      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
     } catch (err) {
       console.error('Signature verification error:', err);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });

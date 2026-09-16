@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey } from '@aptos-labs/ts-sdk';
+import { deserializePublicKey, deserializeSignature } from '@aptos-labs/ts-sdk';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
-import { hexToBytes } from '@/lib/shared-utils';
 
 const VIDEO_ID_REGEX = /^[\w-]+$/;
 
@@ -94,13 +93,21 @@ export async function DELETE(
       );
     }
 
-    // ── Verify Ed25519 signature against the exact bytes the wallet signed ─
+    // Verify signature against the exact bytes the wallet signed.
+    //
+    // FIX: same issue as app/api/uploads/route.ts — hardcoded
+    // Ed25519PublicKey assumed raw Ed25519 bytes, which failed for every
+    // wallet tested (both Petra extension and social login). Modern
+    // Aptos accounts commonly return publicKey/signature in
+    // AnyPublicKey/AnySignature-wrapped BCS format, not raw Ed25519 bytes.
+    // deserializePublicKey/deserializeSignature auto-detect the actual
+    // type and construct the correct subclass, used polymorphically here.
     let signatureValid = false;
     try {
-      const pubKey = new Ed25519PublicKey(publicKey);
-      const sigBytes = hexToBytes(signature.startsWith('0x') ? signature.slice(2) : signature);
+      const pubKey = deserializePublicKey(publicKey);
+      const sig = deserializeSignature(signature);
       const messageBytes = new TextEncoder().encode(fullMessage);
-      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sigBytes } as any);
+      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
     } catch (err) {
       console.error('Signature verification error:', err);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
