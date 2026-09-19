@@ -1,4 +1,9 @@
-import { Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
+import {
+  Account,
+  Ed25519PrivateKey,
+  PrivateKey,
+  PrivateKeyVariants,
+} from '@aptos-labs/ts-sdk';
 import { ShelbyBlobClient } from '@shelby-protocol/sdk/node';
 
 let cachedPlatformAccount: Account | null = null;
@@ -35,7 +40,8 @@ export function getPlatformAccount(): Account {
     );
   }
 
-  const privateKey = new Ed25519PrivateKey(raw.trim());
+  const formattedKey = PrivateKey.formatPrivateKey(raw.trim(), PrivateKeyVariants.Ed25519);
+  const privateKey = new Ed25519PrivateKey(formattedKey);
   cachedPlatformAccount = Account.fromPrivateKey({ privateKey });
   return cachedPlatformAccount;
 }

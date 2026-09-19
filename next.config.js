@@ -36,6 +36,7 @@ const nextConfig = {
   // The Shelby Node SDK loads this WASM file with fs at runtime, so webpack
   // cannot discover it through the JavaScript import graph automatically.
   outputFileTracingIncludes: {
+    '/*': ['./node_modules/@shelby-protocol/clay-codes/dist/**/*'],
     '/api/uploads': [
       './node_modules/@shelby-protocol/clay-codes/dist/clay.wasm',
     ],
