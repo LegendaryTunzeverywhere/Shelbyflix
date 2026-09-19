@@ -11,6 +11,7 @@ import { getPlatformAccount } from '@/lib/shelby-platform';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { STAGING_BUCKET } from '@/lib/upload-staging';
 import { hexToBytes } from '@/lib/shared-utils';
+import { getShelbyApiKey } from '@/lib/shelby-env';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
@@ -232,9 +233,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
     const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
 
+    // Resolve API key from SHELBY_API_KEY or NEXT_PUBLIC_SHELBY_API_KEY.
+    // Shelbynet fullnode now requires this — without it, every fullnode
+    // request fails with 401 "API key not found", which previously surfaced
+    // as a confusing 502 in this route.
+    const shelbyApiKey = getShelbyApiKey();
+    if (!shelbyApiKey) {
+      console.error('SHELBY_API_KEY missing: upload cannot proceed');
+      await cleanupStagedBlob(stagingPath);
+      return NextResponse.json(
+        {
+          error:
+            'Shelby storage is not configured: SHELBY_API_KEY is missing on the server. ' +
+            'Set SHELBY_API_KEY (or NEXT_PUBLIC_SHELBY_API_KEY) in Vercel environment variables. ' +
+            'Get a key at https://shelby.xyz/api-keys',
+        },
+        { status: 503 },
+      );
+    }
+
     const client = new ShelbyNodeClient({
       network,
-      apiKey: process.env.SHELBY_API_KEY,
+      apiKey: shelbyApiKey,
     });
 
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
@@ -257,6 +277,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           { status: 503 },
         );
       }
+      // Detect missing/invalid API key (401 from fullnode) and return a
+      // clear, actionable 503 instead of a generic 502. This is the exact
+      // error the user reported: "Unauthorized: API key not found".
+      if (/401/.test(msg) && /api key/i.test(msg)) {
+        return NextResponse.json(
+          {
+            error:
+              'Shelby API key is invalid or missing. The server is configured without a valid ' +
+              'SHELBY_API_KEY, so Shelbynet rejected the request with 401 Unauthorized: API key not found. ' +
+              'Set a valid SHELBY_API_KEY in Vercel environment variables (https://shelby.xyz/api-keys).',
+          },
+          { status: 503 },
+        );
+      }
+      if (/Unauthorized/i.test(msg) && /api key/i.test(msg)) {
+        return NextResponse.json(
+          {
+            error:
+              'Shelby API key authentication failed (401 Unauthorized: API key not found). ' +
+              'Check that SHELBY_API_KEY is set correctly in the deployment environment.',
+          },
+          { status: 503 },
+        );
+      }
+
       if (/already exists/i.test(msg) || /BlobAlreadyExists/i.test(msg)) {
         return NextResponse.json({ error: 'A blob with this name is already registered' }, { status: 409 });
       }

@@ -32,6 +32,9 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    instrumentationHook: true,
+  },
 
   // ── Shelby erasure-coding WASM (clay.wasm) ─────────────────────────────
   // @shelby-protocol/clay-codes (pulled in by @shelby-protocol/sdk/node)

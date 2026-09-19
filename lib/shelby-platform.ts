@@ -5,6 +5,7 @@ import {
   PrivateKeyVariants,
 } from '@aptos-labs/ts-sdk';
 import { ShelbyBlobClient } from '@shelby-protocol/sdk/node';
+import { getShelbyApiKey } from './shelby-env';
 
 let cachedPlatformAccount: Account | null = null;
 
@@ -57,10 +58,18 @@ export async function deleteShelbyBlob(platformAccount: Account, blobName: strin
   const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
   const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
 
+  const apiKey = getShelbyApiKey();
+  if (!apiKey) {
+    throw new Error(
+      'SHELBY_API_KEY is not configured. Cannot delete Shelby blob without API key. ' +
+        'Set SHELBY_API_KEY in environment.',
+    );
+  }
+
   const { ShelbyNodeClient } = await import('@shelby-protocol/sdk/node');
   const client = new ShelbyNodeClient({
     network,
-    apiKey: process.env.SHELBY_API_KEY,
+    apiKey,
   });
 
   const payload = ShelbyBlobClient.createDeleteObjectPayload({ blobName });

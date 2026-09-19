@@ -8,13 +8,19 @@ import {
   getShelbyBlobExplorerUrl,
 } from '@shelby-protocol/sdk/browser';
 import { Aptos, AptosConfig, Network, AccountAddress, type InputGenerateTransactionPayloadData } from '@aptos-labs/ts-sdk';
+import { getAptosClientConfigWithApiKey, getShelbyApiKey } from './shelby-env';
 
 // Use the Shelbynet node for submitting and confirming blob transactions.
 // Falls back to shelbynet-1 mainnet if the env var is not set.
+// IMPORTANT: Shelbynet fullnode now requires API key (401 otherwise).
+const shelbyApiKey = getShelbyApiKey();
+const shelbyClientConfig = getAptosClientConfigWithApiKey();
+
 const shelbynetAptos = new Aptos(new AptosConfig({
   network: Network.CUSTOM,
   fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.shelbynet.shelby.xyz/v1',
   indexer: process.env.NEXT_PUBLIC_SHELBYNET_INDEXER_URL ?? 'https://api.shelbynet.shelby.xyz/v1/graphql',
+  ...(shelbyClientConfig ? { clientConfig: shelbyClientConfig } : {}),
 }));
 
 /**
@@ -172,11 +178,15 @@ export async function registerBlob(
     // Verify the blob exists on-chain before returning
     console.log(`🔍 Verifying blob registration on-chain...`);
     try {
+      // Include API key for fullnode (required since Shelbynet now enforces it)
+      const verifyApiKey = getShelbyApiKey();
       const blobClient = new ShelbyBlobClient({
         network: Network.SHELBYNET,
+        apiKey: verifyApiKey,
         aptos: {
           network: Network.CUSTOM,
           fullnode: process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL ?? 'https://api.shelbynet.shelby.xyz/v1',
+          ...(verifyApiKey ? { clientConfig: { API_KEY: verifyApiKey } } : {}),
         },
       });
       
@@ -268,12 +278,20 @@ export async function uploadBlobToShelbynet(
 
   try {
     console.log(`📤 Uploading blob data (${blobData.length} bytes) via PUT...`);
-    
+
+    // If API key is configured, include it as Bearer token — some Shelby
+    // storage endpoints also enforce API key auth.
+    const putApiKey = getShelbyApiKey();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/octet-stream',
+    };
+    if (putApiKey) {
+      headers['Authorization'] = `Bearer ${putApiKey}`;
+    }
+
     const response = await fetch(uploadUrl, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-      },
+      headers,
       body: blobData,
     });
 
