@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   deserializePublicKey,
   deserializeSignature,
+  Ed25519PublicKey,
+  Ed25519Signature,
   Ed25519PrivateKey,
   Account,
 } from '@aptos-labs/ts-sdk';
 import { getPlatformAccount } from '@/lib/shelby-platform';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { STAGING_BUCKET } from '@/lib/upload-staging';
+import { hexToBytes } from '@/lib/shared-utils';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
@@ -172,9 +175,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const messageBytes = new TextEncoder().encode(fullMessage);
     let signatureValid = false;
     try {
-      const pubKey = deserializePublicKey(publicKey);
-      const sig = deserializeSignature(signature);
-      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
+      try {
+        const pubKey = deserializePublicKey(publicKey);
+        const sig = deserializeSignature(signature);
+        signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
+      } catch {
+        // Petra and some wallet-adapter versions return raw Ed25519 hex,
+        // while newer adapters return BCS-encoded AnyPublicKey/AnySignature.
+        const rawPublicKey = new Ed25519PublicKey(hexToBytes(stripHexPrefix(publicKey)));
+        const rawSignature = new Ed25519Signature(hexToBytes(stripHexPrefix(signature)));
+        signatureValid = rawPublicKey.verifySignature({
+          message: messageBytes,
+          signature: rawSignature,
+        });
+      }
     } catch (err) {
       console.error('Signature verification error:', err);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
@@ -314,4 +328,8 @@ async function cleanupStagedBlob(stagingPath: string): Promise<void> {
   } catch (err) {
     console.warn(`Failed to clean up staged upload at ${stagingPath}:`, err);
   }
+}
+
+function stripHexPrefix(value: string): string {
+  return value.startsWith('0x') ? value.slice(2) : value;
 }
