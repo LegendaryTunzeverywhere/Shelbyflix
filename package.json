@@ -44,6 +44,7 @@
     "@headlessui/react": "2.2.9",
     "@heroicons/react": "2.2.0",
     "@scure/bip39": "^1.6.0",
+    "@shelby-protocol/clay-codes": "0.0.3",
     "@shelby-protocol/sdk": "^0.4.1",
     "@supabase/supabase-js": "2.99.2",
     "@tailwindcss/forms": "0.5.11",
