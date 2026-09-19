@@ -12,11 +12,23 @@ export function AptosWalletProvider({ children }: { children: React.ReactNode })
     localStorage.removeItem('aptos-keyless-jwt');
   }, []);
 
-  // Determine network based on environment variable
-  // Note: Wallet adapters use Aptos Network enums. For Shelbynet-1, we still
-  // use Network.MAINNET for wallet connections since Shelbynet runs on Aptos mainnet infrastructure
+  // Determine network based on environment variable.
+  //
+  // FIX: this previously defaulted to Network.MAINNET based on a comment
+  // claiming "Shelbynet runs on Aptos mainnet infrastructure" — that's
+  // contradicted by Shelby's own SDK, which defines Network.SHELBYNET as a
+  // genuinely distinct network (shelbyNetworks = [LOCAL, TESTNET,
+  // SHELBYNET] in @shelby-protocol/sdk), with its own RPC endpoints
+  // (api.shelbynet.shelby.xyz), its own deployer account, and its own
+  // faucet (real Aptos mainnet has no faucet at all — that alone rules out
+  // "Shelbynet is just mainnet"). Every other file in this codebase
+  // already correctly defaults to Network.SHELBYNET
+  // (lib/aptos.ts, lib/aptos-client.ts, lib/shelbynet-blob.ts,
+  // app/api/uploads/route.ts) — this was the one place still pointing the
+  // connected wallet at real Aptos mainnet, where the access_control
+  // module isn't even deployed.
   const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
-  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.MAINNET;
+  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
 
   return (
     <AptosWalletAdapterProvider

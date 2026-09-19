@@ -1,7 +1,6 @@
 import type { VideoMetadata, UploadProgress, AccessMode } from '@/types';
 import {
   getBlobStreamUrl,
-  ShelbyBlobClient,
 } from './shelbynet-blob';
 import { AccountAddress } from '@aptos-labs/ts-sdk';
 import {
@@ -16,6 +15,7 @@ import type { AccessPolicy, RegistrationInfoV2 } from './move-bcs';
 import { ACCESS_CONTROL_MODULE } from './move-contract';
 import { logChainWriteSuccess } from './move-logging';
 import { getAptosClient } from './aptos-client';
+import { csrfFetch } from './csrf-client';
 
 export interface ShelbyUploadResponse {
   videoId: string;
@@ -357,7 +357,16 @@ export async function uploadToShelby(
 
     // Step 5: Generate IDs & names
     const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const blobName = `${videoId}_${file.name}`;
+    // Sanitize the filename portion — blobName is used as a path/identifier
+    // by multiple downstream systems (the Supabase staging bucket, Shelby's
+    // own on-chain blob_name, access_control's blob_name_suffix), and real
+    // filenames commonly contain spaces, parentheses, and other characters
+    // some of those don't accept (e.g. the staging-token route's own path-
+    // traversal-prevention regex only allows \w . -). Sanitizing once here
+    // keeps blobName consistently safe everywhere it's used, rather than
+    // needing every consumer to independently handle arbitrary filenames.
+    const sanitizedFileName = file.name.replace(/[^\w.-]/g, '_');
+    const blobName = `${videoId}_${sanitizedFileName}`;
 
 
     // Step 6: Upload to Shelby via the server-side platform account.
@@ -420,16 +429,58 @@ export async function uploadToShelby(
 
     onProgress?.({ stage: 'uploading', progress: 42, message: 'Uploading to Shelby storage...' });
 
-    const uploadForm = new FormData();
-    uploadForm.append('file', new File([encryptedBlob], blobName, { type: 'application/octet-stream' }));
-    uploadForm.append('walletAddress', uploaderAddress);
-    uploadForm.append('publicKey', String(walletPublicKey));
-    uploadForm.append('signature', String(signed.signature));
-    uploadForm.append('signedMessage', String(signed.fullMessage));
-    uploadForm.append('blobName', blobName);
-    uploadForm.append('expirationDays', String(metadata.availabilityPeriod || 30));
+    // Vercel serverless functions have a hard 4.5MB request body limit,
+    // enforced at the infrastructure level (cannot be raised via
+    // vercel.json or code). Encrypted video files routinely exceed that,
+    // so the encrypted blob is staged first, bypassing our own functions
+    // for the large payload — /api/uploads then works with just a
+    // reference to the staged file.
+    //
+    // FIX: this previously staged through Vercel Blob's client-upload flow
+    // (@vercel/blob/client's upload()). That hit a confirmed, currently
+    // unresolved bug on Vercel's own infrastructure: the actual PUT to
+    // their blob API returns a response with no Access-Control-Allow-Origin
+    // header, which every browser blocks as a CORS failure — reported
+    // independently by another developer with an identical environment and
+    // identical symptoms, acknowledged by Vercel support as needing
+    // internal investigation with no fix available
+    // (community.vercel.com/t/46967). Replaced with the equivalent pattern
+    // via Supabase Storage instead (already a dependency here, and not
+    // affected by that Vercel-specific bug): request a signed upload URL
+    // from our own server, then PUT directly to Supabase Storage using it.
+    const tokenResponse = await csrfFetch('/api/uploads/staging-token', {
+      method: 'POST',
+      body: JSON.stringify({ pathname: blobName }),
+    });
+    const tokenResult = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok || !tokenResult?.signedUrl) {
+      throw new Error(tokenResult?.error || `Failed to get staging upload token (${tokenResponse.status})`);
+    }
 
-    const uploadResponse = await fetch('/api/uploads', { method: 'POST', body: uploadForm });
+    const { supabase } = await import('./supabase');
+    const { error: stagingError } = await supabase.storage
+      .from(tokenResult.bucket)
+      .uploadToSignedUrl(tokenResult.path, tokenResult.token, encryptedBlob, {
+        contentType: 'application/octet-stream',
+      });
+    if (stagingError) {
+      throw new Error(`Failed to stage upload: ${stagingError.message}`);
+    }
+
+    onProgress?.({ stage: 'uploading', progress: 55, message: 'Registering on Shelby...' });
+
+    const uploadResponse = await csrfFetch('/api/uploads', {
+      method: 'POST',
+      body: JSON.stringify({
+        stagingPath: tokenResult.path,
+        walletAddress: uploaderAddress,
+        publicKey: String(walletPublicKey),
+        signature: String(signed.signature),
+        signedMessage: String(signed.fullMessage),
+        blobName,
+        expirationDays: metadata.availabilityPeriod || 30,
+      }),
+    });
     const uploadResult = await uploadResponse.json().catch(() => ({}));
 
     if (!uploadResponse.ok || !uploadResult?.success) {
@@ -483,7 +534,19 @@ export async function uploadToShelby(
     }
 
     // Step 9: Generate Shelbynet URL
-    const shelbyUrl = getBlobStreamUrl(blobName, uploaderAddress);
+    //
+    // FIX: this previously used `uploaderAddress` (the creator's own
+    // wallet), which was correct before the server-side platform-account
+    // architecture change but is wrong now — Shelby's storage ledger keys
+    // blobs by (owner_address, blobName), and the actual on-chain owner is
+    // now the platform account (client.upload() in /api/uploads/route.ts
+    // signs with platformAccount, not the creator's wallet). A URL built
+    // with the creator's address would point at an owner that doesn't
+    // actually hold the blob, producing "not found" on every playback
+    // attempt. uploadResult.owner (returned by the route) is the real
+    // owner address to use here.
+    const shelbyOwnerAddress = uploadResult.owner || uploaderAddress;
+    const shelbyUrl = getBlobStreamUrl(blobName, shelbyOwnerAddress);
 
     // Step 10: Complete
     onProgress?.({ stage: 'complete', progress: 100, message: 'Upload complete!' });
@@ -583,72 +646,13 @@ export function clearVideoCache(): void {
   videoCache.clear();
 }
 
-/**
- * Delete video (Shelbynet blobs expire automatically)
- */
-export async function deleteFromShelby(
-  videoId: string,
-  shelbyUrl: string,
-  blobName: string,
-  signAndSubmitTransaction: any
-): Promise<boolean> {
-  const cacheKey = `video_${blobName}`;
-  if (videoCache.has(cacheKey)) {
-    videoCache.delete(cacheKey);
-  }
-
-  if (!signAndSubmitTransaction) {
-    throw new Error('No signer available to delete Shelby blob');
-  }
-
-  if (!blobName) {
-    throw new Error('Missing blob name for Shelby deletion');
-  }
-
-  const payload = ShelbyBlobClient.createDeleteObjectPayload({ blobName });
-
-  let txHash: string;
-  try {
-    const response = await signAndSubmitTransaction({ data: payload });
-    txHash = response.hash;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (
-      message.toLowerCase().includes('user rejected') ||
-      message.toLowerCase().includes('user denied') ||
-      message.toLowerCase().includes('rejected by user') ||
-      message.toLowerCase().includes('cancelled')
-    ) {
-      throw new Error('Shelby deletion cancelled by user');
-    }
-    throw new Error(`Shelby deletion failed: ${message}`);
-  }
-
-  const aptos = getAptosClient();
-  let txResult: any;
-  try {
-    txResult = await aptos.waitForTransaction({
-      transactionHash: txHash,
-      options: { checkSuccess: false },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Shelby deletion commit failed: ${message}`);
-  }
-
-  if (txResult.success === false) {
-    const vmStatus: string = txResult.vm_status ?? '';
-    throw new Error(`Shelby deletion aborted on-chain: ${vmStatus || 'Unknown VM error'}`);
-  }
-
-  logChainWriteSuccess('delete_blob', {
-    videoId,
-    txHash,
-    version: txResult.version ?? 0,
-  });
-
-  return true;
-}
+// deleteFromShelby was removed: it had the caller's own wallet sign a
+// Shelby delete_object transaction directly, which can never succeed
+// post-architecture-change (the platform account is the actual on-chain
+// blob owner, not the uploader's wallet — see lib/shelby-platform.ts).
+// Deletion now goes through the authenticated server route
+// (app/api/videos/[id]/route.ts) via lib/video-service.ts's deleteVideo,
+// which performs the Shelby deletion signed by the platform account.
 
 /**
  * Validate video file

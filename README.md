@@ -33,7 +33,7 @@ ShelbyFlix combines the best of Web3 and traditional web architectures to delive
 - Responsive design with Tailwind CSS
 - Support for long-form videos and vertical shorts
 - Real-time upload progress
-- Thumbnail generation and preview
+- Thumbnail generation and preview.
 
 ### 🔗 **Wallet Integration**
 - Connect with Petra, Martian, Pontem, or any Aptos wallet

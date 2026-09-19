@@ -271,38 +271,53 @@ function recordToMetadata(record: PublicVideoRecord): VideoMetadata {
 
 export async function deleteVideo(
   videoId: string,
-  blobName: string,
-  signAndSubmitTransaction: any,
-  shelbyUrl?: string
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  walletAddress: string,
+  walletPublicKeyHex: string | undefined,
 ): Promise<void> {
   if (!/^[\w-]+$/.test(videoId)) throw new Error('Invalid video ID');
 
-  let resolvedBlobName = blobName;
-  let resolvedShelbyUrl = shelbyUrl;
+  // ---------------------------------------------------------------------
+  // FIX: this previously had the caller's own wallet sign a Shelby
+  // delete_object transaction directly (deleteFromShelby). That can never
+  // succeed post-architecture-change: Shelby's storage ledger now owns
+  // blobs under the platform account (see app/api/uploads/route.ts), not
+  // the uploader's wallet, so an ownership check on Shelby's side would
+  // reject any signer other than the platform account. The server route
+  // now performs the actual Shelby deletion (signed by the platform
+  // account) and the Supabase row deletion together, in one authenticated
+  // call — authorization (uploader or platform admin) is checked
+  // server-side against the video's actual uploader_wallet.
+  // ---------------------------------------------------------------------
+  const uploadAuthMessage = `ShelbyFlix delete: ${videoId}`;
+  const nonce = crypto.randomUUID();
+  const signed = await signMessage({ message: uploadAuthMessage, nonce });
+  const walletPublicKey = signed?.publicKey ?? walletPublicKeyHex;
 
-  if (!resolvedBlobName || !resolvedShelbyUrl) {
-    const video = await getVideoById(videoId);
-    if (!video) throw new Error('Video not found');
-    resolvedBlobName = resolvedBlobName || video.blobName;
-    resolvedShelbyUrl = resolvedShelbyUrl || video.shelbyUrl;
+  if (!signed?.signature || !signed?.fullMessage || !walletPublicKey) {
+    const missing = [
+      !signed?.signature && 'signature',
+      !signed?.fullMessage && 'fullMessage',
+      !walletPublicKey && 'publicKey',
+    ].filter(Boolean).join(', ');
+    throw new Error(
+      `Wallet did not return a usable signature for delete authorization (missing: ${missing}).`,
+    );
   }
-
-  if (!resolvedBlobName) {
-    throw new Error('Missing blob name for Shelby deletion');
-  }
-
-  // Delete the storage blob first so we don't remove the metadata row if
-  // the Shelby cleanup fails.
-  const { deleteFromShelby } = await import('./shelby');
-  await deleteFromShelby(videoId, resolvedShelbyUrl, resolvedBlobName, signAndSubmitTransaction);
 
   const response = await csrfFetch(`/api/videos/${encodeURIComponent(videoId)}`, {
     method: 'DELETE',
+    body: JSON.stringify({
+      walletAddress,
+      publicKey: String(walletPublicKey),
+      signature: String(signed.signature),
+      signedMessage: String(signed.fullMessage),
+    }),
   });
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to delete video metadata');
+    throw new Error(payload.error || 'Failed to delete video');
   }
 }
 

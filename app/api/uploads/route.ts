@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deserializePublicKey, deserializeSignature, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
+import { Ed25519PublicKey, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
+import { hexToBytes } from '@/lib/shared-utils';
 
 // ---------------------------------------------------------------------------
-// Allowed MIME types and max file size
+// Max staged file size
 // ---------------------------------------------------------------------------
-const ALLOWED_MIME_TYPES = new Set([
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',  // .mov
-  'video/x-msvideo', // .avi
-  // Encrypted blobs are opaque ciphertext (AES-256-GCM output), so the
-  // browser typically sends them as generic binary — magic-byte sniffing
-  // below only applies when the plaintext MIME type is asserted.
-  'application/octet-stream',
-]);
 
 /**
  * Maximum upload file size in bytes (100 MB).
@@ -21,84 +12,88 @@ const ALLOWED_MIME_TYPES = new Set([
  */
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
-let cachedPlatformAccount: Account | null = null;
-
-/**
- * The Shelby-level owner-of-record for every blob this app registers.
- *
- * Shelby's chunk-upload authentication (ShelbyRPCClient.signChallenge)
- * requires a raw Ed25519 signature over arbitrary server-issued bytes, with
- * no framing. Wallet-standard signMessage() (what Petra and every other
- * Aptos wallet extension expose) always wraps input in a structured frame
- * before signing — a deliberate anti-blind-signing security boundary, not
- * a gap in any particular wallet. That means no browser-connected wallet
- * can ever satisfy Shelby's storage-layer ownership check, regardless of
- * which account "should" conceptually own the content. This dedicated
- * server-held account exists specifically to bridge that gap: Shelbyflix
- * pays Shelby's registration/storage fees and is the on-chain "owner" for
- * Shelby's bookkeeping purposes only. Actual content control — access
- * policy, pricing, purchase proceeds — remains entirely with each
- * creator's own wallet via the separate access_control Move module.
- */
-function getPlatformAccount(): Account {
-  if (cachedPlatformAccount) return cachedPlatformAccount;
-
-  const raw = process.env.SHELBY_PLATFORM_PRIVATE_KEY;
-  if (!raw || raw.trim().length === 0) {
-    throw new Error(
-      'SHELBY_PLATFORM_PRIVATE_KEY is not configured. See .env.example for setup instructions.',
-    );
-  }
-
-  const privateKey = new Ed25519PrivateKey(raw.trim());
-  cachedPlatformAccount = Account.fromPrivateKey({ privateKey });
-  return cachedPlatformAccount;
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/uploads
 //
-// Multipart form fields expected:
-//   - file          : video file (binary)
+// JSON body fields expected:
+//   - stagingPath   : path of the encrypted file within the Supabase
+//                      Storage staging bucket (see
+//                      /api/uploads/staging-token) (string)
 //   - walletAddress : 0x-prefixed Aptos address (string)
 //   - publicKey     : hex Ed25519 public key (string)
 //   - signature     : hex Ed25519 signature over the message below (string)
 //   - signedMessage : the exact UTF-8 string that was signed (string)
+//   - blobName      : the Shelby blob name to register (string)
+//   - expirationDays: how many days the blob should be retained (number)
 //
 // The client must sign: "ShelbyFlix upload: <sha256-of-file-hex>"
 // This ties the signature to the specific file being uploaded — prevents
 // replay attacks where an old upload signature is re-used for a new file.
+//
+// NOTE: the file itself is no longer sent directly to this route. Vercel
+// serverless functions have a hard 4.5MB request body limit enforced at
+// the infrastructure level (cannot be raised via vercel.json or code —
+// confirmed against Vercel's own docs), which every real video upload
+// would exceed. The browser instead stages the encrypted blob to a
+// private Supabase Storage bucket first (bypassing this limit entirely)
+// and sends just a path reference here — a small JSON payload, well
+// under the limit. This route downloads the actual bytes server-side via
+// the authenticated Supabase admin client, which isn't subject to the
+// same client-request body cap.
+//
+// (Previously staged via Vercel Blob's client-upload flow instead —
+// switched away after hitting a confirmed, currently unresolved CORS bug
+// on Vercel's own infrastructure; see community.vercel.com/t/46967.)
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const contentType = req.headers.get('content-type') ?? '';
-    if (!contentType.includes('multipart/form-data')) {
-      return NextResponse.json({ error: 'Expected multipart/form-data' }, { status: 400 });
+    if (!contentType.includes('application/json')) {
+      return NextResponse.json({ error: 'Expected application/json' }, { status: 400 });
     }
 
-    const formData = await req.formData();
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
 
-    const file          = formData.get('file') as File | null;
-    const walletAddress = formData.get('walletAddress') as string | null;
-    const publicKey     = formData.get('publicKey') as string | null;
-    const signature     = formData.get('signature') as string | null;
-    // The exact bytes the wallet actually signed. Wallet-standard signMessage
-    // (Petra, and every AIP-62-compliant wallet) wraps the requested
-    // `message` in its own framing before signing (commonly including a
-    // nonce and app info) — the wallet's own SDK call returns this exact
-    // wrapped string as `fullMessage`. We verify the signature against
-    // THAT, rather than assuming any particular wrapping format ourselves —
-    // different wallets may construct it differently, and guessing at a
-    // cryptographic wire format here would be the same mistake this app's
-    // Shelby integration made repeatedly elsewhere in this codebase.
-    const fullMessage   = formData.get('signedMessage') as string | null;
+    const {
+      stagingPath,
+      walletAddress,
+      publicKey,
+      signature,
+      // The exact bytes the wallet actually signed. Wallet-standard signMessage
+      // (Petra, and every AIP-62-compliant wallet) wraps the requested
+      // `message` in its own framing before signing (commonly including a
+      // nonce and app info) — the wallet's own SDK call returns this exact
+      // wrapped string as `fullMessage`. We verify the signature against
+      // THAT, rather than assuming any particular wrapping format ourselves —
+      // different wallets may construct it differently, and guessing at a
+      // cryptographic wire format here would be the same mistake this app's
+      // Shelby integration made repeatedly elsewhere in this codebase.
+      signedMessage: fullMessage,
+      blobName,
+      expirationDays: expirationDaysRaw,
+    } = body as Record<string, unknown>;
 
     // ── Validate required fields ─────────────────────────────────────────
-    if (!file || !walletAddress || !publicKey || !signature || !fullMessage) {
+    if (
+      typeof stagingPath !== 'string' || !stagingPath ||
+      typeof walletAddress !== 'string' || !walletAddress ||
+      typeof publicKey !== 'string' || !publicKey ||
+      typeof signature !== 'string' || !signature ||
+      typeof fullMessage !== 'string' || !fullMessage
+    ) {
       return NextResponse.json(
-        { error: 'Missing required fields: file, walletAddress, publicKey, signature, signedMessage' },
+        { error: 'Missing required fields: stagingPath, walletAddress, publicKey, signature, signedMessage' },
         { status: 400 }
       );
+    }
+    // Same sanitisation as the staging-token route — alphanumeric,
+    // underscore, hyphen, dot only. Prevents path traversal within the
+    // staging bucket.
+    if (!/^[\w.-]+$/.test(stagingPath)) {
+      return NextResponse.json({ error: 'Invalid stagingPath' }, { status: 400 });
     }
 
     // ── Validate wallet address format ───────────────────────────────────
@@ -106,40 +101,48 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid wallet address format' }, { status: 400 });
     }
 
+    // ── Fetch the staged file server-to-server ───────────────────────────
+    // Not subject to the client-request body limit — this is an outbound
+    // fetch initiated by our own server, not an inbound request body.
+    // Uses the service-role admin client since the staging bucket is
+    // private, not the public-URL pattern Vercel Blob used.
+    let fileBuffer: ArrayBuffer;
+    let contentLength: number;
+    try {
+      const admin = getSupabaseAdmin();
+      const { data: stagedBlob, error: downloadError } = await admin.storage
+        .from(STAGING_BUCKET)
+        .download(stagingPath);
+
+      if (downloadError || !stagedBlob) {
+        console.error('Failed to download staged upload:', downloadError);
+        return NextResponse.json({ error: 'Failed to fetch staged upload' }, { status: 502 });
+      }
+      fileBuffer = await stagedBlob.arrayBuffer();
+      contentLength = fileBuffer.byteLength;
+    } catch (err) {
+      console.error('Failed to fetch staged blob:', err);
+      return NextResponse.json({ error: 'Failed to fetch staged upload' }, { status: 502 });
+    }
+
     // ── Validate file size ───────────────────────────────────────────────
-    if (file.size > MAX_FILE_SIZE_BYTES) {
+    if (contentLength > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
         { error: `File too large. Maximum size is ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB` },
         { status: 413 }
       );
     }
-
-    // ── Validate MIME type (from field, then magic-byte sniff) ───────────
-    if (!ALLOWED_MIME_TYPES.has(file.type)) {
-      return NextResponse.json(
-        { error: `Unsupported file type: ${file.type}. Allowed: mp4, webm, mov, avi, or encrypted octet-stream` },
-        { status: 415 }
-      );
+    if (contentLength === 0) {
+      return NextResponse.json({ error: 'Staged upload is empty' }, { status: 400 });
     }
-
-    const fileBuffer = await file.arrayBuffer();
 
     // Encrypted blobs (AES-256-GCM ciphertext, see lib/encryption.ts) are
     // pseudorandom bytes by construction — they will never match a video
-    // magic-byte signature, that's the point of encryption. Magic-byte
-    // sniffing only makes sense for plaintext uploads. The wallet signature
-    // verified below already ties this exact request to a specific,
-    // pre-committed file hash, which is the real integrity/auth guarantee
-    // here regardless of whether the content is encrypted.
-    if (file.type !== 'application/octet-stream') {
-      const header = new Uint8Array(fileBuffer.slice(0, 12));
-      if (!isVideoMagicBytes(header)) {
-        return NextResponse.json(
-          { error: 'File content does not match a recognised video format' },
-          { status: 415 }
-        );
-      }
-    }
+    // magic-byte signature, that's the point of encryption, so no
+    // magic-byte check applies here (unlike a hypothetical plaintext
+    // upload path). The wallet signature verified below already ties this
+    // exact request to a specific, pre-committed file hash, which is the
+    // real integrity/auth guarantee here.
 
     // ── Verify the signed content is bound to THIS exact file ───────────
     // Client must have requested a signature over "ShelbyFlix upload: <hash>"
@@ -158,9 +161,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Verify the wallet signature using the key/signature format returned by
-    // the connected Aptos wallet. Modern wallets may return AnyPublicKey and
-    // AnySignature BCS encodings rather than raw Ed25519 bytes.
+    // ── Verify Ed25519 signature against the exact bytes the wallet signed ─
     const messageBytes = new TextEncoder().encode(fullMessage);
     let signatureValid = false;
     try {
@@ -176,15 +177,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
     }
 
-    // ── Extract Shelby-specific fields ───────────────────────────────────
-    const blobName = formData.get('blobName') as string | null;
-    const expirationDaysRaw = formData.get('expirationDays') as string | null;
-
-    if (!blobName || typeof blobName !== 'string' || blobName.trim().length === 0) {
+    // ── Validate Shelby-specific fields ──────────────────────────────────
+    if (typeof blobName !== 'string' || blobName.trim().length === 0) {
       return NextResponse.json({ error: 'Missing required field: blobName' }, { status: 400 });
     }
 
-    const expirationDays = expirationDaysRaw ? Number(expirationDaysRaw) : 30;
+    const expirationDays = expirationDaysRaw != null ? Number(expirationDaysRaw) : 30;
     if (!Number.isFinite(expirationDays) || expirationDays <= 0 || expirationDays > 365) {
       return NextResponse.json(
         { error: 'expirationDays must be a positive number, at most 365' },
@@ -230,6 +228,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     } catch (err: any) {
       const msg = err?.message || String(err);
       console.error(`Shelby upload failed for blob "${blobName}":`, msg);
+      await cleanupStagedBlob(stagingPath);
 
       if (/insufficient/i.test(msg) || /E_INSUFFICIENT_FUNDS/i.test(msg)) {
         return NextResponse.json(
@@ -243,6 +242,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       return NextResponse.json({ error: `Shelby upload failed: ${msg}` }, { status: 502 });
     }
+
+    // The staged Supabase Storage upload was only ever a bridge past the
+    // function body limit — once Shelby has the bytes, it serves no
+    // further purpose.
+    await cleanupStagedBlob(stagingPath);
 
     // Verify the blob actually reached the committed (isWritten) state
     // before reporting success — a registered-but-uncommitted blob would
@@ -284,25 +288,23 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
 }
 
 /**
- * Check the first 12 bytes for common video magic bytes.
- * This catches the most common spoofing attempts (e.g. HTML file renamed to .mp4).
+ * Best-effort deletion of a staged Supabase Storage upload. Never throws —
+ * a failed cleanup shouldn't mask the real upload result. Unlike the old
+ * Vercel Blob approach (which had a validUntil-based auto-expiry as a
+ * backstop), this staging bucket has no automatic expiry configured, so a
+ * failed cleanup here does leave the staged file behind — acceptable
+ * since it's a small ciphertext blob in a private bucket, not a
+ * correctness or security issue, but worth revisiting if stale staged
+ * files ever need periodic sweeping.
  */
-function isVideoMagicBytes(bytes: Uint8Array): boolean {
-  // MP4 / MOV — ftyp box at offset 4
-  if (
-    bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70
-  ) return true;
-
-  // WebM — starts with 0x1A 0x45 0xDF 0xA3
-  if (
-    bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3
-  ) return true;
-
-  // AVI — RIFF...AVI
-  if (
-    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
-    bytes[8] === 0x41 && bytes[9] === 0x56 && bytes[10] === 0x49 && bytes[11] === 0x20
-  ) return true;
-
-  return false;
+async function cleanupStagedBlob(stagingPath: string): Promise<void> {
+  try {
+    const admin = getSupabaseAdmin();
+    const { error } = await admin.storage.from(STAGING_BUCKET).remove([stagingPath]);
+    if (error) {
+      console.warn(`Failed to clean up staged upload at ${stagingPath}:`, error);
+    }
+  } catch (err) {
+    console.warn(`Failed to clean up staged upload at ${stagingPath}:`, err);
+  }
 }
