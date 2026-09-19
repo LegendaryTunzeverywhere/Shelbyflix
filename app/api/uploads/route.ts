@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
-import { hexToBytes } from '@/lib/shared-utils';
+import {
+  deserializePublicKey,
+  deserializeSignature,
+  Ed25519PrivateKey,
+  Account,
+} from '@aptos-labs/ts-sdk';
+import { getPlatformAccount } from '@/lib/shelby-platform';
+import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import { STAGING_BUCKET } from '@/lib/upload-staging';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
