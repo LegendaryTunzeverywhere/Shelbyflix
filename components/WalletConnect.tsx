@@ -12,7 +12,6 @@ import {
   XMarkIcon,
   DocumentDuplicateIcon,
 } from '@heroicons/react/24/outline';
-import { getAptosClient } from '@/lib/aptos-client';
 
 // ── Logout confirmation modal ─────────────────────────────────────────────────
 function LogoutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
@@ -75,29 +74,15 @@ const WalletConnect: React.FC = () => {
     setBalancesLoading(true);
     setBalancesError(null);
     try {
-      const aptos = getAptosClient();
-
-      // Fetch all coin balances
-      const coins = await aptos.account.getAccountCoinsData({
-        accountAddress: userAddress,
-      });
-
-      // Find APT and ShelbyUSD
-      let aptBalance = 0;
-      let shelbyUsdBalance = 0;
-
-      coins.forEach((coin: any) => {
-        if (coin.metadata?.asset_type?.includes('0x1::aptos_coin::AptosCoin')) {
-          aptBalance = parseFloat(coin.amount || '0') / 100000000;
-        }
-
-        const shelbyUsdToken = process.env.NEXT_PUBLIC_SHELBYUSD_TOKEN_ADDRESS;
-        if (shelbyUsdToken && coin.metadata?.asset_type?.includes(shelbyUsdToken)) {
-          shelbyUsdBalance = parseFloat(coin.amount || '0') / 100000000;
-        }
-      });
-
-      setBalances({ apt: aptBalance, shelbyUsd: shelbyUsdBalance });
+      const response = await fetch(
+        `/api/wallet/balances?address=${encodeURIComponent(userAddress)}`,
+        { cache: 'no-store' },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `Balance request failed (${response.status})`);
+      }
+      setBalances({ apt: Number(payload.apt) || 0, shelbyUsd: Number(payload.shelbyUsd) || 0 });
     } catch (error) {
       console.error('Failed to fetch balances:', error);
       setBalancesError(

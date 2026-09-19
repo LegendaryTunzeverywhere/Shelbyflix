@@ -475,8 +475,8 @@ export async function uploadToShelby(
         stagingPath: tokenResult.path,
         walletAddress: uploaderAddress,
         publicKey: String(walletPublicKey),
-        signature: String(signed.signature),
-        signedMessage: String(signed.fullMessage),
+        signature: serializeWalletValue(signed.signature, 'hex'),
+        signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
         blobName,
         expirationDays: metadata.availabilityPeriod || 30,
       }),
@@ -668,6 +668,31 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8'): string {
+  if (typeof value === 'string') return value;
+
+  if (value instanceof Uint8Array) {
+    return encoding === 'utf8'
+      ? new TextDecoder().decode(value)
+      : `0x${Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  }
+
+  if (value && typeof value === 'object') {
+    const candidate = value as {
+      bcsToBytes?: () => Uint8Array;
+      toUint8Array?: () => Uint8Array;
+    };
+    const bytes = candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
+    if (bytes instanceof Uint8Array) {
+      return encoding === 'utf8'
+        ? new TextDecoder().decode(bytes)
+        : `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    }
+  }
+
+  return String(value);
 }
 
 export function validateVideoFile(file: File): { valid: boolean; error?: string } {
