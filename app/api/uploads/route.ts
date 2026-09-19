@@ -255,6 +255,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const client = new ShelbyNodeClient({
       network,
       apiKey: shelbyApiKey,
+      locationHint: process.env.SHELBY_WRITE_LOCATION?.trim() || 'shelbynet-1',
     });
 
     const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
@@ -265,6 +266,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         signer: platformAccount,
         blobName,
         expirationMicros,
+        options: {
+          selectedLocation: process.env.SHELBY_WRITE_LOCATION?.trim() || 'shelbynet-1',
+        },
       });
     } catch (err: any) {
       const msg = err?.message || String(err);
