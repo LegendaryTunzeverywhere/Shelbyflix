@@ -133,17 +133,32 @@ export async function getVideoDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = () => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(objectUrl);
+    };
 
     video.onloadedmetadata = () => {
-      window.URL.revokeObjectURL(video.src);
-      resolve(Math.floor(video.duration));
+      if (settled) return;
+      settled = true;
+      const duration = Math.floor(video.duration);
+      cleanup();
+      resolve(duration);
     };
 
     video.onerror = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(new Error('Failed to load video metadata'));
     };
 
-    video.src = URL.createObjectURL(file);
+    video.src = objectUrl;
   });
 }
 
@@ -157,18 +172,28 @@ export async function generateThumbnail(file: File, timeInSeconds: number = 0): 
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
     const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = () => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(objectUrl);
+    };
 
     video.onloadedmetadata = () => {
       video.currentTime = Math.min(timeInSeconds, video.duration - 0.1);
     };
 
     video.onseeked = () => {
+      if (settled) return;
+      settled = true;
       canvas.width = Math.min(video.videoWidth, 1280);
       canvas.height = Math.min(video.videoHeight, 720);
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        URL.revokeObjectURL(objectUrl);
+        cleanup();
         reject(new Error('Failed to get canvas context'));
         return;
       }
@@ -177,12 +202,14 @@ export async function generateThumbnail(file: File, timeInSeconds: number = 0): 
 
       // Return as base64 data URL — persists across page reloads
       const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-      URL.revokeObjectURL(objectUrl);
+      cleanup();
       resolve(dataUrl);
     };
 
     video.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(new Error('Failed to load video'));
     };
 
