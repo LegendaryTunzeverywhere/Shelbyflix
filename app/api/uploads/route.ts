@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   deserializePublicKey,
   deserializeSignature,
+  AnyPublicKey,
+  AnySignature,
   Ed25519PublicKey,
   Ed25519Signature,
   Ed25519PrivateKey,
@@ -187,7 +189,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // fallback never causes a valid public key to be reparsed incorrectly.
       const pubKey = parsePublicKey(publicKey);
       const sig = parseSignature(signature);
-      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
+      if (pubKey instanceof AnyPublicKey) {
+        const anySignature = sig instanceof AnySignature ? sig : new AnySignature(sig);
+        signatureValid = pubKey.verifySignature({ message: messageBytes, signature: anySignature });
+      } else {
+        const ed25519Signature = sig instanceof AnySignature ? sig.signature : sig;
+        signatureValid = pubKey.verifySignature({ message: messageBytes, signature: ed25519Signature });
+      }
     } catch (err) {
       console.error('Signature verification error:', err);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
@@ -381,17 +389,17 @@ function stripHexPrefix(value: string): string {
   return value.startsWith('0x') ? value.slice(2) : value;
 }
 
-function parsePublicKey(value: string): Ed25519PublicKey {
+function parsePublicKey(value: string): AnyPublicKey | Ed25519PublicKey {
   try {
-    return deserializePublicKey(value) as Ed25519PublicKey;
+    return deserializePublicKey(value) as AnyPublicKey | Ed25519PublicKey;
   } catch {
     return new Ed25519PublicKey(hexToBytes(stripHexPrefix(value)));
   }
 }
 
-function parseSignature(value: string): Ed25519Signature {
+function parseSignature(value: string): AnySignature | Ed25519Signature {
   try {
-    return deserializeSignature(value) as Ed25519Signature;
+    return deserializeSignature(value) as AnySignature | Ed25519Signature;
   } catch {
     return new Ed25519Signature(hexToBytes(stripHexPrefix(value)));
   }
