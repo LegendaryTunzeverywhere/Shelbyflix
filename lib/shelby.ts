@@ -2,7 +2,7 @@ import type { VideoMetadata, UploadProgress, AccessMode } from '@/types';
 import {
   getBlobStreamUrl,
 } from './shelbynet-blob';
-import { AccountAddress } from '@aptos-labs/ts-sdk';
+import { AccountAddress, Serializer } from '@aptos-labs/ts-sdk';
 import {
   encryptFile,
   decryptBlob,
@@ -683,9 +683,17 @@ function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'bcs'):
   if (value && typeof value === 'object') {
     const candidate = value as {
       bcsToBytes?: () => Uint8Array;
+      serialize?: (serializer: Serializer) => void;
       toUint8Array?: () => Uint8Array;
     };
-    const bytes = candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
+    let bytes: Uint8Array | undefined;
+    if (encoding === 'bcs' && candidate.serialize) {
+      const serializer = new Serializer();
+      candidate.serialize(serializer);
+      bytes = serializer.toUint8Array();
+    } else {
+      bytes = candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
+    }
     if (bytes instanceof Uint8Array) {
       return encoding === 'utf8'
         ? new TextDecoder().decode(bytes)
