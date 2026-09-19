@@ -73,6 +73,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       walletAddress,
       publicKey,
       signature,
+      message: signedContent,
       // The exact bytes the wallet actually signed. Wallet-standard signMessage
       // (Petra, and every AIP-62-compliant wallet) wraps the requested
       // `message` in its own framing before signing (commonly including a
@@ -93,7 +94,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       typeof walletAddress !== 'string' || !walletAddress ||
       typeof publicKey !== 'string' || !publicKey ||
       typeof signature !== 'string' || !signature ||
-      typeof fullMessage !== 'string' || !fullMessage
+      typeof fullMessage !== 'string' || !fullMessage ||
+      (signedContent !== undefined && typeof signedContent !== 'string')
     ) {
       return NextResponse.json(
         { error: 'Missing required fields: stagingPath, walletAddress, publicKey, signature, signedMessage' },
@@ -165,7 +167,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const fileHash = await sha256Hex(fileBuffer);
     const expectedMessage = `ShelbyFlix upload: ${fileHash}`;
 
-    if (!fullMessage.includes(expectedMessage)) {
+    const messageToBind = typeof signedContent === 'string' && signedContent
+      ? signedContent
+      : fullMessage;
+    if (!messageToBind.includes(expectedMessage)) {
       return NextResponse.json(
         { error: 'Signed message does not match file hash. Possible tampering.' },
         { status: 401 }

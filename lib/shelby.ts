@@ -477,6 +477,7 @@ export async function uploadToShelby(
         publicKey: String(walletPublicKey),
         signature: serializeWalletValue(signed.signature, 'hex'),
         signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
+        message: serializeWalletValue(signed.message ?? uploadAuthMessage, 'utf8'),
         blobName,
         expirationDays: metadata.availabilityPeriod || 30,
       }),
