@@ -4,6 +4,7 @@ import {
   Network,
   InputGenerateTransactionPayloadData,
 } from '@aptos-labs/ts-sdk';
+import { getAptosClientConfigWithApiKey } from './shelby-env';
 
 // ---------------------------------------------------------------------------
 // Shelbynet Network Configuration
@@ -16,11 +17,14 @@ export const SHELBYNET_CONFIG = {
   apiBase:    process.env.NEXT_PUBLIC_SHELBYNET_API_BASE ?? 'https://api.shelbynet.shelby.xyz',
 };
 
+const clientConfig = getAptosClientConfigWithApiKey();
+
 const config = new AptosConfig({
   network:  Network.CUSTOM,
   fullnode: SHELBYNET_CONFIG.nodeUrl,
   indexer:  SHELBYNET_CONFIG.indexerUrl,
   faucet:   SHELBYNET_CONFIG.faucetUrl,
+  ...(clientConfig ? { clientConfig } : {}),
 });
 
 export const aptos = new Aptos(config);
