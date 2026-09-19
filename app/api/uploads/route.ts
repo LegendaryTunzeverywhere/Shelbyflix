@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
-import { hexToBytes } from '@/lib/shared-utils';
+import { deserializePublicKey, deserializeSignature, Ed25519PrivateKey, Account } from '@aptos-labs/ts-sdk';
 
 // ---------------------------------------------------------------------------
 // Allowed MIME types and max file size
@@ -159,13 +158,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // ── Verify Ed25519 signature against the exact bytes the wallet signed ─
+    // Verify the wallet signature using the key/signature format returned by
+    // the connected Aptos wallet. Modern wallets may return AnyPublicKey and
+    // AnySignature BCS encodings rather than raw Ed25519 bytes.
     const messageBytes = new TextEncoder().encode(fullMessage);
     let signatureValid = false;
     try {
-      const pubKey  = new Ed25519PublicKey(publicKey);
-      const sigBytes = hexToBytes(signature.startsWith('0x') ? signature.slice(2) : signature);
-      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sigBytes } as any);
+      const pubKey = deserializePublicKey(publicKey);
+      const sig = deserializeSignature(signature);
+      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
     } catch (err) {
       console.error('Signature verification error:', err);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
