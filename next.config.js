@@ -33,6 +33,14 @@ const securityHeaders = [
 const nextConfig = {
   reactStrictMode: true,
 
+  // The Shelby Node SDK loads this WASM file with fs at runtime, so webpack
+  // cannot discover it through the JavaScript import graph automatically.
+  outputFileTracingIncludes: {
+    '/api/uploads': [
+      './node_modules/@shelby-protocol/clay-codes/dist/clay.wasm',
+    ],
+  },
+
   // ── Security headers on all routes ──────────────────────────────────────
   async headers() {
     return [
