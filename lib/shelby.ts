@@ -317,7 +317,7 @@ export async function uploadToShelby(
   uploaderAccount: AccountAddress | { toString: () => string },
   signAndSubmitTransaction: any,
   signMessage: (args: { message: string; nonce: string }) => Promise<any>,
-  walletPublicKeyHex: string | undefined,
+  walletPublicKey: unknown,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<ShelbyUploadResponse> {
   try {
@@ -407,17 +407,17 @@ export async function uploadToShelby(
     });
 
     // signed.publicKey is only present on some wallet implementations.
-    // walletPublicKeyHex (passed in from the connected account's own
+    // walletPublicKey (passed in from the connected account's own
     // account.publicKey, NOT derivable from uploaderAccount/resolvedAccount
     // — those are AccountAddress values by this point and never carry a
     // public key) is the reliable fallback.
-    const walletPublicKey = signed?.publicKey ?? walletPublicKeyHex;
+    const resolvedWalletPublicKey = signed?.publicKey ?? walletPublicKey;
 
-    if (!signed?.signature || !signed?.fullMessage || !walletPublicKey) {
+    if (!signed?.signature || !signed?.fullMessage || !resolvedWalletPublicKey) {
       const missing = [
         !signed?.signature && 'signature',
         !signed?.fullMessage && 'fullMessage',
-        !walletPublicKey && 'publicKey',
+        !resolvedWalletPublicKey && 'publicKey',
       ].filter(Boolean).join(', ');
       throw new Error(
         `Wallet did not return a usable signature for upload authorization ` +
@@ -474,7 +474,7 @@ export async function uploadToShelby(
       body: JSON.stringify({
         stagingPath: tokenResult.path,
         walletAddress: uploaderAddress,
-        publicKey: serializeWalletValue(walletPublicKey, 'bcs'),
+        publicKey: serializeWalletValue(resolvedWalletPublicKey, 'bcs'),
         signature: serializeWalletValue(signed.signature, 'bcs'),
         signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
         message: serializeWalletValue(signed.message ?? uploadAuthMessage, 'utf8'),
