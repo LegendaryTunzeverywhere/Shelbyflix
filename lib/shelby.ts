@@ -474,8 +474,8 @@ export async function uploadToShelby(
       body: JSON.stringify({
         stagingPath: tokenResult.path,
         walletAddress: uploaderAddress,
-        publicKey: serializeWalletValue(walletPublicKey, 'publicKey'),
-        signature: serializeWalletValue(signed.signature, 'signature'),
+        publicKey: serializeWalletValue(walletPublicKey, 'bcs'),
+        signature: serializeWalletValue(signed.signature, 'bcs'),
         signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
         message: serializeWalletValue(signed.message ?? uploadAuthMessage, 'utf8'),
         blobName,
@@ -671,7 +671,7 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
     .join('');
 }
 
-function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'signature' | 'publicKey'): string {
+function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'bcs'): string {
   if (typeof value === 'string') return value;
 
   if (value instanceof Uint8Array) {
@@ -685,9 +685,7 @@ function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'signat
       bcsToBytes?: () => Uint8Array;
       toUint8Array?: () => Uint8Array;
     };
-    const bytes = encoding === 'signature' || encoding === 'publicKey'
-      ? candidate.toUint8Array?.()
-      : candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
+    const bytes = candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
     if (bytes instanceof Uint8Array) {
       return encoding === 'utf8'
         ? new TextDecoder().decode(bytes)
