@@ -181,20 +181,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const messageBytes = new TextEncoder().encode(fullMessage);
     let signatureValid = false;
     try {
-      try {
-        const pubKey = deserializePublicKey(publicKey);
-        const sig = deserializeSignature(signature);
-        signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
-      } catch {
-        // Petra and some wallet-adapter versions return raw Ed25519 hex,
-        // while newer adapters return BCS-encoded AnyPublicKey/AnySignature.
-        const rawPublicKey = new Ed25519PublicKey(hexToBytes(stripHexPrefix(publicKey)));
-        const rawSignature = new Ed25519Signature(hexToBytes(stripHexPrefix(signature)));
-        signatureValid = rawPublicKey.verifySignature({
-          message: messageBytes,
-          signature: rawSignature,
-        });
-      }
+      // Petra extension responses commonly mix formats: account.publicKey is
+      // an Aptos SDK object serialized as BCS, while response.signature is a
+      // raw Ed25519 hex string. Parse each independently so a signature parse
+      // fallback never causes a valid public key to be reparsed incorrectly.
+      const pubKey = parsePublicKey(publicKey);
+      const sig = parseSignature(signature);
+      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
     } catch (err) {
       console.error('Signature verification error:', err);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
@@ -386,4 +379,20 @@ async function cleanupStagedBlob(stagingPath: string): Promise<void> {
 
 function stripHexPrefix(value: string): string {
   return value.startsWith('0x') ? value.slice(2) : value;
+}
+
+function parsePublicKey(value: string): Ed25519PublicKey {
+  try {
+    return deserializePublicKey(value) as Ed25519PublicKey;
+  } catch {
+    return new Ed25519PublicKey(hexToBytes(stripHexPrefix(value)));
+  }
+}
+
+function parseSignature(value: string): Ed25519Signature {
+  try {
+    return deserializeSignature(value) as Ed25519Signature;
+  } catch {
+    return new Ed25519Signature(hexToBytes(stripHexPrefix(value)));
+  }
 }
