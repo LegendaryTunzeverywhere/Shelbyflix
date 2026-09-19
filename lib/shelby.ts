@@ -2,7 +2,7 @@ import type { VideoMetadata, UploadProgress, AccessMode } from '@/types';
 import {
   getBlobStreamUrl,
 } from './shelbynet-blob';
-import { AccountAddress, Serializer } from '@aptos-labs/ts-sdk';
+import { AccountAddress } from '@aptos-labs/ts-sdk';
 import {
   encryptFile,
   decryptBlob,
@@ -474,8 +474,8 @@ export async function uploadToShelby(
       body: JSON.stringify({
         stagingPath: tokenResult.path,
         walletAddress: uploaderAddress,
-        publicKey: serializeWalletValue(resolvedWalletPublicKey, 'bcs'),
-        signature: serializeWalletValue(signed.signature, 'bcs'),
+        publicKey: serializeWalletValue(resolvedWalletPublicKey, 'publicKey'),
+        signature: serializeWalletValue(signed.signature, 'signature'),
         signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
         message: serializeWalletValue(signed.message ?? uploadAuthMessage, 'utf8'),
         blobName,
@@ -671,7 +671,7 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
     .join('');
 }
 
-function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'bcs'): string {
+function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'signature' | 'publicKey'): string {
   if (typeof value === 'string') return value;
 
   if (value instanceof Uint8Array) {
@@ -683,17 +683,11 @@ function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'bcs'):
   if (value && typeof value === 'object') {
     const candidate = value as {
       bcsToBytes?: () => Uint8Array;
-      serialize?: (serializer: Serializer) => void;
       toUint8Array?: () => Uint8Array;
     };
-    let bytes: Uint8Array | undefined;
-    if (encoding === 'bcs' && candidate.serialize) {
-      const serializer = new Serializer();
-      candidate.serialize(serializer);
-      bytes = serializer.toUint8Array();
-    } else {
-      bytes = candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
-    }
+    const bytes = encoding === 'signature' || encoding === 'publicKey'
+      ? candidate.toUint8Array?.()
+      : candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
     if (bytes instanceof Uint8Array) {
       return encoding === 'utf8'
         ? new TextDecoder().decode(bytes)
