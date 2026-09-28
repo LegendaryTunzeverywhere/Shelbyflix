@@ -97,7 +97,10 @@ export async function registerBlob(
       blobName,
       blobMerkleRoot: merkleRoot,
       blobSize: commitments.raw_data_size,
-      expirationMicros,
+      // `expirationMicros` was removed from the deployed `register_blob`
+      // signature (SDK 0.8.0 dropped it to match). Expiry is enforced
+      // application-side via videos.expiration_timestamp — see
+      // app/api/uploads/route.ts and lib/shelby-network.ts.
       numChunksets: commitments.chunkset_commitments.length,
       encoding: 0,
       encryption: 'AES_GCM_V1',

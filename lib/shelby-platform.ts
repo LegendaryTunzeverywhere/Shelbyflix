@@ -6,6 +6,7 @@ import {
 } from '@aptos-labs/ts-sdk';
 import { ShelbyBlobClient } from '@shelby-protocol/sdk/node';
 import { getShelbyApiKey } from './shelby-env';
+import { buildShelbyNodeConfig } from './shelby-network';
 
 let cachedPlatformAccount: Account | null = null;
 
@@ -53,11 +54,6 @@ export function getPlatformAccount(): Account {
  * admin-initiated video deletion — see app/api/videos/[id]/route.ts.
  */
 export async function deleteShelbyBlob(platformAccount: Account, blobName: string): Promise<void> {
-  const { Network } = await import('@aptos-labs/ts-sdk');
-
-  const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
-  const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
-
   const apiKey = getShelbyApiKey();
   if (!apiKey) {
     throw new Error(
@@ -67,10 +63,7 @@ export async function deleteShelbyBlob(platformAccount: Account, blobName: strin
   }
 
   const { ShelbyNodeClient } = await import('@shelby-protocol/sdk/node');
-  const client = new ShelbyNodeClient({
-    network,
-    apiKey,
-  });
+  const client = new ShelbyNodeClient(buildShelbyNodeConfig());
 
   const payload = ShelbyBlobClient.createDeleteObjectPayload({ blobName });
   const transaction = await client.aptos.transaction.build.simple({

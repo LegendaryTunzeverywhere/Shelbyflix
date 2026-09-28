@@ -545,3 +545,60 @@ export function isKeylessWalletPublicKey(publicKeyHex: string): boolean {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Address binding
+// ---------------------------------------------------------------------------
+
+/**
+ * Does `publicKey` actually belong to `walletAddress`?
+ *
+ * Every signature in this app is verified against a public key the *client*
+ * supplied in the same request. Nothing so far proves that key is the one
+ * belonging to the address the caller claims, which means a caller could sign
+ * with a key they control and assert someone else's address as the uploader.
+ * For a uploader that is not harmless: `app/api/videos/[id]` authorizes purely
+ * on `walletAddress === video.uploader_wallet`.
+ *
+ * The check is a plain derivation: an Aptos account address *is* the
+ * authentication key of its public key, so `publicKey.authKey()` must equal
+ * `walletAddress`.
+ *
+ * This currently only REPORTS. It is not enforced, because two cases are not
+ * yet confirmed against real wallets:
+ *   - an AptosConnect account may be *hybrid* (keyless + a rotating Ed25519
+ *     key), in which case its address is not simply the auth key of either;
+ *   - a key rotation could make a legitimately-held key look unbound.
+ * Enforcing before those are ruled out would lock real users out of upload and
+ * delete, which is worse than the gap it closes. Flip `enforce` to true once
+ * the logged values have been observed for both wallet families.
+ */
+export function checkPublicKeyAddressBinding(args: {
+  publicKey: string;
+  walletAddress: string;
+  enforce?: boolean;
+}): { bound: boolean; derivedAddress: string | null; reason?: string } {
+  let derivedAddress: string | null = null;
+  let reason: string | undefined;
+
+  try {
+    const parsed = parseWalletPublicKey(args.publicKey) as unknown as {
+      authKey(): { toUint8Array(): Uint8Array };
+    };
+    const authKey = parsed.authKey();
+    const hex = `0x${Buffer.from(authKey.toUint8Array()).toString('hex')}`
+      .replace(/^0x0+/, '0x')
+      .toLowerCase();
+    derivedAddress = hex;
+
+    // Compare on the 32-byte value, tolerating leading-zero differences in
+    // formatting (short vs padded hex).
+    const normalize = (a: string) => a.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const bound = normalize(hex) === normalize(args.walletAddress);
+    if (!bound) reason = 'derived auth key does not equal the claimed address';
+    return { bound, derivedAddress: hex, reason };
+  } catch (err) {
+    reason = err instanceof Error ? err.message : String(err);
+    return { bound: false, derivedAddress, reason };
+  }
+}

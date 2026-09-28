@@ -4,7 +4,8 @@ import { getPlatformAccount } from '@/lib/shelby-platform';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { STAGING_BUCKET } from '@/lib/upload-staging';
 import { getShelbyApiKey } from '@/lib/shelby-env';
-import { verifyWalletSignature } from '@/lib/wallet-signature';
+import { buildShelbyNodeConfig } from '@/lib/shelby-network';
+import { verifyWalletSignature, checkPublicKeyAddressBinding } from '@/lib/wallet-signature';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
@@ -200,11 +201,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // self-asserted by the client, so when a keyless proof fails to verify
       // we need to see exactly what the browser sent to tell "wrong public key
       // submitted" apart from "genuinely forged".
+      //
+      // Signature material is sensitive; log the public key and scheme but not
+      // the signature itself.
       console.error('[uploads] signature submission:', {
         walletAddress,
         publicKey,
-        signature,
-        signedMessage: fullMessage,
+        scheme: verification.scheme,
+        reason: verification.reason,
+        signedMessageBytes: Buffer.byteLength(fullMessage, 'utf8'),
       });
       if (verification.reason === 'unavailable') {
         // We could not obtain a verdict at all (chain state unreachable), so
@@ -229,6 +234,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { error: 'Invalid wallet signature', reason: 'bad_signature' },
         { status: 401 },
       );
+    }
+
+    // ── Public-key ↔ address binding (observational, not yet enforced) ────
+    // The signature above only proves the caller holds the private key for the
+    // public key they sent. It does not prove that key belongs to the
+    // `walletAddress` they claimed, and this route records the uploader purely
+    // from that field. Log the comparison until it can be enforced safely —
+    // see checkPublicKeyAddressBinding for why it is not enforced yet.
+    {
+      const binding = checkPublicKeyAddressBinding({ publicKey, walletAddress });
+      if (!binding.bound) {
+        console.warn('[uploads] public key is NOT bound to the claimed address:', {
+          walletAddress,
+          derivedAddress: binding.derivedAddress,
+          reason: binding.reason,
+          scheme: verification.scheme,
+        });
+      } else {
+        console.info(
+          `[uploads] public key bound to ${walletAddress} (${verification.scheme})`,
+        );
+      }
     }
 
     // ── Validate Shelby-specific fields ──────────────────────────────────
@@ -260,10 +287,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const { ShelbyNodeClient } = await import('@shelby-protocol/sdk/node');
-    const { Network } = await import('@aptos-labs/ts-sdk');
-
-    const networkName = (process.env.NEXT_PUBLIC_NETWORK_NAME ?? 'SHELBYNET').toUpperCase();
-    const network = networkName === 'TESTNET' ? Network.TESTNET : Network.SHELBYNET;
 
     // Resolve API key from SHELBY_API_KEY or NEXT_PUBLIC_SHELBY_API_KEY.
     // Shelbynet fullnode now requires this — without it, every fullnode
@@ -284,20 +307,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const client = new ShelbyNodeClient({
-      network,
-      apiKey: shelbyApiKey,
-      locationHint: process.env.SHELBY_WRITE_LOCATION?.trim() || 'shelbynet-1',
-    });
+    const client = new ShelbyNodeClient(
+      buildShelbyNodeConfig({
+        locationHint: process.env.SHELBY_WRITE_LOCATION?.trim() || 'shelbynet-1',
+      }),
+    );
 
-    const expirationMicros = (Date.now() + expirationDays * 24 * 60 * 60 * 1000) * 1000;
+    // NOTE: `expirationMicros` is deliberately NOT passed to upload().
+    //
+    // The deployed Shelby contracts dropped the expiration argument from
+    // `register_blob` (SDK 0.8.0 dropped it to match: the call went from 10
+    // arguments to 9, with the Merkle root moving into position 3 where
+    // `expiration_micros` used to be). Passing it anyway is what produced
+    // `Type mismatch for argument 3, type 'vector<u8>'` on every upload.
+    //
+    // Blob expiry is therefore enforced at the application layer instead:
+    // `expirationDays` is recorded as `videos.expiration_timestamp` in Supabase
+    // (see lib/video-service.ts), every read filters on it, and
+    // /api/admin/cleanup-expired reclaims storage once it passes. `expirationDays`
+    // is still validated below so a bad value is rejected rather than silently
+    // ignored.
+    void expirationDays;
 
     try {
       await client.upload({
         blobData: new Uint8Array(fileBuffer),
         signer: platformAccount,
         blobName,
-        expirationMicros,
         options: {
           selectedLocation: process.env.SHELBY_WRITE_LOCATION?.trim() || 'shelbynet-1',
         },
