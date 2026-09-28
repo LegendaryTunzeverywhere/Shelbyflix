@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  deserializePublicKey,
-  deserializeSignature,
-  AnyPublicKey,
-  AnySignature,
-  Ed25519PublicKey,
-  Ed25519Signature,
-  Ed25519PrivateKey,
-  Account,
-} from '@aptos-labs/ts-sdk';
+import { Account } from '@aptos-labs/ts-sdk';
 import { getPlatformAccount } from '@/lib/shelby-platform';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { STAGING_BUCKET } from '@/lib/upload-staging';
-import { hexToBytes } from '@/lib/shared-utils';
 import { getShelbyApiKey } from '@/lib/shelby-env';
+import { verifyWalletSignature } from '@/lib/wallet-signature';
 
 // ---------------------------------------------------------------------------
 // Max staged file size
@@ -33,8 +24,12 @@ const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 //                      Storage staging bucket (see
 //                      /api/uploads/staging-token) (string)
 //   - walletAddress : 0x-prefixed Aptos address (string)
-//   - publicKey     : hex Ed25519 public key (string)
-//   - signature     : hex Ed25519 signature over the message below (string)
+//   - publicKey     : hex public key — either a raw/BCS Ed25519 key (Petra and
+//                      other extension wallets) or a BCS keyless public key
+//                      ("Continue with Google"/"Continue with Apple" via
+//                      AptosConnect). Verified by @/lib/wallet-signature,
+//                      which picks the matching procedure per key type.
+//   - signature     : hex signature over the message below (string)
 //   - signedMessage : the exact UTF-8 string that was signed (string)
 //   - blobName      : the Shelby blob name to register (string)
 //   - expirationDays: how many days the blob should be retained (number)
@@ -179,30 +174,61 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // ── Verify Ed25519 signature against the exact bytes the wallet signed ─
-    const messageBytes = new TextEncoder().encode(fullMessage);
-    let signatureValid = false;
-    try {
-      // Petra extension responses commonly mix formats: account.publicKey is
-      // an Aptos SDK object serialized as BCS, while response.signature is a
-      // raw Ed25519 hex string. Parse each independently so a signature parse
-      // fallback never causes a valid public key to be reparsed incorrectly.
-      const pubKey = parsePublicKey(publicKey);
-      const sig = parseSignature(signature);
-      if (pubKey instanceof AnyPublicKey) {
-        const anySignature = sig instanceof AnySignature ? sig : new AnySignature(sig);
-        signatureValid = pubKey.verifySignature({ message: messageBytes, signature: anySignature });
-      } else {
-        const ed25519Signature = sig instanceof AnySignature ? sig.signature : sig;
-        signatureValid = pubKey.verifySignature({ message: messageBytes, signature: ed25519Signature });
-      }
-    } catch (err) {
-      console.error('Signature verification error:', err);
-      return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
-    }
+    // ── Verify the wallet signature over the exact bytes the wallet signed ─
+    //
+    // Delegated to @/lib/wallet-signature, which dispatches on the key type
+    // the wallet actually used:
+    //   * Ed25519 (Petra and other extension wallets) — local, synchronous,
+    //     unchanged from what already worked.
+    //   * Keyless ("Continue with Google" / "Continue with Apple", i.e.
+    //     AptosConnect) — an on-chain Groth16 zero-knowledge proof that
+    //     previously threw "Use verifySignatureAsync to verify Keyless
+    //     signatures" and surfaced to the user as a flat
+    //     "Signature verification failed" 401 on every upload.
+    const verification = await verifyWalletSignature({
+      publicKey,
+      signature,
+      message: fullMessage,
+    });
 
-    if (!signatureValid) {
-      return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
+    if (!verification.valid) {
+      const detail = verification.detail ? ` (${verification.detail})` : '';
+      console.error(
+        `Signature verification failed [${verification.scheme}/${verification.reason}]${detail}`,
+      );
+      // Log the raw submission alongside the verdict. The public key is
+      // self-asserted by the client, so when a keyless proof fails to verify
+      // we need to see exactly what the browser sent to tell "wrong public key
+      // submitted" apart from "genuinely forged".
+      console.error('[uploads] signature submission:', {
+        walletAddress,
+        publicKey,
+        signature,
+        signedMessage: fullMessage,
+      });
+      if (verification.reason === 'unavailable') {
+        // We could not obtain a verdict at all (chain state unreachable), so
+        // this is our outage, not a bad signature. Reporting 401 here would be
+        // both wrong and undiagnosable.
+        return NextResponse.json(
+          {
+            error:
+              'Could not verify the Google/Apple signature right now — the network state ' +
+              'needed to check it is unavailable. Please retry in a moment.',
+          },
+          { status: 503 },
+        );
+      }
+      if (verification.reason === 'unsupported') {
+        return NextResponse.json(
+          { error: `Unsupported wallet signature format${detail}` },
+          { status: 400 },
+        );
+      }
+      return NextResponse.json(
+        { error: 'Invalid wallet signature', reason: 'bad_signature' },
+        { status: 401 },
+      );
     }
 
     // ── Validate Shelby-specific fields ──────────────────────────────────
@@ -382,25 +408,5 @@ async function cleanupStagedBlob(stagingPath: string): Promise<void> {
     }
   } catch (err) {
     console.warn(`Failed to clean up staged upload at ${stagingPath}:`, err);
-  }
-}
-
-function stripHexPrefix(value: string): string {
-  return value.startsWith('0x') ? value.slice(2) : value;
-}
-
-function parsePublicKey(value: string): AnyPublicKey | Ed25519PublicKey {
-  try {
-    return deserializePublicKey(value) as AnyPublicKey | Ed25519PublicKey;
-  } catch {
-    return new Ed25519PublicKey(hexToBytes(stripHexPrefix(value)));
-  }
-}
-
-function parseSignature(value: string): AnySignature | Ed25519Signature {
-  try {
-    return deserializeSignature(value) as AnySignature | Ed25519Signature;
-  } catch {
-    return new Ed25519Signature(hexToBytes(stripHexPrefix(value)));
   }
 }

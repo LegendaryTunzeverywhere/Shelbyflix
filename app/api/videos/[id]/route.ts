@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deserializePublicKey, deserializeSignature } from '@aptos-labs/ts-sdk';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import { verifyWalletSignature } from '@/lib/wallet-signature';
 
 const VIDEO_ID_REGEX = /^[\w-]+$/;
 
@@ -24,8 +24,9 @@ function getAdminWallets(): Set<string> {
 //
 // JSON body fields expected:
 //   - walletAddress : 0x-prefixed Aptos address of the caller (string)
-//   - publicKey     : hex Ed25519 public key (string)
-//   - signature     : hex Ed25519 signature over the message below (string)
+//   - publicKey     : hex public key — raw/BCS Ed25519 (Petra) or BCS keyless
+//                      (Google/Apple via AptosConnect) (string)
+//   - signature     : hex signature over the message below (string)
 //   - signedMessage : the wallet's actual returned fullMessage, which must
 //                      CONTAIN "ShelbyFlix delete: <videoId>" (string) --
 //                      see app/api/uploads/route.ts for why containment
@@ -95,25 +96,46 @@ export async function DELETE(
 
     // Verify signature against the exact bytes the wallet signed.
     //
-    // FIX: same issue as app/api/uploads/route.ts — hardcoded
-    // Ed25519PublicKey assumed raw Ed25519 bytes, which failed for every
-    // wallet tested (both Petra extension and social login). Modern
-    // Aptos accounts commonly return publicKey/signature in
-    // AnyPublicKey/AnySignature-wrapped BCS format, not raw Ed25519 bytes.
-    // deserializePublicKey/deserializeSignature auto-detect the actual
-    // type and construct the correct subclass, used polymorphically here.
-    let signatureValid = false;
-    try {
-      const pubKey = deserializePublicKey(publicKey);
-      const sig = deserializeSignature(signature);
-      const messageBytes = new TextEncoder().encode(fullMessage);
-      signatureValid = pubKey.verifySignature({ message: messageBytes, signature: sig });
-    } catch (err) {
-      console.error('Signature verification error:', err);
-      return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
-    }
-    if (!signatureValid) {
-      return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
+    // Two fixes live here, both routed through @/lib/wallet-signature:
+    //
+    //  1. This previously called `deserializePublicKey()` directly, with no
+    //     raw-hex fallback — and that function *throws* on a bare 32-byte
+    //     Ed25519 key (there is no BCS variant tag to disambiguate it), so
+    //     ordinary Petra accounts were rejected as "Signature verification
+    //     failed" even before the keyless problem was found.
+    //  2. Google/Apple (AptosConnect) accounts are Aptos keyless accounts.
+    //     Their public key is a BCS `AnyPublicKey` and their signature is a
+    //     zero-knowledge proof that the SDK refuses to check synchronously.
+    const verification = await verifyWalletSignature({
+      publicKey,
+      signature,
+      message: fullMessage,
+    });
+    if (!verification.valid) {
+      const detail = verification.detail ? ` (${verification.detail})` : '';
+      console.error(
+        `Signature verification failed [${verification.scheme}/${verification.reason}]${detail}`,
+      );
+      if (verification.reason === 'unavailable') {
+        return NextResponse.json(
+          {
+            error:
+              'Could not verify the Google/Apple signature right now — the network state ' +
+              'needed to check it is unavailable. Please retry in a moment.',
+          },
+          { status: 503 },
+        );
+      }
+      if (verification.reason === 'unsupported') {
+        return NextResponse.json(
+          { error: `Unsupported wallet signature format${detail}` },
+          { status: 400 },
+        );
+      }
+      return NextResponse.json(
+        { error: 'Invalid wallet signature', reason: 'bad_signature' },
+        { status: 401 },
+      );
     }
 
     // ── Look up the video and authorize ──────────────────────────────────

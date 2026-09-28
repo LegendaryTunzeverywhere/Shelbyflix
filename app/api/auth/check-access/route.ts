@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey } from '@aptos-labs/ts-sdk';
 import { nonceStore, verifyAndConsumeNonce } from '@/lib/nonce-store';
-import { hexToBytes } from '@/lib/shared-utils';
+import { verifyWalletSignature } from '@/lib/wallet-signature';
 // import { checkTokenOwnership } from '@/lib/aptos'; // Available for opt-in token-gating
 
 // ---------------------------------------------------------------------------
@@ -16,7 +15,10 @@ import { hexToBytes } from '@/lib/shared-utils';
 //     fullMessage is the ACTUAL bytes that were signed (includes APTOS\n
 //     prefix, application/domain, nonce, etc.). Verification must use
 //     fullMessage, not the caller-supplied plain text.
-//  4. Server verifies the Ed25519 signature over fullMessage.
+//  4. Server verifies the signature over fullMessage. Both Ed25519 wallets
+//     (Petra and other extensions) and Aptos keyless wallets ("Continue with
+//     Google" / "Continue with Apple") are supported — see
+//     lib/wallet-signature.ts.
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -51,11 +53,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // ── Verify Ed25519 signature ──────────────────────────────────────────
+    // ── Verify the signature ──────────────────────────────────────────────
     // Aptos Wallet Standard returns `fullMessage` — the exact bytes the
     // wallet actually signed (includes APTOS\n prefix + domain + nonce).
     // When present we MUST verify against that; otherwise fall back to the
     // raw "ShelbyFlix login: <nonce>" we asked the wallet to sign.
+    //
+    // This previously did `new Ed25519PublicKey(publicKey)` against the raw
+    // submitted string, which only ever worked for a bare 32-byte Petra key
+    // and failed for every other wallet. @/lib/wallet-signature handles both
+    // Ed25519 and Google/Apple keyless accounts.
     const plainMessage = `ShelbyFlix login: ${nonce}`;
     const messageToVerify: string =
       typeof fullMessage === 'string' && fullMessage.length > 0
@@ -72,23 +79,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const messageBytes = new TextEncoder().encode(messageToVerify);
+    const verification = await verifyWalletSignature({
+      publicKey: String(publicKey),
+      signature: String(signature),
+      message: messageToVerify,
+    });
 
-    let signatureValid = false;
-    try {
-      const pubKey = new Ed25519PublicKey(publicKey);
-      const sigHex = String(signature);
-      const sigBytes = hexToBytes(sigHex.startsWith('0x') ? sigHex.slice(2) : sigHex);
-      signatureValid = pubKey.verifySignature({
-        message: messageBytes,
-        signature: sigBytes,
-      } as any);
-    } catch (err) {
-      console.error('Signature verification error:', err);
-      return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
-    }
-
-    if (!signatureValid) {
+    if (!verification.valid) {
+      const detail = verification.detail ? ` (${verification.detail})` : '';
+      console.error(
+        `check-access signature verification failed [${verification.scheme}/${verification.reason}]${detail}`,
+      );
+      if (verification.reason === 'unavailable') {
+        return NextResponse.json(
+          {
+            error:
+              'Could not verify the Google/Apple signature right now — the network state ' +
+              'needed to check it is unavailable. Please retry in a moment.',
+          },
+          { status: 503 },
+        );
+      }
+      if (verification.reason === 'unsupported') {
+        return NextResponse.json(
+          { error: `Unsupported wallet signature format${detail}` },
+          { status: 400 },
+        );
+      }
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 

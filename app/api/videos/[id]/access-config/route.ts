@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Ed25519PublicKey, Ed25519Signature } from '@aptos-labs/ts-sdk';
 import { nonceStore, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { normalizeAddress } from '@/lib/access-control';
-import { hexToBytes, truncateHash } from '@/lib/shared-utils';
+import { truncateHash } from '@/lib/shared-utils';
+import { verifyWalletSignature } from '@/lib/wallet-signature';
 import { moveContractBackend } from '@/lib/move-contract-backend';
 import { ChainUnavailableError } from '@/lib/move-contract-backend';
 import { ACCESS_CONTROL_MODULE } from '@/lib/move-contract';
@@ -183,35 +183,55 @@ export async function PATCH(
       );
     }
 
-    const messageBytes = new TextEncoder().encode(messageToVerify);
+    // Signature verification.
+    //
+    // This previously hardcoded `new Ed25519PublicKey(publicKey)` /
+    // `new Ed25519Signature(sigBytes)`, which only accepts a bare 32-byte
+    // Ed25519 key. Google/Apple (AptosConnect) accounts are Aptos keyless
+    // accounts whose public key is a BCS `AnyPublicKey` and whose signature is
+    // an on-chain-verifiable zero-knowledge proof, so this rejected them with
+    // a flat "Signature verification failed" — meaning a creator who signed
+    // in with Google or Apple could not change their own video's access
+    // settings. @/lib/wallet-signature verifies both key types.
+    const verification = await verifyWalletSignature({
+      publicKey,
+      signature,
+      message: messageToVerify,
+    });
 
-    let signatureValid = false;
-    try {
-      const pubKey = new Ed25519PublicKey(publicKey);
-      const sigHex = signature.startsWith('0x') ? signature.slice(2) : signature;
-      const sigBytes = hexToBytes(sigHex);
-      const ed25519Sig = new Ed25519Signature(sigBytes);
-      signatureValid = pubKey.verifySignature({
-        message: messageBytes,
-        signature: ed25519Sig,
-      });
-    } catch (err) {
-      logRejection('signature_verification_error', {
-        videoId,
-        walletAddress: truncateHash(storeKey),
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return NextResponse.json(
-        { error: 'Signature verification failed', reason: 'bad_signature' },
-        { status: 401 },
+    if (!verification.valid) {
+      logRejection(
+        verification.reason === 'invalid'
+          ? 'invalid_signature'
+          : 'signature_verification_error',
+        {
+          videoId,
+          walletAddress: truncateHash(storeKey),
+          scheme: verification.scheme,
+          failure: verification.reason,
+          error: verification.detail,
+        },
       );
-    }
-
-    if (!signatureValid) {
-      logRejection('invalid_signature', {
-        videoId,
-        walletAddress: truncateHash(storeKey),
-      });
+      if (verification.reason === 'unavailable') {
+        return NextResponse.json(
+          {
+            error:
+              'Could not verify the Google/Apple signature right now — the network state ' +
+              'needed to check it is unavailable. Please retry in a moment.',
+            reason: 'verification_unavailable',
+          },
+          { status: 503 },
+        );
+      }
+      if (verification.reason === 'unsupported') {
+        return NextResponse.json(
+          {
+            error: `Unsupported wallet signature format: ${verification.detail ?? 'unrecognised key type'}`,
+            reason: 'bad_signature',
+          },
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
         { error: 'Invalid signature', reason: 'bad_signature' },
         { status: 401 },

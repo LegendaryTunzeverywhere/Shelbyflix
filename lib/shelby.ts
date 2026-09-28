@@ -421,9 +421,9 @@ export async function uploadToShelby(
       ].filter(Boolean).join(', ');
       throw new Error(
         `Wallet did not return a usable signature for upload authorization ` +
-        `(missing: ${missing}). This can happen with some social-login/` +
-        `Keyless-based wallet connections that don't fully support message ` +
-        `signing — try connecting with the Petra browser extension instead.`,
+        `(missing: ${missing}). Both extension wallets (Petra and others) and ` +
+        `Google/Apple social-login wallets are supported — if you see this, ` +
+        `disconnect and reconnect your wallet, then try again.`,
       );
     }
 
