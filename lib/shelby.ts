@@ -671,6 +671,24 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
     .join('');
 }
 
+/**
+ * Coerce a value from the wallet adapter into the hex string the server wants.
+ *
+ * `bcsToBytes()` is preferred over `toUint8Array()` because they return
+ * identical bytes for every SDK type we handle — `PublicKey.toUint8Array()`
+ * and `Signature.toUint8Array()` are both literally `return this.bcsToBytes()`
+ * — but `AnySignature.toUint8Array()` additionally logs a deprecation warning
+ * on every call. A Google/Apple keyless signature arrives wrapped in an
+ * AnySignature, so taking that path printed
+ *
+ *   [Aptos SDK] Calls to AnySignature.toUint8Array() will soon return the
+ *   underlying signature bytes. Use AnySignature.bcsToBytes() instead.
+ *
+ * on every upload. Preferring `bcsToBytes()` silences it without changing a
+ * single byte on the wire. The variant tag matters here: we WANT the tagged
+ * `AnySignature` BCS form, because the server's `deserializeSignature` relies
+ * on it to tell a wrapped keyless signature from a bare Ed25519 one.
+ */
 function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'signature' | 'publicKey'): string {
   if (typeof value === 'string') return value;
 
@@ -684,10 +702,34 @@ function serializeWalletValue(value: unknown, encoding: 'hex' | 'utf8' | 'signat
     const candidate = value as {
       bcsToBytes?: () => Uint8Array;
       toUint8Array?: () => Uint8Array;
+      signature?: unknown;
     };
-    const bytes = encoding === 'signature' || encoding === 'publicKey'
-      ? candidate.toUint8Array?.()
-      : candidate.bcsToBytes?.() ?? candidate.toUint8Array?.();
+    // `toUint8Array()` is the right default and must stay the default:
+    // `Ed25519PublicKey` and `Ed25519Signature` override it to return the
+    // RAW 32/64 bytes, whereas `bcsToBytes()` returns the length-prefixed
+    // form (0x20 || key, 0x40 || sig). Swapping them would change the bytes on
+    // the wire for every Petra upload.
+    //
+    // The one exception is `AnySignature`, whose `toUint8Array()` is literally
+    // `return this.bcsToBytes()` but logs a deprecation warning first. A
+    // Google/Apple keyless signature arrives wrapped in an AnySignature, so
+    // that path printed, on every upload:
+    //
+    //   [Aptos SDK] Calls to AnySignature.toUint8Array() will soon return the
+    //   underlying signature bytes. Use AnySignature.bcsToBytes() instead.
+    //
+    // For that type the two are byte-identical, so prefer bcsToBytes() and
+    // keep the variant tag: the server's `deserializeSignature` relies on that
+    // tag to tell a wrapped keyless signature from a bare Ed25519 one.
+    const isAnySignature =
+      'signature' in candidate &&
+      candidate.signature != null &&
+      typeof candidate.signature === 'object';
+
+    const bytes = isAnySignature
+      ? (candidate.bcsToBytes?.() ?? candidate.toUint8Array?.())
+      : (candidate.toUint8Array?.() ?? candidate.bcsToBytes?.());
+
     if (bytes instanceof Uint8Array) {
       return encoding === 'utf8'
         ? new TextDecoder().decode(bytes)
