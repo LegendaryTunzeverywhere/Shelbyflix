@@ -50,6 +50,7 @@ import PurchaseGate from './PurchaseGate';
 interface VideoPlayerProps {
   video: VideoMetadata;
   walletAddress?: string;
+  onViewCountUpdated?: (views: number) => void;
   hasAccess?: boolean;   // kept for API compat, superseded by useVideoAccess
   autoPlay?: boolean;
   muted?: boolean;
@@ -64,6 +65,7 @@ const BASE_CONTAINER =
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
   video,
   walletAddress,
+  onViewCountUpdated,
   autoPlay = false,
   muted = false,
   className = '',
@@ -88,6 +90,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const objectUrlRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const countedViewForVideoRef = useRef<string | null>(null);
 
   // Clear any object URL / stream state when the video changes or when
   // access flips back to denied (e.g. owner removed a viewer from an
@@ -118,8 +121,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       try {
         const { downloadAndDecryptVideo } = await import('@/lib/shelby');
-        const { incrementViews } = await import('@/lib/video-service');
-
         const keyParams = new URLSearchParams();
         if (walletAddress) keyParams.set('wallet', walletAddress);
         const keyRes = await fetch(
@@ -146,9 +147,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const url = URL.createObjectURL(decryptedBlob);
         objectUrlRef.current = url;
         setStreamUrl(url);
-
-        // Fire-and-forget; failures here shouldn't affect playback.
-        incrementViews(video.videoId).catch(() => {});
       } catch (err) {
         if (cancelled) return;
         const errorMsg =
@@ -436,6 +434,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           playsInline
           muted={muted}
           className="w-full h-full"
+          onPlay={() => {
+            if (countedViewForVideoRef.current === video.videoId) return;
+            countedViewForVideoRef.current = video.videoId;
+
+            import('@/lib/video-service')
+              .then(({ incrementViews }) => incrementViews(video.videoId))
+              .then((views) => onViewCountUpdated?.(views))
+              .catch((error) => {
+                if (countedViewForVideoRef.current === video.videoId) {
+                  countedViewForVideoRef.current = null;
+                }
+                console.error('Failed to record video view:', error);
+              });
+          }}
           onError={(e) => {
             const code = e.currentTarget.error?.code;
             const msg = e.currentTarget.error?.message ?? 'Unknown error';

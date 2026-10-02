@@ -3,8 +3,6 @@ import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { nonceStore, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
-type Action = 'comment' | 'comment-delete' | 'comment-like' | 'engagement' | 'subscription';
-
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
@@ -31,7 +29,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       typeof signature !== 'string' || !signature ||
       typeof signedMessage !== 'string' || !signedMessage ||
       typeof nonce !== 'string' || !nonce ||
-      !['comment', 'comment-delete', 'comment-like', 'engagement', 'subscription'].includes(action) ||
+      !['comment', 'comment-delete', 'comment-like', 'engagement', 'subscription', 'subscription-status'].includes(action) ||
       payload === null || typeof payload !== 'object' || Array.isArray(payload)
     ) {
       return NextResponse.json({ error: 'Invalid wallet interaction request' }, { status: 400 });
@@ -83,13 +81,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ error: 'A video and comment text are required' }, { status: 400 });
       }
       const { data: profile, error: profileError } = await admin
-        .from('users').select('username').eq('wallet_address', normalizedWallet).maybeSingle();
+        .from('users')
+        .select('username, avatar_url')
+        .eq('wallet_address', normalizedWallet)
+        .maybeSingle();
       if (profileError) throw profileError;
       const { data, error } = await admin.from('comments').insert({
         comment_id: `comment_${Date.now()}_${crypto.randomUUID()}`,
         video_id: videoId,
         user_wallet: normalizedWallet,
         user_name: profile?.username ?? normalizedWallet,
+        user_avatar: profile?.avatar_url ?? null,
         text: text.trim(),
         likes: 0,
         timestamp: Date.now(),
@@ -156,6 +158,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'A valid channel wallet is required' }, { status: 400 });
     }
     const channelWallet = channelId.toLowerCase();
+
+    if (action === 'subscription-status') {
+      const { data: existing, error } = await admin
+        .from('subscriptions')
+        .select('subscriber_wallet')
+        .eq('subscriber_wallet', normalizedWallet)
+        .eq('channel_wallet', channelWallet)
+        .maybeSingle();
+      if (error) throw error;
+      return NextResponse.json({ subscribed: Boolean(existing) });
+    }
+
     const { data: existing, error: fetchError } = await admin
       .from('subscriptions').select('subscriber_wallet')
       .eq('subscriber_wallet', normalizedWallet).eq('channel_wallet', channelWallet).maybeSingle();

@@ -1,6 +1,6 @@
 import { csrfFetch } from '@/lib/csrf-client';
 
-export type WalletAction = 'comment' | 'comment-delete' | 'comment-like' | 'engagement' | 'subscription';
+export type WalletAction = 'comment' | 'comment-delete' | 'comment-like' | 'engagement' | 'subscription' | 'subscription-status';
 
 type SignMessage = (args: { message: string; nonce: string }) => Promise<{
   signature?: unknown;

@@ -338,7 +338,18 @@ export default function VideoPage() {
           <div className="flex-1 min-w-0">
             {/* Player */}
             <div className="rounded-2xl overflow-hidden bg-black mb-4 shadow-2xl">
-              <VideoPlayer video={video} walletAddress={address?.toString()} />
+              <VideoPlayer
+                video={video}
+                walletAddress={address?.toString()}
+                onViewCountUpdated={(views) => {
+                  setVideo((current) => current ? { ...current, views } : current);
+                  setRelated((current) =>
+                    current.map((item) =>
+                      item.videoId === video.videoId ? { ...item, views } : item,
+                    ),
+                  );
+                }}
+              />
             </div>
 
             {/* Title */}

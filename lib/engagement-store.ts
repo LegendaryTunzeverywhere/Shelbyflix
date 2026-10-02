@@ -1,9 +1,22 @@
 import type { Comment } from '@/types';
 import { supabase } from './supabase';
 import { postWalletInteraction } from './wallet-interactions';
+import { getChannelAnalytics } from './channel-analytics';
 
 const ENGAGEMENT_KEY = 'shelbyflix_engagement';
 const COMMENTS_KEY = 'shelbyflix_comments';
+
+interface CommentRecord {
+  comment_id: string;
+  video_id: string;
+  user_wallet: string;
+  user_name: string;
+  user_avatar: string | null;
+  text: string;
+  likes: number;
+  timestamp: number;
+  parent_comment_id: string | null;
+}
 
 // ============================================================================
 // ENGAGEMENT (Likes/Dislikes)
@@ -179,45 +192,50 @@ export async function addComment(
  * Get comments for a video
  */
 export async function getVideoComments(videoId: string): Promise<Comment[]> {
-  const { data, error } = await supabase
-    .from('comments')
-    .select('*')
-    .eq('video_id', videoId)
-    .order('timestamp', { ascending: false });
-  
-  if (error) {
-    console.error('Failed to load comments:', error);
-    return [];
+  const response = await fetch(`/api/comments?videoId=${encodeURIComponent(videoId)}`, {
+    cache: 'no-store',
+  });
+  const body: unknown = await response.json();
+  if (!response.ok) {
+    const message =
+      typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+        ? body.error
+        : 'Failed to load comments';
+    throw new Error(message);
   }
+  if (!Array.isArray(body)) throw new Error('Invalid comments response');
+  const data = body as CommentRecord[];
   
   // Get top-level comments (no parent)
   const topLevel = data
-    .filter((c: any) => !c.parent_comment_id)
-    .map((c: any) => ({
+    .filter((c) => !c.parent_comment_id)
+    .map((c) => ({
       commentId: c.comment_id,
       videoId: c.video_id,
       userId: c.user_wallet,
       userName: c.user_name,
+      userAvatar: c.user_avatar ?? undefined,
       text: c.text,
       likes: c.likes,
       timestamp: c.timestamp,
-      parentCommentId: c.parent_comment_id,
+      parentCommentId: c.parent_comment_id ?? undefined,
       replies: [],
     }));
   
   // Attach replies to each top-level comment
   topLevel.forEach((comment: Comment) => {
     comment.replies = data
-      .filter((c: any) => c.parent_comment_id === comment.commentId)
-      .map((c: any) => ({
+      .filter((c) => c.parent_comment_id === comment.commentId)
+      .map((c) => ({
         commentId: c.comment_id,
         videoId: c.video_id,
         userId: c.user_wallet,
         userName: c.user_name,
+        userAvatar: c.user_avatar ?? undefined,
         text: c.text,
         likes: c.likes,
         timestamp: c.timestamp,
-        parentCommentId: c.parent_comment_id,
+        parentCommentId: c.parent_comment_id ?? undefined,
         replies: [],
       }))
       .sort((a, b) => a.timestamp - b.timestamp);
@@ -275,41 +293,35 @@ export async function toggleSubscription(
 /**
  * Check if user is subscribed to a channel
  */
-export async function isSubscribed(subscriberId: string, channelId: string): Promise<boolean> {
+export async function isSubscribed(
+  subscriberId: string,
+  channelId: string,
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  publicKey: unknown,
+): Promise<boolean> {
   const normalizedSub = subscriberId.toLowerCase();
   const normalizedChannel = channelId.toLowerCase();
-  
-  const { count, error } = await supabase
-    .from('subscriptions')
-    .select('*', { count: 'exact', head: true })
-    .eq('subscriber_wallet', normalizedSub)
-    .eq('channel_wallet', normalizedChannel);
-  
-  if (error) {
-    console.error('Failed to check subscription:', error);
-    return false;
-  }
-  
-  return (count ?? 0) > 0;
+  const result = await postWalletInteraction<{ subscribed: boolean }>(
+    normalizedSub,
+    publicKey,
+    signMessage,
+    'subscription-status',
+    { channelId: normalizedChannel },
+  );
+  return result.subscribed;
 }
 
 /**
  * Get subscriber count for a channel
  */
 export async function getSubscriberCount(channelId: string): Promise<number> {
-  const normalizedId = channelId.toLowerCase();
-  
-  const { count, error } = await supabase
-    .from('subscriptions')
-    .select('*', { count: 'exact', head: true })
-    .eq('channel_wallet', normalizedId);
-  
-  if (error) {
+  try {
+    const analytics = await getChannelAnalytics(channelId);
+    return analytics.subscriberCount;
+  } catch (error) {
     console.error('Failed to get subscriber count:', error);
     return 0;
   }
-  
-  return count ?? 0;
 }
 
 /**

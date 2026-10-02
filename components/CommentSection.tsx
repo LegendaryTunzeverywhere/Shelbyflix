@@ -229,13 +229,15 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
               placeholder-zinc-600 focus:ring-2 focus:ring-brand-red focus:border-transparent resize-none"
           />
           <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => setNewComment('')}
-              className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold text-sm transition-colors"
-            >
-              Cancel
-            </button>
+            {newComment.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setNewComment('')}
+                className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold text-sm transition-colors"
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="submit"
               disabled={!newComment.trim() || submitting}
@@ -340,6 +342,7 @@ function CommentItem({
   isReply = false,
 }: CommentItemProps) {
   const [liked, setLiked] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
 
   return (
     <div className={isReply ? 'ml-12' : ''}>
@@ -347,10 +350,19 @@ function CommentItem({
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-brand-purple to-brand-red rounded-full
-              flex items-center justify-center text-white font-black text-xs flex-shrink-0">
-              {comment.userName.slice(0, 2).toUpperCase()}
-            </div>
+            {comment.userAvatar && !avatarFailed ? (
+              <img
+                src={comment.userAvatar}
+                alt=""
+                className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                onError={() => setAvatarFailed(true)}
+              />
+            ) : (
+              <div className="w-8 h-8 bg-gradient-to-br from-brand-purple to-brand-red rounded-full
+                flex items-center justify-center text-white font-black text-xs flex-shrink-0">
+                {comment.userName.slice(0, 2).toUpperCase()}
+              </div>
+            )}
             <div>
               <Link
                 href={`/channel/${comment.userId}`}

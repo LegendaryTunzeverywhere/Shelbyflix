@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { XMarkIcon, LinkIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, LinkIcon, CheckIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 
 /**
  * ShareModal
@@ -20,8 +20,8 @@ interface ShareTarget {
   id: string;
   /** Shown under the tile. */
   label: string;
-  /** Short glyph drawn inside the coloured tile. */
-  mark: string;
+  /** Local Simple Icons logo asset. Email uses the shared outline icon. */
+  iconSrc?: string;
   /** Tailwind classes for the tile. */
   tile: string;
   href: (url: string, title: string) => string;
@@ -33,7 +33,7 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'x',
     label: 'X',
-    mark: 'X',
+    iconSrc: '/share-icons/x.svg',
     tile: 'bg-black text-white border-zinc-700',
     popup: true,
     href: (url, title) =>
@@ -42,7 +42,7 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'facebook',
     label: 'Facebook',
-    mark: 'f',
+    iconSrc: '/share-icons/facebook.svg',
     tile: 'bg-[#1877F2] text-white border-[#1877F2]/40',
     popup: true,
     href: (url) =>
@@ -51,7 +51,7 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'whatsapp',
     label: 'WhatsApp',
-    mark: 'W',
+    iconSrc: '/share-icons/whatsapp.svg',
     tile: 'bg-[#25D366] text-zinc-950 border-[#25D366]/40',
     popup: true,
     href: (url, title) =>
@@ -60,7 +60,7 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'telegram',
     label: 'Telegram',
-    mark: 'T',
+    iconSrc: '/share-icons/telegram.svg',
     tile: 'bg-[#229ED9] text-white border-[#229ED9]/40',
     popup: true,
     href: (url, title) =>
@@ -69,7 +69,7 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'reddit',
     label: 'Reddit',
-    mark: 'R',
+    iconSrc: '/share-icons/reddit.svg',
     tile: 'bg-[#FF4500] text-white border-[#FF4500]/40',
     popup: true,
     href: (url, title) =>
@@ -78,7 +78,7 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'linkedin',
     label: 'LinkedIn',
-    mark: 'in',
+    iconSrc: '/share-icons/linkedin.svg',
     tile: 'bg-[#0A66C2] text-white border-[#0A66C2]/40',
     popup: true,
     href: (url) =>
@@ -87,7 +87,6 @@ const SHARE_TARGETS: ShareTarget[] = [
   {
     id: 'email',
     label: 'Email',
-    mark: '@',
     tile: 'bg-zinc-800 text-zinc-200 border-zinc-700',
     popup: false,
     href: (url, title) =>
@@ -238,13 +237,17 @@ export default function ShareModal({ open, onClose, title, url }: ShareModalProp
               <button
                 key={target.id}
                 onClick={() => onShare(target)}
-                className="group flex flex-col items-center gap-2"
+                className="group flex flex-col items-center gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
                 aria-label={`Share on ${target.label}`}
               >
                 <span
-                  className={`w-12 h-12 rounded-2xl border flex items-center justify-center text-lg font-black transition-transform group-hover:scale-105 group-focus-visible:scale-105 ${target.tile}`}
+                  className={`w-12 h-12 rounded-2xl border flex items-center justify-center transition-transform group-hover:scale-105 group-focus-visible:scale-105 ${target.tile}`}
                 >
-                  {target.mark}
+                  {target.iconSrc ? (
+                    <img src={target.iconSrc} alt="" className="w-6 h-6" />
+                  ) : (
+                    <EnvelopeIcon className="w-6 h-6" aria-hidden="true" />
+                  )}
                 </span>
                 <span className="text-zinc-500 text-[11px] font-bold truncate w-full text-center">
                   {target.label}

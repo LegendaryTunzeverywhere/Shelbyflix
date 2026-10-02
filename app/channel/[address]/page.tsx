@@ -11,7 +11,7 @@ import DeleteVideoModal from '@/components/DeleteVideoModal';
 import SubscribeButton from '@/components/SubscribeButton';
 import { useWallet } from '@/hooks/useWallet';
 import { formatAddress } from '@/lib/aptos';
-import { getSubscriberCount } from '@/lib/engagement-store';
+import { getChannelAnalytics, type ChannelAnalytics } from '@/lib/channel-analytics';
 import { getUserByWallet, updateUserProfile } from '@/lib/user-service';
 import { resizeAvatar, resizeBanner } from '@/lib/image-utils';
 import type { VideoMetadata } from '@/types';
@@ -134,7 +134,9 @@ export default function ChannelPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('videos');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
-  const [subscriberCount, setSubscriberCount] = useState(0);
+  const [analytics, setAnalytics] = useState<ChannelAnalytics | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [editingVideo, setEditingVideo] = useState<VideoMetadata | null>(null);
   const [deletingVideo, setDeletingVideo] = useState<VideoMetadata | null>(null);
   const [publicUser, setPublicUser] = useState<User | null>(null);
@@ -146,13 +148,22 @@ export default function ChannelPage() {
 
   useEffect(() => {
     loadVideos();
-    refreshSubCount();
+    refreshAnalytics();
     getUserByWallet(channelAddress).then(u => setPublicUser(u));
   }, [channelAddress]);
 
-  async function refreshSubCount() {
-    const count = await getSubscriberCount(channelAddress);
-    setSubscriberCount(count);
+  async function refreshAnalytics() {
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+    try {
+      const result = await getChannelAnalytics(channelAddress);
+      setAnalytics(result);
+    } catch (error) {
+      console.error('Failed to load channel analytics:', error);
+      setAnalyticsError('Channel analytics could not be loaded.');
+    } finally {
+      setAnalyticsLoading(false);
+    }
   }
 
   async function loadVideos() {
@@ -217,9 +228,6 @@ export default function ChannelPage() {
   const allVideos = videos.filter(v => !v.isShort && v.duration >= 60);
   const shorts = videos.filter(v => v.isShort || v.duration < 60);
   const displayed = tab === 'videos' ? allVideos : shorts;
-
-  const totalViews = videos.reduce((s, v) => s + v.views, 0);
-  const totalLikes = videos.reduce((s, v) => s + v.likes, 0);
 
   const displayName = publicUser?.display_name || publicUser?.username
     ? (publicUser.display_name || publicUser.username!)
@@ -309,15 +317,31 @@ export default function ChannelPage() {
 
           <div className="flex-1 min-w-0 pb-1">
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">{displayName}</h1>
-            <p className="text-zinc-500 text-xs sm:text-sm font-mono mt-0.5 truncate">{channelAddress}</p>
+            <p
+              className="text-zinc-500 text-xs sm:text-sm font-mono mt-0.5 truncate"
+              title={channelAddress}
+              aria-label={`Wallet address: ${channelAddress}`}
+            >
+              {formatAddress(channelAddress)}
+            </p>
 
             <div className="flex flex-wrap items-center gap-3 sm:gap-5 mt-2 text-xs text-zinc-500">
-              <span><span className="text-white font-bold">{videos.length}</span> videos</span>
-              <span><span className="text-white font-bold">{formatViews(totalViews)}</span> views</span>
+              <span>
+                <span className="text-white font-bold">
+                  {analyticsLoading ? '…' : analyticsError ? '—' : analytics?.videoCount ?? 0}
+                </span> videos
+              </span>
+              <span>
+                <span className="text-white font-bold">
+                  {analyticsLoading ? '…' : analyticsError ? '—' : formatViews(analytics?.totalViews ?? 0)}
+                </span> views
+              </span>
               <span className="flex items-center gap-1">
                 <UserGroupIcon className="w-3.5 h-3.5" />
-                <span className="text-white font-bold">{formatViews(subscriberCount)}</span>
-                {' '}{subscriberCount === 1 ? 'subscriber' : 'subscribers'}
+                <span className="text-white font-bold">
+                  {analyticsLoading ? '…' : analyticsError ? '—' : formatViews(analytics?.subscriberCount ?? 0)}
+                </span>
+                {' '}{analytics?.subscriberCount === 1 ? 'subscriber' : 'subscribers'}
               </span>
             </div>
           </div>
@@ -332,17 +356,44 @@ export default function ChannelPage() {
                 UPLOAD
               </Link>
             ) : (
-              <SubscribeButton channelId={channelAddress} onSubscribe={refreshSubCount} />
+              <SubscribeButton channelId={channelAddress} onSubscribe={refreshAnalytics} />
             )}
           </div>
         </div>
 
         {isOwner && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-            <StatCard icon={FilmIcon} label="Total Videos" value={videos.length.toString()} />
-            <StatCard icon={BoltIcon} label="Shorts" value={shorts.length.toString()} />
-            <StatCard icon={EyeIcon} label="Total Views" value={formatViews(totalViews)} />
-            <StatCard icon={UserGroupIcon} label="Subscribers" value={formatViews(subscriberCount)} />
+            <StatCard
+              icon={FilmIcon}
+              label="Total Videos"
+              value={analyticsLoading ? '…' : analyticsError ? '—' : String(analytics?.videoCount ?? 0)}
+            />
+            <StatCard
+              icon={BoltIcon}
+              label="Shorts"
+              value={analyticsLoading ? '…' : analyticsError ? '—' : String(analytics?.shortCount ?? 0)}
+            />
+            <StatCard
+              icon={EyeIcon}
+              label="Total Views"
+              value={analyticsLoading ? '…' : analyticsError ? '—' : formatViews(analytics?.totalViews ?? 0)}
+            />
+            <StatCard
+              icon={UserGroupIcon}
+              label="Subscribers"
+              value={analyticsLoading ? '…' : analyticsError ? '—' : formatViews(analytics?.subscriberCount ?? 0)}
+            />
+          </div>
+        )}
+        {analyticsError && (
+          <div role="alert" className="flex items-center justify-between gap-3 mb-6 text-sm text-red-300">
+            <span>{analyticsError}</span>
+            <button
+              onClick={refreshAnalytics}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold text-white bg-zinc-800 hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-red"
+            >
+              Retry
+            </button>
           </div>
         )}
 

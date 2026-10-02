@@ -36,6 +36,9 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/auth/challenge': { windowMs: 60_000, maxRequests: 10 },
   '/api/auth/check-access:POST': { windowMs: 60_000, maxRequests: 20 },
   '/api/interactions:POST': { windowMs: 60_000, maxRequests: 60 },
+  '/api/comments:GET': { windowMs: 60_000, maxRequests: 60 },
+  '/api/channels': { windowMs: 60_000, maxRequests: 60 },
+  '/api/video-views:POST': { windowMs: 60_000, maxRequests: 60 },
   '/api/payments/verify': { windowMs: 600_000, maxRequests: 5 },
   '/api/users:POST': { windowMs: 60_000, maxRequests: 5 }, // Limit user creation to prevent spam
   '/api/users:GET': { windowMs: 60_000, maxRequests: 50 }, // More lenient for reads

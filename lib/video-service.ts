@@ -146,40 +146,19 @@ export async function getRecentVideos(limit: number = 10): Promise<VideoMetadata
   return data.map(recordToMetadata);
 }
 
-// Per-user view deduplication — one view per wallet per video, stored in video_engagement
-export async function incrementViews(videoId: string, walletAddress?: string): Promise<void> {
-  if (walletAddress) {
-    // Check if this wallet already viewed this video
-    const { data: existing } = await supabase
-      .from('video_engagement')
-      .select('viewed')
-      .eq('video_id', videoId)
-      .eq('user_wallet', walletAddress)
-      .maybeSingle();
-
-    if (existing?.viewed) return; // Already counted — do nothing
-
-    // Mark as viewed
-    await supabase.from('video_engagement').upsert(
-      {
-        video_id: videoId,
-        user_wallet: walletAddress,
-        viewed: true,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'video_id,user_wallet' }
-    );
+export async function incrementViews(videoId: string): Promise<number> {
+  const response = await csrfFetch('/api/video-views', {
+    method: 'POST',
+    body: JSON.stringify({ videoId }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || 'Failed to increment video views');
   }
-
-  // Increment the counter
-  const { error } = await supabase.rpc('increment_views', { video_id_param: videoId });
-  if (error) {
-    // Fallback if RPC doesn't exist
-    const { data } = await supabase.from('videos').select('views').eq('video_id', videoId).single();
-    if (data) {
-      await supabase.from('videos').update({ views: (data.views || 0) + 1 }).eq('video_id', videoId);
-    }
+  if (typeof result.views !== 'number') {
+    throw new Error('The server did not return the updated view count');
   }
+  return result.views;
 }
 
 // Matches exactly the columns selected by PUBLIC_VIDEO_COLUMNS above (never
@@ -457,4 +436,3 @@ export function getTimeUntilExpiration(expirationTimestamp: number): {
     formattedTime,
   };
 }
-
