@@ -67,6 +67,7 @@ import {
   deserializeSignature,
 } from '@aptos-labs/ts-sdk';
 import { hexToBytes } from '@/lib/shared-utils';
+import { getAptosClientConfigWithApiKey } from '@/lib/shelby-env';
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -195,62 +196,46 @@ function unwrapSignature(signature: AnySignature | Ed25519Signature) {
   return signature instanceof AnySignature ? signature.signature : signature;
 }
 
-// ---------------------------------------------------------------------------
-// Network config for the keyless path
-//
-// WHY THIS IS *NOT* THE SHELBY NETWORK — read before "simplifying" it
-// -----------------------------------------------------------------------
-// A Google/Apple keyless signature is not a Shelby artefact. It is a Groth16
-// zero-knowledge proof minted by AptosConnect, and it is only verifiable
-// against the `0x1::keyless_account::Groth16VerificationKey` of the Aptos
-// network the account was created on. Those keys genuinely differ per network
-// (Shelbynet's `delta_g2` is 0xe65b1be7…, mainnet's and testnet's are
-// 0xb1066199…), so verifying a proof against the wrong network fails the
-// pairing check with a bare "The proof verification failed" — indistinguishable
-// from forgery.
-//
-// And the network the account is created on is NOT the network this dApp is
-// configured for. `@aptos-connect/wallet-adapter-plugin`'s `networkToChainId()`
-// only maps MAINNET and TESTNET:
-//
-//     case Network.MAINNET: return NetworkToChainId.mainnet;
-//     case Network.TESTNET:  return NetworkToChainId.testnet;
-//     default:               return void 0;        // SHELBYNET lands here
-//
-// components/AptosWalletProvider.tsx passes `Network.SHELBYNET`, so the
-// chainId sent to AptosConnect is `undefined` and the service applies its own
-// default of mainnet. The account and its proof are therefore mainnet-scoped
-// even though every other part of this app talks to Shelbynet.
-//
-// Consequence: keyless verification must target Aptos mainnet (testnet shares
-// mainnet's verification key, so it is equally valid) while the rest of the app
-// keeps using Shelbynet. The two are configured independently on purpose — do
-// not merge them, and do not point this at NEXT_PUBLIC_SHELBYNET_NODE_URL.
-//
-// Overridable via KEYLESS_VERIFICATION_FULLNODE_URL /
-// KEYLESS_VERIFICATION_NETWORK for deployments that provision AptosConnect
-// differently.
-//
-// Built lazily and memoised: only keyless requests pay for it, and Petra
-// uploads never construct it at all.
-// ---------------------------------------------------------------------------
+// Keyless proofs are chain-specific, so use the same network as the wallet
+// adapter when fetching the verification key and patched JWKs.
 
 let cachedKeylessAptosConfig: AptosConfig | null = null;
+
+export function resolveKeylessVerificationNetwork(networkName: string): Network {
+  switch (networkName.trim().toUpperCase()) {
+    case 'MAINNET':
+      return Network.MAINNET;
+    case 'TESTNET':
+      return Network.TESTNET;
+    case 'SHELBYNET':
+    case 'CUSTOM':
+      return Network.CUSTOM;
+    default:
+      throw new Error(`Unsupported keyless verification network: ${networkName}`);
+  }
+}
 
 function getKeylessAptosConfig(): AptosConfig {
   if (cachedKeylessAptosConfig) return cachedKeylessAptosConfig;
 
-  // Aptos mainnet's fullnode needs no API key.
-  const fullnode =
-    process.env.KEYLESS_VERIFICATION_FULLNODE_URL?.trim() ||
-    'https://api.mainnet.aptoslabs.com/v1';
+  const networkName = process.env.KEYLESS_VERIFICATION_NETWORK?.trim()
+    || process.env.NEXT_PUBLIC_NETWORK_NAME?.trim()
+    || 'SHELBYNET';
+  const network = resolveKeylessVerificationNetwork(networkName);
+  const fullnode = process.env.KEYLESS_VERIFICATION_FULLNODE_URL?.trim()
+    || (network === Network.CUSTOM
+      ? process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL?.trim()
+        || 'https://api.shelbynet.shelby.xyz/v1'
+      : undefined);
+  const clientConfig = network === Network.CUSTOM
+    ? getAptosClientConfigWithApiKey()
+    : undefined;
 
-  const networkName = process.env.KEYLESS_VERIFICATION_NETWORK?.trim() || Network.MAINNET;
-  const network = (Object.values(Network) as string[]).includes(networkName)
-    ? (networkName as Network)
-    : Network.MAINNET;
-
-  cachedKeylessAptosConfig = new AptosConfig({ network, fullnode });
+  cachedKeylessAptosConfig = new AptosConfig({
+    network,
+    ...(fullnode ? { fullnode } : {}),
+    ...(clientConfig ? { clientConfig } : {}),
+  });
   return cachedKeylessAptosConfig;
 }
 

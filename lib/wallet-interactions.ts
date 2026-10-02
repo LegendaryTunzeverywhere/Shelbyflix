@@ -92,12 +92,13 @@ export async function postWalletInteraction<T>(
         nonceIncluded?: boolean;
         verifierScheme?: string;
         verifierReason?: string;
+        verifierDetail?: string;
       };
       throw new Error(
         `Wallet signature verification failed (${checks.verifierScheme ?? 'unknown'}: ${checks.verifierReason ?? 'unknown'}; ` +
         `full message includes action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
-        `payload: ${checks.payloadIncluded ? 'yes' : 'no'}, ` +
-        `challenge: ${checks.nonceIncluded ? 'yes' : 'no'}).`,
+        `payload: ${checks.payloadIncluded ? 'yes' : 'no'}, challenge: ${checks.nonceIncluded ? 'yes' : 'no'}` +
+        `${checks.verifierDetail ? `; ${checks.verifierDetail}` : ''}).`,
       );
     }
     throw new Error(result.error || 'Wallet action failed');

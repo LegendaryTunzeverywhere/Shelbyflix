@@ -169,6 +169,7 @@ describe('postWalletInteraction', () => {
           nonceIncluded: true,
           verifierScheme: 'keyless',
           verifierReason: 'invalid',
+          verifierDetail: '22: The proof verification failed.',
         },
       }, false, 401));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -187,7 +188,7 @@ describe('postWalletInteraction', () => {
       'session',
       { purpose: 'authorize' },
     )).rejects.toThrow(
-      'Wallet signature verification failed (keyless: invalid; full message includes action: yes, payload: no, challenge: yes).',
+      'Wallet signature verification failed (keyless: invalid; full message includes action: yes, payload: no, challenge: yes; 22: The proof verification failed.).',
     );
   });
 });
