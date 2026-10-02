@@ -82,7 +82,7 @@ export async function postWalletInteraction<T>(
   const result = await response.json();
   if (!response.ok) {
     if (
-      result.code === 'wallet_signature_invalid' &&
+      ['wallet_signature_invalid', 'wallet_message_unbound'].includes(result.code) &&
       result.diagnostics &&
       typeof result.diagnostics === 'object'
     ) {
@@ -95,7 +95,8 @@ export async function postWalletInteraction<T>(
         verifierDetail?: string;
       };
       throw new Error(
-        `Wallet signature verification failed (${checks.verifierScheme ?? 'unknown'}: ${checks.verifierReason ?? 'unknown'}; ` +
+        `${result.code === 'wallet_message_unbound' ? 'Wallet did not bind your authorization message' : 'Wallet signature verification failed'} ` +
+        `(${checks.verifierScheme ?? 'unknown'}: ${checks.verifierReason ?? 'unknown'}; ` +
         `full message includes action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
         `payload: ${checks.payloadIncluded ? 'yes' : 'no'}, challenge: ${checks.nonceIncluded ? 'yes' : 'no'}` +
         `${checks.verifierDetail ? `; ${checks.verifierDetail}` : ''}).`,

@@ -3,7 +3,10 @@ import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { createWalletSession, hasWalletSession, setWalletSessionCookie } from '@/lib/wallet-session';
 import { WALLET_SESSION_PURPOSE } from '@/lib/wallet-session-constants';
-import { resolveWalletInteractionMessages } from '@/lib/wallet-standard-message';
+import {
+  resolveWalletInteractionMessages,
+  walletFullMessageBindsAction,
+} from '@/lib/wallet-standard-message';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
 function stableStringify(value: unknown): string {
@@ -109,7 +112,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
         verification = candidateVerification;
       }
-      if (!verification?.valid || !messageToVerify) {
+      const actionIsBound = walletFullMessageBindsAction(
+        signedMessage,
+        expectedMessage,
+        nonce,
+      );
+      if (!verification?.valid || !messageToVerify || !actionIsBound) {
         const normalizedFullMessage = signedMessage.replace(/\r\n?/g, '\n');
         const normalizedExpectedMessage = expectedMessage.replace(/\r\n?/g, '\n');
         const expectedAction = `ShelbyFlix ${action}: ${nonce}`;
@@ -122,7 +130,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           nonceIncluded: normalizedFullMessage.includes(nonce),
           expectedMessageIncluded: normalizedFullMessage.includes(normalizedExpectedMessage),
           verifierScheme: verification?.scheme ?? 'unknown',
-          verifierReason: verification?.valid === false ? verification.reason : 'unknown',
+          verifierReason: verification?.valid ? 'valid' : verification?.reason ?? 'unknown',
           verifierDetail: verification?.valid === false ? verification.detail : undefined,
         };
         console.warn('Wallet interaction fullMessage did not include the expected action:', {
@@ -132,8 +140,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           signatureHexLength: signature.length,
         });
         return NextResponse.json({
-          error: 'Wallet signature does not match the requested action',
-          code: 'wallet_signature_invalid',
+          error: actionIsBound
+            ? 'Wallet signature does not match the signed message'
+            : 'Wallet full message does not bind the requested action',
+          code: actionIsBound ? 'wallet_signature_invalid' : 'wallet_message_unbound',
           diagnostics,
         }, { status: 401 });
       }
