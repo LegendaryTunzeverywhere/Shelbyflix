@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
@@ -10,13 +10,13 @@ import EngagementBar from '@/components/EngagementBar';
 import CommentSection from '@/components/CommentSection';
 import SubscribeButton from '@/components/SubscribeButton';
 import CreatorVideoSettings from '@/components/CreatorVideoSettings';
+import ShareModal from '@/components/ShareModal';
 import { useWallet } from '@/hooks/useWallet';
 import { getSubscriberCount } from '@/lib/engagement-store';
 import type { VideoMetadata } from '@/types';
 import {
   ArrowLeftIcon,
   ShareIcon,
-  CheckIcon,
   TrashIcon,
   EyeIcon,
   ClockIcon,
@@ -183,9 +183,9 @@ export default function VideoPage() {
   const [video, setVideo] = useState<VideoMetadata | null>(null);
   const [related, setRelated] = useState<VideoMetadata[]>([]);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [channelSubCount, setChannelSubCount] = useState(0);
 
   const videoId = params.id as string;
@@ -220,12 +220,19 @@ export default function VideoPage() {
     }
   }
 
+  /**
+   * Canonical URL for this video, shared to platforms and the clipboard.
+   *
+   * Strips query and hash so a shared link always points at the video rather
+   * than whatever tracking parameters were on the URL when it was copied.
+   */
+  const shareUrl = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return `${window.location.origin}${window.location.pathname}`;
+  }, []);
+
   async function handleShare() {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {}
+    setShowShareModal(true);
   }
 
     async function handleDeleteConfirm() {
@@ -306,6 +313,16 @@ export default function VideoPage() {
         />
       )}
 
+      {/* Share modal */}
+      {showShareModal && video && (
+        <ShareModal
+          open={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          title={video.title}
+          url={shareUrl}
+        />
+      )}
+
       <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -366,8 +383,8 @@ export default function VideoPage() {
                   onClick={handleShare}
                   className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-sm font-bold transition-colors"
                 >
-                  {copied ? <CheckIcon className="w-4 h-4 text-green-400" /> : <ShareIcon className="w-4 h-4" />}
-                  {copied ? 'Copied!' : 'Share'}
+                  <ShareIcon className="w-4 h-4" />
+                  Share
                 </button>
 
                 {isOwner && (

@@ -86,7 +86,7 @@ interface CommentSectionProps {
 }
 
 export default function CommentSection({ videoId }: CommentSectionProps) {
-  const { address, user } = useWallet();
+  const { address, account, signMessage, user } = useWallet();
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
@@ -119,7 +119,10 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
     setSubmitting(true);
     setActionError(null);
     try {
-      await addComment(videoId, address.toString(), user.username, newComment.trim());
+      await addComment(
+        videoId, address.toString(), newComment.trim(), undefined,
+        signMessage, account?.publicKey,
+      );
       setNewComment('');
       await loadComments();
     } catch (error) {
@@ -134,7 +137,10 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
     if (!address || !user || !replyText.trim()) return;
     setActionError(null);
     try {
-      await addComment(videoId, address.toString(), user.username, replyText.trim(), parentCommentId);
+      await addComment(
+        videoId, address.toString(), replyText.trim(), parentCommentId,
+        signMessage, account?.publicKey,
+      );
       setReplyText('');
       setReplyingTo(null);
       await loadComments();
@@ -153,7 +159,7 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
     if (!address || !deletingCommentId) return;
     setActionError(null);
     try {
-      await deleteComment(deletingCommentId, address.toString());
+      await deleteComment(deletingCommentId, address.toString(), signMessage, account?.publicKey);
       setDeletingCommentId(null);
       await loadComments();
     } catch (error) {
@@ -166,7 +172,8 @@ export default function CommentSection({ videoId }: CommentSectionProps) {
   const handleLike = async (commentId: string) => {
     setActionError(null);
     try {
-      await likeComment(commentId);
+      if (!address) return;
+      await likeComment(commentId, address.toString(), signMessage, account?.publicKey);
       await loadComments();
     } catch (error) {
       console.error('Failed to like comment:', error);

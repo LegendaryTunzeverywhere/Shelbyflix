@@ -1,5 +1,6 @@
-import type { VideoEngagement, Comment, Subscription } from '@/types';
+import type { Comment } from '@/types';
 import { supabase } from './supabase';
+import { postWalletInteraction } from './wallet-interactions';
 
 const ENGAGEMENT_KEY = 'shelbyflix_engagement';
 const COMMENTS_KEY = 'shelbyflix_comments';
@@ -142,31 +143,24 @@ export function getTotalDislikes(videoId: string): number {
 export async function addComment(
   videoId: string,
   userId: string,
-  userName: string,
   text: string,
-  parentCommentId?: string
+  parentCommentId: string | undefined,
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  publicKey: unknown,
 ): Promise<Comment> {
-  const commentId = `comment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
-  const { data, error } = await supabase
-    .from('comments')
-    .insert({
-      comment_id: commentId,
-      video_id: videoId,
-      user_wallet: userId,
-      user_name: userName,
-      text,
-      likes: 0,
-      timestamp: Date.now(),
-      parent_comment_id: parentCommentId || null,
-    })
-    .select()
-    .single();
-  
-  if (error) {
-    console.error('Failed to add comment:', error);
-    throw error;
-  }
+  const data = await postWalletInteraction<{
+    comment_id: string;
+    video_id: string;
+    user_wallet: string;
+    user_name: string;
+    text: string;
+    likes: number;
+    timestamp: number;
+    parent_comment_id: string | null;
+  }>(
+    userId, publicKey, signMessage, 'comment',
+    { videoId, text, parentCommentId: parentCommentId ?? null },
+  );
   
   return {
     commentId: data.comment_id,
@@ -176,7 +170,7 @@ export async function addComment(
     text: data.text,
     likes: data.likes,
     timestamp: data.timestamp,
-    parentCommentId: data.parent_comment_id,
+    parentCommentId: data.parent_comment_id ?? undefined,
     replies: [],
   };
 }
@@ -235,64 +229,26 @@ export async function getVideoComments(videoId: string): Promise<Comment[]> {
 /**
  * Delete a comment
  */
-export async function deleteComment(commentId: string, userId: string): Promise<boolean> {
-  // First, verify that the user owns this comment
-  const { data: comment, error: fetchError } = await supabase
-    .from('comments')
-    .select('user_wallet')
-    .eq('comment_id', commentId)
-    .single();
-  
-  if (fetchError || !comment) {
-    console.error('Comment not found:', fetchError);
-    return false;
-  }
-  
-  // Only allow user to delete their own comments
-  if (comment.user_wallet !== userId) {
-    console.error('User does not own this comment');
-    return false;
-  }
-  
-  // Delete comment and its replies using safe parameterized query
-  const { error: deleteError } = await supabase
-    .from('comments')
-    .delete()
-    .or(`comment_id.eq."${commentId.replace(/"/g, '""')}",parent_comment_id.eq."${commentId.replace(/"/g, '""')}"`);
-  
-  if (deleteError) {
-    console.error('Failed to delete comment:', deleteError);
-    return false;
-  }
-  
+export async function deleteComment(
+  commentId: string,
+  userId: string,
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  publicKey: unknown,
+): Promise<boolean> {
+  await postWalletInteraction(userId, publicKey, signMessage, 'comment-delete', { commentId });
   return true;
 }
 
 /**
  * Like a comment
  */
-export async function likeComment(commentId: string): Promise<void> {
-  // Get current likes
-  const { data: comment, error: fetchError } = await supabase
-    .from('comments')
-    .select('likes')
-    .eq('comment_id', commentId)
-    .single();
-  
-  if (fetchError || !comment) {
-    console.error('Comment not found:', fetchError);
-    return;
-  }
-  
-  // Increment likes
-  const { error: updateError } = await supabase
-    .from('comments')
-    .update({ likes: comment.likes + 1 })
-    .eq('comment_id', commentId);
-  
-  if (updateError) {
-    console.error('Failed to like comment:', updateError);
-  }
+export async function likeComment(
+  commentId: string,
+  userId: string,
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  publicKey: unknown,
+): Promise<void> {
+  await postWalletInteraction(userId, publicKey, signMessage, 'comment-like', { commentId });
 }
 
 // ============================================================================
@@ -302,47 +258,18 @@ export async function likeComment(commentId: string): Promise<void> {
 /**
  * Toggle subscription to a channel
  */
-export async function toggleSubscription(subscriberId: string, channelId: string): Promise<boolean> {
+export async function toggleSubscription(
+  subscriberId: string,
+  channelId: string,
+  signMessage: (args: { message: string; nonce: string }) => Promise<any>,
+  publicKey: unknown,
+): Promise<boolean> {
   const normalizedSub = subscriberId.toLowerCase();
   const normalizedChannel = channelId.toLowerCase();
-  
-  // Check if subscription already exists
-  const { data: existing, error: fetchError } = await supabase
-    .from('subscriptions')
-    .select('*')
-    .eq('subscriber_wallet', normalizedSub)
-    .eq('channel_wallet', normalizedChannel)
-    .single();
-  
-  if (existing) {
-    // Unsubscribe — delete the subscription
-    const { error: deleteError } = await supabase
-      .from('subscriptions')
-      .delete()
-      .eq('subscriber_wallet', normalizedSub)
-      .eq('channel_wallet', normalizedChannel);
-    
-    if (deleteError) {
-      console.error('Failed to unsubscribe:', deleteError);
-      return existing ? true : false;
-    }
-    return false;
-  } else {
-    // Subscribe — insert new subscription
-    const { error: insertError } = await supabase
-      .from('subscriptions')
-      .insert({
-        subscriber_wallet: normalizedSub,
-        channel_wallet: normalizedChannel,
-        timestamp: Date.now(),
-      });
-    
-    if (insertError) {
-      console.error('Failed to subscribe:', insertError);
-      return false;
-    }
-    return true;
-  }
+  const result = await postWalletInteraction<{ subscribed: boolean }>(
+    normalizedSub, publicKey, signMessage, 'subscription', { channelId: normalizedChannel },
+  );
+  return result.subscribed;
 }
 
 /**
@@ -352,7 +279,7 @@ export async function isSubscribed(subscriberId: string, channelId: string): Pro
   const normalizedSub = subscriberId.toLowerCase();
   const normalizedChannel = channelId.toLowerCase();
   
-  const { data, error } = await supabase
+  const { count, error } = await supabase
     .from('subscriptions')
     .select('*', { count: 'exact', head: true })
     .eq('subscriber_wallet', normalizedSub)
@@ -363,7 +290,7 @@ export async function isSubscribed(subscriberId: string, channelId: string): Pro
     return false;
   }
   
-  return (data?.length ?? 0) > 0;
+  return (count ?? 0) > 0;
 }
 
 /**

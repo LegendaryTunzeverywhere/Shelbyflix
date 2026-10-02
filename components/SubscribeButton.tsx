@@ -15,7 +15,7 @@ interface SubscribeButtonProps {
 }
 
 export default function SubscribeButton({ channelId, compact = false, onSubscribe }: SubscribeButtonProps) {
-  const { address } = useWallet();
+  const { address, account, signMessage } = useWallet();
   const [subscribed, setSubscribed] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -31,7 +31,7 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
     setLoading(true);
     try {
       const walletAddress = address.toString();
-      const result = await toggleSubscription(walletAddress, channelId);
+      const result = await toggleSubscription(walletAddress, channelId, signMessage, account?.publicKey);
       setSubscribed(result);
       onSubscribe?.();
     } catch (error) {

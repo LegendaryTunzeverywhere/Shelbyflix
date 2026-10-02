@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { HandThumbUpIcon, HandThumbDownIcon } from '@heroicons/react/24/outline';
 import { HandThumbUpIcon as HandThumbUpSolid, HandThumbDownIcon as HandThumbDownSolid } from '@heroicons/react/24/solid';
 import { useWallet } from '@/hooks/useWallet';
+import { postWalletInteraction } from '@/lib/wallet-interactions';
 
 interface EngagementBarProps {
   videoId: string;
@@ -11,7 +12,7 @@ interface EngagementBarProps {
 }
 
 export default function EngagementBar({ videoId, vertical = false }: EngagementBarProps) {
-  const { address } = useWallet();
+  const { address, account, signMessage } = useWallet();
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
   const [likes, setLikes] = useState(0);
@@ -83,25 +84,12 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
     }
 
     try {
-      const { supabase } = await import('@/lib/supabase');
-      
-      // Update counts
-      if (disliked) {
-        await supabase.rpc('decrement_dislikes', { video_id_param: videoId });
-      }
-      await supabase.rpc('increment_likes', { video_id_param: videoId });
-      
-      // Update user engagement
-      await supabase.from('video_engagement').upsert(
-        {
-          video_id: videoId,
-          user_wallet: address.toString().toLowerCase(), // ✅ FIXED: user_wallet + lowercase
-          liked: true,
-          disliked: false,
-          timestamp: Date.now(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'video_id,user_wallet' } // ✅ FIXED: correct conflict columns
+      await postWalletInteraction(
+        address.toString(),
+        account?.publicKey,
+        signMessage,
+        'engagement',
+        { videoId, liked: true, disliked: false },
       );
     } catch (err) {
       console.error('Failed to like:', err);
@@ -134,25 +122,12 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
     }
 
     try {
-      const { supabase } = await import('@/lib/supabase');
-      
-      // Update counts
-      if (liked) {
-        await supabase.rpc('decrement_likes', { video_id_param: videoId });
-      }
-      await supabase.rpc('increment_dislikes', { video_id_param: videoId });
-      
-      // Update user engagement
-      await supabase.from('video_engagement').upsert(
-        {
-          video_id: videoId,
-          user_wallet: address.toString().toLowerCase(), // ✅ FIXED: user_wallet + lowercase
-          liked: false,
-          disliked: true,
-          timestamp: Date.now(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'video_id,user_wallet' } // ✅ FIXED: correct conflict columns
+      await postWalletInteraction(
+        address.toString(),
+        account?.publicKey,
+        signMessage,
+        'engagement',
+        { videoId, liked: false, disliked: true },
       );
     } catch (err) {
       console.error('Failed to dislike:', err);
