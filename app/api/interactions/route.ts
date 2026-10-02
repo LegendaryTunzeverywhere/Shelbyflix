@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
+import { createWalletSession, hasWalletSession, setWalletSessionCookie } from '@/lib/wallet-session';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
 function stableStringify(value: unknown): string {
@@ -19,61 +20,80 @@ function isAddress(value: unknown): value is string {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  let walletSessionToken: string | null = null;
+  const successResponse = (body: unknown, status = 200): NextResponse => {
+    const response = NextResponse.json(body, { status });
+    if (walletSessionToken) setWalletSessionCookie(response, walletSessionToken);
+    return response;
+  };
+
   try {
     const body = await request.json();
     const { walletAddress, publicKey, signature, signedMessage, nonce, action, payload } = body ?? {};
 
     if (
       !isAddress(walletAddress) ||
-      typeof publicKey !== 'string' || !publicKey ||
-      typeof signature !== 'string' || !signature ||
-      typeof signedMessage !== 'string' || !signedMessage ||
-      typeof nonce !== 'string' || !nonce ||
       !['comment', 'comment-delete', 'comment-like', 'engagement', 'subscription', 'subscription-status'].includes(action) ||
       payload === null || typeof payload !== 'object' || Array.isArray(payload)
     ) {
       return NextResponse.json({ error: 'Invalid wallet interaction request' }, { status: 400 });
     }
 
-    const expectedMessage = `ShelbyFlix ${action}: ${nonce}\n${stableStringify(payload)}`;
-    if (!signedMessage.includes(expectedMessage)) {
-      return NextResponse.json({ error: 'Signature does not match this action' }, { status: 401 });
-    }
+    const normalizedWallet = walletAddress.toLowerCase();
+    const hasSession = await hasWalletSession(request, normalizedWallet);
 
-    const verification = await verifyWalletSignature({
-      publicKey,
-      signature,
-      message: signedMessage,
-    });
-    if (!verification.valid) {
-      if (verification.reason === 'unavailable') {
-        return NextResponse.json({ error: 'Wallet signature verification is temporarily unavailable' }, { status: 503 });
+    if (!hasSession) {
+      if (
+        typeof publicKey !== 'string' || !publicKey ||
+        typeof signature !== 'string' || !signature ||
+        typeof signedMessage !== 'string' || !signedMessage ||
+        typeof nonce !== 'string' || !nonce
+      ) {
+        return NextResponse.json(
+          { error: 'Wallet signature required', code: 'wallet_signature_required' },
+          { status: 401 },
+        );
       }
-      if (verification.reason === 'unsupported') {
-        return NextResponse.json({ error: 'Unsupported wallet signature format' }, { status: 400 });
+
+      const expectedMessage = `ShelbyFlix ${action}: ${nonce}\n${stableStringify(payload)}`;
+      const key = normalizedWallet;
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+        || request.headers.get('x-real-ip')
+        || 'unknown';
+      if (!(await hasNonce(key, nonce, ip))) {
+        return NextResponse.json({ error: 'Nonce not found or expired; request a new challenge' }, { status: 401 });
       }
-      return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
-    }
+      if (!(await verifyAndConsumeNonce(key, nonce, ip))) {
+        return NextResponse.json({ error: 'Nonce expired or IP does not match' }, { status: 401 });
+      }
+      if (!signedMessage.includes(expectedMessage)) {
+        return NextResponse.json({ error: 'Signature does not match this action' }, { status: 401 });
+      }
 
-    const binding = checkPublicKeyAddressBinding({ publicKey, walletAddress });
-    if (!binding.bound) {
-      return NextResponse.json({ error: 'The signing key does not match this wallet address' }, { status: 401 });
-    }
+      const verification = await verifyWalletSignature({
+        publicKey,
+        signature,
+        message: signedMessage,
+      });
+      if (!verification.valid) {
+        if (verification.reason === 'unavailable') {
+          return NextResponse.json({ error: 'Wallet signature verification is temporarily unavailable' }, { status: 503 });
+        }
+        if (verification.reason === 'unsupported') {
+          return NextResponse.json({ error: 'Unsupported wallet signature format' }, { status: 400 });
+        }
+        return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
+      }
 
-    const key = walletAddress.toLowerCase();
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-      || request.headers.get('x-real-ip')
-      || 'unknown';
-    if (!(await hasNonce(key, nonce, ip))) {
-      return NextResponse.json({ error: 'Nonce not found or expired; request a new challenge' }, { status: 401 });
-    }
+      const binding = checkPublicKeyAddressBinding({ publicKey, walletAddress });
+      if (!binding.bound) {
+        return NextResponse.json({ error: 'The signing key does not match this wallet address' }, { status: 401 });
+      }
 
-    if (!(await verifyAndConsumeNonce(key, nonce, ip))) {
-      return NextResponse.json({ error: 'Nonce expired or IP does not match' }, { status: 401 });
+      walletSessionToken = await createWalletSession(normalizedWallet);
     }
 
     const admin = getSupabaseAdmin();
-    const normalizedWallet = walletAddress.toLowerCase();
 
     if (action === 'comment') {
       const { videoId, text, parentCommentId } = payload as Record<string, unknown>;
@@ -97,7 +117,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         parent_comment_id: typeof parentCommentId === 'string' ? parentCommentId : null,
       }).select().single();
       if (error) throw error;
-      return NextResponse.json(data, { status: 201 });
+      return successResponse(data, 201);
     }
 
     if (action === 'comment-delete') {
@@ -115,7 +135,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (repliesError) throw repliesError;
       const { error } = await admin.from('comments').delete().eq('comment_id', commentId);
       if (error) throw error;
-      return NextResponse.json({ success: true });
+      return successResponse({ success: true });
     }
 
     if (action === 'comment-like') {
@@ -130,7 +150,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const { error } = await admin.from('comments')
         .update({ likes: comment.likes + 1 }).eq('comment_id', commentId);
       if (error) throw error;
-      return NextResponse.json({ success: true });
+      return successResponse({ success: true });
     }
 
     if (action === 'engagement') {
@@ -149,7 +169,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         disliked_param: disliked,
       });
       if (error) throw error;
-      return NextResponse.json({ success: true });
+      return successResponse({ success: true });
     }
 
     const { channelId } = payload as Record<string, unknown>;
@@ -166,7 +186,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .eq('channel_wallet', channelWallet)
         .maybeSingle();
       if (error) throw error;
-      return NextResponse.json({ subscribed: Boolean(existing) });
+      return successResponse({ subscribed: Boolean(existing) });
     }
 
     const { data: existing, error: fetchError } = await admin
@@ -177,7 +197,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const { error } = await admin.from('subscriptions').delete()
         .eq('subscriber_wallet', normalizedWallet).eq('channel_wallet', channelWallet);
       if (error) throw error;
-      return NextResponse.json({ subscribed: false });
+      return successResponse({ subscribed: false });
     }
     const { error } = await admin.from('subscriptions').insert({
       subscriber_wallet: normalizedWallet,
@@ -185,7 +205,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       timestamp: Date.now(),
     });
     if (error) throw error;
-    return NextResponse.json({ subscribed: true });
+    return successResponse({ subscribed: true });
   } catch (error) {
     console.error('Failed to process wallet interaction:', error);
     return NextResponse.json({ error: 'Wallet interaction failed' }, { status: 500 });

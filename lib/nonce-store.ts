@@ -12,7 +12,8 @@ export const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Issue a new nonce for a wallet, bound to the requesting IP.
- * Returns null if the wallet already has too many live challenges.
+ * When the wallet reaches its outstanding-challenge cap, replace its oldest
+ * live challenge so failed attempts cannot lock the wallet out until expiry.
  */
 export async function issueNonce(walletAddress: string, ip: string): Promise<string | null> {
   const key = walletAddress.toLowerCase();
@@ -32,7 +33,23 @@ export async function issueNonce(walletAddress: string, ip: string): Promise<str
     .gt('expires_at', new Date(now).toISOString());
   if (countError) throw countError;
   if ((count ?? 0) >= MAX_NONCES_PER_WALLET) {
-    return null;
+    const { data: oldest, error: oldestError } = await admin
+      .from('wallet_auth_challenges')
+      .select('nonce')
+      .eq('wallet_address', key)
+      .gt('expires_at', new Date(now).toISOString())
+      .order('expires_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (oldestError) throw oldestError;
+
+    if (oldest) {
+      const { error: removeError } = await admin
+        .from('wallet_auth_challenges')
+        .delete()
+        .eq('nonce', oldest.nonce);
+      if (removeError) throw removeError;
+    }
   }
 
   const nonce = randomBytes(32).toString('hex');

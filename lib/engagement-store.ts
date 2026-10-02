@@ -2,6 +2,7 @@ import type { Comment } from '@/types';
 import { supabase } from './supabase';
 import { postWalletInteraction } from './wallet-interactions';
 import { getChannelAnalytics } from './channel-analytics';
+import { csrfFetch } from './csrf-client';
 
 const ENGAGEMENT_KEY = 'shelbyflix_engagement';
 const COMMENTS_KEY = 'shelbyflix_comments';
@@ -293,20 +294,35 @@ export async function toggleSubscription(
 /**
  * Check if user is subscribed to a channel
  */
-export async function isSubscribed(
+export async function isSubscribed(subscriberId: string, channelId: string): Promise<boolean | null> {
+  const normalizedSub = subscriberId.toLowerCase();
+  const normalizedChannel = channelId.toLowerCase();
+  const response = await csrfFetch('/api/interactions', {
+    method: 'POST',
+    body: JSON.stringify({
+      walletAddress: normalizedSub,
+      action: 'subscription-status',
+      payload: { channelId: normalizedChannel },
+    }),
+  });
+  const result = await response.json();
+  if (response.status === 401 && result.code === 'wallet_signature_required') return null;
+  if (!response.ok) throw new Error(result.error || 'Could not check subscription status');
+  return Boolean(result.subscribed);
+}
+
+export async function verifySubscriptionStatus(
   subscriberId: string,
   channelId: string,
   signMessage: (args: { message: string; nonce: string }) => Promise<any>,
   publicKey: unknown,
 ): Promise<boolean> {
-  const normalizedSub = subscriberId.toLowerCase();
-  const normalizedChannel = channelId.toLowerCase();
   const result = await postWalletInteraction<{ subscribed: boolean }>(
-    normalizedSub,
+    subscriberId.toLowerCase(),
     publicKey,
     signMessage,
     'subscription-status',
-    { channelId: normalizedChannel },
+    { channelId: channelId.toLowerCase() },
   );
   return result.subscribed;
 }

@@ -1,4 +1,5 @@
 import { csrfFetch } from '@/lib/csrf-client';
+import { serializeWalletValue } from '@/lib/wallet-serialization';
 
 export type WalletAction = 'comment' | 'comment-delete' | 'comment-like' | 'engagement' | 'subscription' | 'subscription-status';
 
@@ -26,6 +27,30 @@ export async function postWalletInteraction<T>(
   action: WalletAction,
   payload: Record<string, unknown>,
 ): Promise<T> {
+  const interaction = (auth?: {
+    publicKey: string;
+    signature: string;
+    signedMessage: string;
+    nonce: string;
+  }) =>
+    csrfFetch('/api/interactions', {
+      method: 'POST',
+      body: JSON.stringify({
+        walletAddress,
+        action,
+        payload,
+        ...auth,
+      }),
+    });
+
+  const existingSessionResponse = await interaction();
+  const existingSessionResult = await existingSessionResponse.json();
+  if (existingSessionResponse.ok) return existingSessionResult as T;
+
+  if (existingSessionResult.code !== 'wallet_signature_required') {
+    throw new Error(existingSessionResult.error || 'Wallet action failed');
+  }
+
   const challengeResponse = await fetch(
     `/api/auth/challenge?walletAddress=${encodeURIComponent(walletAddress)}`,
     { cache: 'no-store' },
@@ -42,17 +67,11 @@ export async function postWalletInteraction<T>(
     throw new Error('Wallet did not provide a complete signature for this action');
   }
 
-  const response = await csrfFetch('/api/interactions', {
-    method: 'POST',
-    body: JSON.stringify({
-      walletAddress,
-      publicKey: String(key),
-      signature: String(signed.signature),
-      signedMessage: String(signed.fullMessage),
-      nonce: challenge.nonce,
-      action,
-      payload,
-    }),
+  const response = await interaction({
+    publicKey: serializeWalletValue(key, 'publicKey'),
+    signature: serializeWalletValue(signed.signature, 'signature'),
+    signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
+    nonce: challenge.nonce,
   });
   const result = await response.json();
   if (!response.ok) {

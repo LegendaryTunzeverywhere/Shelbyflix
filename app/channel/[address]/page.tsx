@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import Header from '@/components/Header';
@@ -124,6 +124,7 @@ function ChannelVideoRow({
 
 export default function ChannelPage() {
   const params = useParams();
+  const pathname = usePathname();
   const router = useRouter();
   const { address, user, signAndSubmitTransaction, signMessage, account, refreshUser } = useWallet();
 
@@ -148,9 +149,12 @@ export default function ChannelPage() {
 
   useEffect(() => {
     loadVideos();
-    refreshAnalytics();
     getUserByWallet(channelAddress).then(u => setPublicUser(u));
   }, [channelAddress]);
+
+  useEffect(() => {
+    if (pathname?.startsWith('/channel/')) refreshAnalytics();
+  }, [pathname, channelAddress]);
 
   async function refreshAnalytics() {
     setAnalyticsLoading(true);
