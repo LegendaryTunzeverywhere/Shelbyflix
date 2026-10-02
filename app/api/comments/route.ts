@@ -13,7 +13,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const admin = getSupabaseAdmin();
     const { data: comments, error: commentsError } = await admin
       .from('comments')
-      .select('comment_id, video_id, user_wallet, user_name, user_avatar, text, likes, timestamp, parent_comment_id')
+      .select('comment_id, video_id, user_wallet, user_name, text, likes, timestamp, parent_comment_id')
       .eq('video_id', videoId)
       .order('timestamp', { ascending: false });
 
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(
       (comments ?? []).map((comment) => ({
         ...comment,
-        user_avatar: avatarByWallet.get(comment.user_wallet.toLowerCase()) ?? comment.user_avatar ?? null,
+        user_avatar: avatarByWallet.get(comment.user_wallet.toLowerCase()) ?? null,
       })),
     );
   } catch (error) {

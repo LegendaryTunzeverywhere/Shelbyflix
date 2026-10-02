@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { nonceStore, verifyAndConsumeNonce } from '@/lib/nonce-store';
+import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { normalizeAddress } from '@/lib/access-control';
 import { truncateHash } from '@/lib/shared-utils';
@@ -148,8 +148,7 @@ export async function PATCH(
       || req.headers.get('x-real-ip')
       || 'unknown';
 
-    const entries = nonceStore.get(storeKey);
-    if (!entries || entries.length === 0) {
+    if (!(await hasNonce(storeKey, nonce, ip))) {
       logRejection('nonce_missing_or_expired', {
         videoId,
         walletAddress: truncateHash(storeKey),
@@ -238,7 +237,7 @@ export async function PATCH(
       );
     }
 
-    const consumed = verifyAndConsumeNonce(storeKey, nonce, ip);
+    const consumed = await verifyAndConsumeNonce(storeKey, nonce, ip);
     if (!consumed) {
       logRejection('nonce_consume_failed', {
         videoId,

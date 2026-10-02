@@ -70,6 +70,7 @@ Thumbs.db
 !/supabase/
 /supabase/*
 !/supabase/wallet-interactions.sql
+!/supabase/wallet-auth-challenges.sql
 /scripts
 DEPLOYMENT_CHECKLIST.md
 /aptos-contracts

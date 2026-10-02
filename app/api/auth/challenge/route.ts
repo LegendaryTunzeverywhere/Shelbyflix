@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { issueNonce, pruneNonces } from '@/lib/nonce-store';
+import { issueNonce } from '@/lib/nonce-store';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/challenge
@@ -7,36 +7,21 @@ import { issueNonce, pruneNonces } from '@/lib/nonce-store';
 // Returns: { nonce: string }
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  pruneNonces();
-
+  let walletAddress: unknown;
   try {
-    const { walletAddress } = await req.json();
-
-    if (!walletAddress || typeof walletAddress !== 'string') {
-      return NextResponse.json({ error: 'walletAddress is required' }, { status: 400 });
-    }
-
-    // Validate Aptos address format (0x + 1-64 hex chars)
-    if (!/^0x[a-fA-F0-9]{1,64}$/.test(walletAddress)) {
-      return NextResponse.json({ error: 'Invalid wallet address format' }, { status: 400 });
-    }
-
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-      || req.headers.get('x-real-ip')
-      || 'unknown';
-
-    const nonce = issueNonce(walletAddress, ip);
-    if (nonce === null) {
-      return NextResponse.json(
-        { error: 'Too many outstanding challenges. Please wait.' },
-        { status: 429, headers: { 'Retry-After': '300' } }
-      );
-    }
-
-    return NextResponse.json({ nonce });
+    ({ walletAddress } = await req.json());
   } catch {
     return NextResponse.json({ error: 'Bad request' }, { status: 400 });
   }
+
+  if (!walletAddress || typeof walletAddress !== 'string') {
+    return NextResponse.json({ error: 'walletAddress is required' }, { status: 400 });
+  }
+  if (!/^0x[a-fA-F0-9]{1,64}$/.test(walletAddress)) {
+    return NextResponse.json({ error: 'Invalid wallet address format' }, { status: 400 });
+  }
+
+  return issueChallenge(walletAddress, req);
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +29,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 // Convenience endpoint to retrieve a nonce (same logic, GET variant)
 // ---------------------------------------------------------------------------
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  pruneNonces();
-
   const walletAddress = req.nextUrl.searchParams.get('walletAddress');
 
   if (!walletAddress) {
@@ -56,17 +39,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid wallet address format' }, { status: 400 });
   }
 
+  return issueChallenge(walletAddress, req);
+}
+
+async function issueChallenge(walletAddress: string, req: NextRequest): Promise<NextResponse> {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || req.headers.get('x-real-ip')
     || 'unknown';
 
-  const nonce = issueNonce(walletAddress, ip);
-  if (nonce === null) {
-    return NextResponse.json(
-      { error: 'Too many outstanding challenges. Please wait.' },
-      { status: 429, headers: { 'Retry-After': '300' } }
-    );
+  try {
+    const nonce = await issueNonce(walletAddress, ip);
+    if (nonce === null) {
+      return NextResponse.json(
+        { error: 'Too many outstanding challenges. Please wait.' },
+        { status: 429, headers: { 'Retry-After': '300' } },
+      );
+    }
+    return NextResponse.json({ nonce });
+  } catch (error) {
+    console.error('Failed to persist wallet challenge:', error);
+    return NextResponse.json({ error: 'Could not create wallet challenge' }, { status: 500 });
   }
-
-  return NextResponse.json({ nonce });
 }

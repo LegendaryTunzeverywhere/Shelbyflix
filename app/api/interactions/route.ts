@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
-import { nonceStore, verifyAndConsumeNonce } from '@/lib/nonce-store';
+import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
 function stableStringify(value: unknown): string {
@@ -61,14 +61,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const key = walletAddress.toLowerCase();
-    const entries = nonceStore.get(key);
-    if (!entries?.some((entry) => entry.nonce === nonce)) {
-      return NextResponse.json({ error: 'Nonce not found or expired; request a new challenge' }, { status: 401 });
-    }
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
       || request.headers.get('x-real-ip')
       || 'unknown';
-    if (!verifyAndConsumeNonce(key, nonce, ip)) {
+    if (!(await hasNonce(key, nonce, ip))) {
+      return NextResponse.json({ error: 'Nonce not found or expired; request a new challenge' }, { status: 401 });
+    }
+
+    if (!(await verifyAndConsumeNonce(key, nonce, ip))) {
       return NextResponse.json({ error: 'Nonce expired or IP does not match' }, { status: 401 });
     }
 
@@ -91,7 +91,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         video_id: videoId,
         user_wallet: normalizedWallet,
         user_name: profile?.username ?? normalizedWallet,
-        user_avatar: profile?.avatar_url ?? null,
         text: text.trim(),
         likes: 0,
         timestamp: Date.now(),

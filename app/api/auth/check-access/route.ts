@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { nonceStore, verifyAndConsumeNonce } from '@/lib/nonce-store';
+import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { verifyWalletSignature } from '@/lib/wallet-signature';
 // import { checkTokenOwnership } from '@/lib/aptos'; // Available for opt-in token-gating
 
@@ -45,8 +45,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Check that the wallet has at least one outstanding nonce before
     // attempting signature verification (fast-fail for unknown wallets)
-    const entries = nonceStore.get(storeKey);
-    if (!entries || entries.length === 0) {
+    if (!(await hasNonce(storeKey, nonce, ip))) {
       return NextResponse.json(
         { error: 'Nonce not found or expired. Request a new challenge.' },
         { status: 401 }
@@ -111,7 +110,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Consume nonce — one-time use — only after a verified signature so a
     // failed attempt doesn't force the user to re-request a challenge.
-    const consumed = verifyAndConsumeNonce(storeKey, nonce, ip);
+    const consumed = await verifyAndConsumeNonce(storeKey, nonce, ip);
     if (!consumed) {
       return NextResponse.json(
         { error: 'Nonce not found, expired, or IP mismatch. Request a new challenge.' },
@@ -176,5 +175,4 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
   }
 }
-
 
