@@ -3,10 +3,12 @@ export function resolveWalletInteractionMessage(
   expectedMessage: string,
   nonce: string,
 ): string | null {
+  const normalizedFullMessage = fullMessage.replace(/\r\n?/g, '\n');
+  const normalizedExpectedMessage = expectedMessage.replace(/\r\n?/g, '\n');
   if (
-    !expectedMessage.includes(nonce) ||
-    !fullMessage.includes(expectedMessage) ||
-    !fullMessage.includes(nonce)
+    !normalizedExpectedMessage.includes(nonce) ||
+    !normalizedFullMessage.includes(normalizedExpectedMessage) ||
+    !normalizedFullMessage.includes(nonce)
   ) {
     return null;
   }

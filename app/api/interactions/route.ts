@@ -86,14 +86,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         nonce,
       );
       if (!messageToVerify) {
+        const normalizedFullMessage = signedMessage.replace(/\r\n?/g, '\n');
+        const normalizedExpectedMessage = expectedMessage.replace(/\r\n?/g, '\n');
+        const expectedAction = `ShelbyFlix ${action}: ${nonce}`;
+        const expectedPayload = stableStringify(payload);
+        const diagnostics = {
+          actionIncluded: normalizedFullMessage.includes(expectedAction),
+          payloadIncluded: normalizedFullMessage.includes(expectedPayload),
+          fullMessageLength: signedMessage.length,
+          signedContentLength: typeof signedContent === 'string' ? signedContent.length : null,
+          nonceIncluded: normalizedFullMessage.includes(nonce),
+          expectedMessageIncluded: normalizedFullMessage.includes(normalizedExpectedMessage),
+        };
         console.warn('Wallet interaction fullMessage did not include the expected action:', {
           action,
-          fullMessageChars: signedMessage.length,
-          signedContentChars: typeof signedContent === 'string' ? signedContent.length : null,
-          expectedMessageIncluded: signedMessage.includes(expectedMessage),
-          nonceIncluded: signedMessage.includes(nonce),
+          ...diagnostics,
         });
-        return NextResponse.json({ error: 'Signature does not match this action' }, { status: 401 });
+        return NextResponse.json({
+          error: 'Signature does not match this action',
+          code: 'wallet_signed_message_mismatch',
+          diagnostics,
+        }, { status: 401 });
       }
 
       const verification = await verifyWalletSignature({

@@ -152,4 +152,38 @@ describe('postWalletInteraction', () => {
     });
     expect(toUint8Array).not.toHaveBeenCalled();
   });
+
+  it('surfaces safe message-binding checks when the server rejects a wallet frame', async () => {
+    csrfFetch
+      .mockResolvedValueOnce(jsonResponse(
+        { code: 'wallet_signature_required', requiresSignature: true },
+        true,
+        200,
+      ))
+      .mockResolvedValueOnce(jsonResponse({
+        error: 'Signature does not match this action',
+        code: 'wallet_signed_message_mismatch',
+        diagnostics: {
+          actionIncluded: true,
+          payloadIncluded: false,
+          nonceIncluded: true,
+        },
+      }, false, 401));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ nonce: 'challenge-1' }, true, 200),
+    ));
+    const signMessage = vi.fn().mockResolvedValue({
+      signature: '0xsig',
+      fullMessage: 'wallet-standard-framing',
+      publicKey: '0xkey',
+    });
+
+    await expect(postWalletInteraction(
+      walletAddress,
+      '0xkey',
+      signMessage,
+      'session',
+      { purpose: 'authorize' },
+    )).rejects.toThrow('Wallet signature binding failed (action: yes, payload: no, challenge: yes).');
+  });
 });

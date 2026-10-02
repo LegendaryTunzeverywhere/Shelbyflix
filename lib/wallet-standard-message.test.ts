@@ -57,6 +57,16 @@ describe('resolveWalletInteractionMessage', () => {
     )).toBe(fullMessage);
   });
 
+  it('accepts CRLF framing while returning the original bytes for verification', () => {
+    const expected = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
+    const fullMessage = `APTOS\r\nmessage: ${expected.replace(/\n/g, '\r\n')}\r\nnonce: challenge`;
+    expect(resolveWalletInteractionMessage(
+      fullMessage,
+      expected,
+      'challenge',
+    )).toBe(fullMessage);
+  });
+
   it('rejects a fullMessage that omits the requested action or payload', () => {
     expect(resolveWalletInteractionMessage(
       'APTOS\nmessage: ShelbyFlix session: challenge\nnonce: challenge',

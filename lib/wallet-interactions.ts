@@ -81,6 +81,22 @@ export async function postWalletInteraction<T>(
   });
   const result = await response.json();
   if (!response.ok) {
+    if (
+      result.code === 'wallet_signed_message_mismatch' &&
+      result.diagnostics &&
+      typeof result.diagnostics === 'object'
+    ) {
+      const checks = result.diagnostics as {
+        actionIncluded?: boolean;
+        payloadIncluded?: boolean;
+        nonceIncluded?: boolean;
+      };
+      throw new Error(
+        `Wallet signature binding failed (action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
+        `payload: ${checks.payloadIncluded ? 'yes' : 'no'}, ` +
+        `challenge: ${checks.nonceIncluded ? 'yes' : 'no'}).`,
+      );
+    }
     throw new Error(result.error || 'Wallet action failed');
   }
   return result as T;
