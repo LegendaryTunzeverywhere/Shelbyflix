@@ -1,13 +1,12 @@
 export function resolveWalletInteractionMessage(
   fullMessage: string,
-  signedContent: string,
   expectedMessage: string,
   nonce: string,
 ): string | null {
   if (
-    !signedContent.includes(expectedMessage) ||
-    !signedContent.includes(nonce) ||
-    !fullMessage.includes(signedContent)
+    !expectedMessage.includes(nonce) ||
+    !fullMessage.includes(expectedMessage) ||
+    !fullMessage.includes(nonce)
   ) {
     return null;
   }

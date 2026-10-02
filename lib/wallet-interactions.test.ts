@@ -42,9 +42,10 @@ describe('postWalletInteraction', () => {
   it('bootstraps a session with an explicit, non-transaction purpose', async () => {
     csrfFetch.mockResolvedValueOnce(jsonResponse({ authorized: true }, true, 200));
     const signMessage = vi.fn();
+    const onSignatureRequired = vi.fn();
 
     await expect(
-      authorizeWalletSession(walletAddress, 'public-key', signMessage),
+      authorizeWalletSession(walletAddress, 'public-key', signMessage, onSignatureRequired),
     ).resolves.toBeUndefined();
 
     expect(JSON.parse(csrfFetch.mock.calls[0][1].body)).toEqual({
@@ -55,6 +56,7 @@ describe('postWalletInteraction', () => {
       },
     });
     expect(signMessage).not.toHaveBeenCalled();
+    expect(onSignatureRequired).not.toHaveBeenCalled();
   });
 
   it('signs the clear 24-hour purpose when no wallet session exists', async () => {
@@ -76,11 +78,13 @@ describe('postWalletInteraction', () => {
       message,
       publicKey: '0xkey',
     });
+    const onSignatureRequired = vi.fn();
 
     await expect(
-      authorizeWalletSession(walletAddress, '0xkey', signMessage),
+      authorizeWalletSession(walletAddress, '0xkey', signMessage, onSignatureRequired),
     ).resolves.toBeUndefined();
 
+    expect(onSignatureRequired).toHaveBeenCalledTimes(1);
     expect(signMessage).toHaveBeenCalledWith({ message, nonce: 'session-challenge' });
     expect(JSON.parse(csrfFetch.mock.calls[1][1].body)).toMatchObject({
       action: 'session',

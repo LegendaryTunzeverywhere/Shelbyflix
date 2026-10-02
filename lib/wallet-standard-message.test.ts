@@ -15,7 +15,6 @@ describe('resolveWalletInteractionMessage', () => {
     expect(resolveWalletInteractionMessage(
       fullMessage,
       content,
-      content,
       'challenge',
     )).toBe(fullMessage);
   });
@@ -27,7 +26,6 @@ describe('resolveWalletInteractionMessage', () => {
     const signature = signer.sign(toHex(new TextEncoder().encode(fullMessage)));
     const messageToVerify = resolveWalletInteractionMessage(
       fullMessage,
-      content,
       content,
       'challenge',
     );
@@ -49,21 +47,28 @@ describe('resolveWalletInteractionMessage', () => {
     })).resolves.toMatchObject({ valid: false, reason: 'invalid' });
   });
 
-  it('rejects action content that cannot be proven to be inside the signed message', () => {
+  it('does not rely on the wallet-reported message claim', () => {
     const content = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
+    const fullMessage = `APTOS\nmessage: ${content}\nnonce: challenge`;
     expect(resolveWalletInteractionMessage(
-      'wallet fullMessage with no authorized action',
+      fullMessage,
       content,
-      content,
+      'challenge',
+    )).toBe(fullMessage);
+  });
+
+  it('rejects a fullMessage that omits the requested action or payload', () => {
+    expect(resolveWalletInteractionMessage(
+      'APTOS\nmessage: ShelbyFlix session: challenge\nnonce: challenge',
+      'ShelbyFlix session: challenge\n{"purpose":"Authorize"}',
       'challenge',
     )).toBeNull();
   });
 
-  it('requires the issued nonce inside both the requested and returned signed content', () => {
+  it('requires the expected signed action to contain the issued nonce', () => {
     const expected = 'ShelbyFlix session: different-nonce\n{"purpose":"Authorize"}';
     expect(resolveWalletInteractionMessage(
       `APTOS\nmessage: ${expected}\nnonce: challenge`,
-      expected,
       expected,
       'challenge',
     )).toBeNull();

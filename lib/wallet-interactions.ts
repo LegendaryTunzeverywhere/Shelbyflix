@@ -10,6 +10,7 @@ type SignMessage = (args: { message: string; nonce: string }) => Promise<{
   message?: unknown;
   publicKey?: unknown;
 }>;
+type SignatureRequiredHandler = () => void | Promise<void>;
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
@@ -28,6 +29,7 @@ export async function postWalletInteraction<T>(
   signMessage: SignMessage,
   action: WalletAction,
   payload: Record<string, unknown>,
+  onSignatureRequired?: SignatureRequiredHandler,
 ): Promise<T> {
   const interaction = (auth?: {
     publicKey: string;
@@ -63,6 +65,7 @@ export async function postWalletInteraction<T>(
   }
 
   const message = `ShelbyFlix ${action}: ${challenge.nonce}\n${stableStringify(payload)}`;
+  await onSignatureRequired?.();
   const signed = await signMessage({ message, nonce: challenge.nonce });
   const key = signed.publicKey ?? publicKey;
   if (!signed.signature || !signed.fullMessage || !key) {
@@ -87,6 +90,7 @@ export async function authorizeWalletSession(
   walletAddress: string,
   publicKey: unknown,
   signMessage: SignMessage,
+  onSignatureRequired?: SignatureRequiredHandler,
 ): Promise<void> {
   await postWalletInteraction<{ authorized: true }>(
     walletAddress,
@@ -94,5 +98,6 @@ export async function authorizeWalletSession(
     signMessage,
     'session',
     { purpose: WALLET_SESSION_PURPOSE },
+    onSignatureRequired,
   );
 }

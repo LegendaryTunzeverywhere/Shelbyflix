@@ -80,17 +80,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!(await verifyAndConsumeNonce(key, nonce, ip))) {
         return NextResponse.json({ error: 'Nonce expired or IP does not match' }, { status: 401 });
       }
-      const messageToBind =
-        typeof signedContent === 'string' && signedContent
-          ? signedContent
-          : signedMessage;
       const messageToVerify = resolveWalletInteractionMessage(
         signedMessage,
-        messageToBind,
         expectedMessage,
         nonce,
       );
       if (!messageToVerify) {
+        console.warn('Wallet interaction fullMessage did not include the expected action:', {
+          action,
+          fullMessageChars: signedMessage.length,
+          signedContentChars: typeof signedContent === 'string' ? signedContent.length : null,
+          expectedMessageIncluded: signedMessage.includes(expectedMessage),
+          nonceIncluded: signedMessage.includes(nonce),
+        });
         return NextResponse.json({ error: 'Signature does not match this action' }, { status: 401 });
       }
 
