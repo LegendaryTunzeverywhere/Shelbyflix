@@ -90,12 +90,14 @@ export async function postWalletInteraction<T>(
         actionIncluded?: boolean;
         payloadIncluded?: boolean;
         nonceIncluded?: boolean;
+        verifierScheme?: string;
+        verifierReason?: string;
       };
       throw new Error(
-        `Wallet signature verification failed (full message includes action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
+        `Wallet signature verification failed (${checks.verifierScheme ?? 'unknown'}: ${checks.verifierReason ?? 'unknown'}; ` +
+        `full message includes action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
         `payload: ${checks.payloadIncluded ? 'yes' : 'no'}, ` +
-        `challenge: ${checks.nonceIncluded ? 'yes' : 'no'}). The wallet signature did not verify ` +
-        'against the exact action text or returned full message.',
+        `challenge: ${checks.nonceIncluded ? 'yes' : 'no'}).`,
       );
     }
     throw new Error(result.error || 'Wallet action failed');

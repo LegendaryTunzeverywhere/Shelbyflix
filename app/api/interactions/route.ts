@@ -121,12 +121,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           signedContentLength: typeof signedContent === 'string' ? signedContent.length : null,
           nonceIncluded: normalizedFullMessage.includes(nonce),
           expectedMessageIncluded: normalizedFullMessage.includes(normalizedExpectedMessage),
+          verifierScheme: verification?.scheme ?? 'unknown',
+          verifierReason: verification?.valid === false ? verification.reason : 'unknown',
         };
         console.warn('Wallet interaction fullMessage did not include the expected action:', {
           action,
           ...diagnostics,
-          verificationScheme: verification?.scheme ?? 'unknown',
-          verificationReason: verification?.valid === false ? verification.reason : 'unknown',
           verificationDetail: verification?.valid === false ? verification.detail : undefined,
           publicKeyHexLength: publicKey.length,
           signatureHexLength: signature.length,
