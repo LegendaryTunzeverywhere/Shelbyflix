@@ -161,8 +161,8 @@ describe('postWalletInteraction', () => {
         200,
       ))
       .mockResolvedValueOnce(jsonResponse({
-        error: 'Signature does not match this action',
-        code: 'wallet_signed_message_mismatch',
+        error: 'Wallet signature does not match the requested action',
+        code: 'wallet_signature_invalid',
         diagnostics: {
           actionIncluded: true,
           payloadIncluded: false,
@@ -184,6 +184,8 @@ describe('postWalletInteraction', () => {
       signMessage,
       'session',
       { purpose: 'authorize' },
-    )).rejects.toThrow('Wallet signature binding failed (action: yes, payload: no, challenge: yes).');
+    )).rejects.toThrow(
+      'Wallet signature verification failed (full message includes action: yes, payload: no, challenge: yes).',
+    );
   });
 });

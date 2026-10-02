@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { createWalletSession, hasWalletSession, setWalletSessionCookie } from '@/lib/wallet-session';
 import { WALLET_SESSION_PURPOSE } from '@/lib/wallet-session-constants';
-import { resolveWalletInteractionMessage } from '@/lib/wallet-standard-message';
+import { resolveWalletInteractionMessages } from '@/lib/wallet-standard-message';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
 function stableStringify(value: unknown): string {
@@ -80,12 +80,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!(await verifyAndConsumeNonce(key, nonce, ip))) {
         return NextResponse.json({ error: 'Nonce expired or IP does not match' }, { status: 401 });
       }
-      const messageToVerify = resolveWalletInteractionMessage(
+      const messagesToVerify = resolveWalletInteractionMessages(
         signedMessage,
         expectedMessage,
         nonce,
       );
-      if (!messageToVerify) {
+      if (messagesToVerify.length === 0) {
+        return NextResponse.json({ error: 'Invalid wallet challenge binding' }, { status: 401 });
+      }
+      let verification: Awaited<ReturnType<typeof verifyWalletSignature>> | null = null;
+      let messageToVerify: string | null = null;
+      for (const candidate of messagesToVerify) {
+        const candidateVerification = await verifyWalletSignature({
+          publicKey,
+          signature,
+          message: candidate,
+        });
+        if (candidateVerification.valid) {
+          verification = candidateVerification;
+          messageToVerify = candidate;
+          break;
+        }
+        if (candidateVerification.reason === 'unavailable') {
+          return NextResponse.json({ error: 'Wallet signature verification is temporarily unavailable' }, { status: 503 });
+        }
+        if (candidateVerification.reason === 'unsupported') {
+          return NextResponse.json({ error: 'Unsupported wallet signature format' }, { status: 400 });
+        }
+        verification = candidateVerification;
+      }
+      if (!verification?.valid || !messageToVerify) {
         const normalizedFullMessage = signedMessage.replace(/\r\n?/g, '\n');
         const normalizedExpectedMessage = expectedMessage.replace(/\r\n?/g, '\n');
         const expectedAction = `ShelbyFlix ${action}: ${nonce}`;
@@ -101,35 +125,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         console.warn('Wallet interaction fullMessage did not include the expected action:', {
           action,
           ...diagnostics,
-        });
-        return NextResponse.json({
-          error: 'Signature does not match this action',
-          code: 'wallet_signed_message_mismatch',
-          diagnostics,
-        }, { status: 401 });
-      }
-
-      const verification = await verifyWalletSignature({
-        publicKey,
-        signature,
-        message: messageToVerify,
-      });
-      if (!verification.valid) {
-        console.error('Wallet interaction signature verification failed:', {
-          scheme: verification.scheme,
-          reason: verification.reason,
-          detail: verification.detail,
-          messageBytes: Buffer.byteLength(messageToVerify, 'utf8'),
+          verificationScheme: verification?.scheme ?? 'unknown',
+          verificationReason: verification?.valid === false ? verification.reason : 'unknown',
+          verificationDetail: verification?.valid === false ? verification.detail : undefined,
           publicKeyHexLength: publicKey.length,
           signatureHexLength: signature.length,
         });
-        if (verification.reason === 'unavailable') {
-          return NextResponse.json({ error: 'Wallet signature verification is temporarily unavailable' }, { status: 503 });
-        }
-        if (verification.reason === 'unsupported') {
-          return NextResponse.json({ error: 'Unsupported wallet signature format' }, { status: 400 });
-        }
-        return NextResponse.json({ error: 'Invalid wallet signature' }, { status: 401 });
+        return NextResponse.json({
+          error: 'Wallet signature does not match the requested action',
+          code: 'wallet_signature_invalid',
+          diagnostics,
+        }, { status: 401 });
       }
 
       const binding = checkPublicKeyAddressBinding({ publicKey, walletAddress });

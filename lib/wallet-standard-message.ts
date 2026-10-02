@@ -1,16 +1,15 @@
-export function resolveWalletInteractionMessage(
+export function resolveWalletInteractionMessages(
   fullMessage: string,
   expectedMessage: string,
   nonce: string,
-): string | null {
-  const normalizedFullMessage = fullMessage.replace(/\r\n?/g, '\n');
+): string[] {
   const normalizedExpectedMessage = expectedMessage.replace(/\r\n?/g, '\n');
-  if (
-    !normalizedExpectedMessage.includes(nonce) ||
-    !normalizedFullMessage.includes(normalizedExpectedMessage) ||
-    !normalizedFullMessage.includes(nonce)
-  ) {
-    return null;
+  if (!normalizedExpectedMessage.includes(nonce)) return [];
+
+  const normalizedFullMessage = fullMessage.replace(/\r\n?/g, '\n');
+  if (normalizedFullMessage.includes(normalizedExpectedMessage)) {
+    return [fullMessage, expectedMessage];
   }
-  return fullMessage;
+
+  return [expectedMessage];
 }

@@ -82,7 +82,7 @@ export async function postWalletInteraction<T>(
   const result = await response.json();
   if (!response.ok) {
     if (
-      result.code === 'wallet_signed_message_mismatch' &&
+      result.code === 'wallet_signature_invalid' &&
       result.diagnostics &&
       typeof result.diagnostics === 'object'
     ) {
@@ -92,9 +92,10 @@ export async function postWalletInteraction<T>(
         nonceIncluded?: boolean;
       };
       throw new Error(
-        `Wallet signature binding failed (action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
+        `Wallet signature verification failed (full message includes action: ${checks.actionIncluded ? 'yes' : 'no'}, ` +
         `payload: ${checks.payloadIncluded ? 'yes' : 'no'}, ` +
-        `challenge: ${checks.nonceIncluded ? 'yes' : 'no'}).`,
+        `challenge: ${checks.nonceIncluded ? 'yes' : 'no'}). The wallet signature did not verify ` +
+        'against the exact action text or returned full message.',
       );
     }
     throw new Error(result.error || 'Wallet action failed');

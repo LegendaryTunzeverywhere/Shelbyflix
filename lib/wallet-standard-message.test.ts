@@ -1,22 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { Ed25519PrivateKey } from '@aptos-labs/ts-sdk';
 import { verifyWalletSignature } from '@/lib/wallet-signature';
-import { resolveWalletInteractionMessage } from '@/lib/wallet-standard-message';
+import { resolveWalletInteractionMessages } from '@/lib/wallet-standard-message';
 
 function toHex(bytes: Uint8Array): string {
   return `0x${Buffer.from(bytes).toString('hex')}`;
 }
 
-describe('resolveWalletInteractionMessage', () => {
+describe('resolveWalletInteractionMessages', () => {
   it('verifies against Petra Web exact fullMessage without changing wallet framing', () => {
     const content = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
     const fullMessage =
       `APTOS\napp-specific heading\n${content}\nwallet nonce field: challenge`;
-    expect(resolveWalletInteractionMessage(
+    expect(resolveWalletInteractionMessages(
       fullMessage,
       content,
       'challenge',
-    )).toBe(fullMessage);
+    )).toEqual([fullMessage, content]);
   });
 
   it('verifies the bytes Petra signed rather than a server-reconstructed frame', async () => {
@@ -24,21 +24,17 @@ describe('resolveWalletInteractionMessage', () => {
     const fullMessage = `APTOS\ncustom Petra frame\nmessage: ${content}\nnonce: challenge`;
     const signer = Ed25519PrivateKey.generate();
     const signature = signer.sign(toHex(new TextEncoder().encode(fullMessage)));
-    const messageToVerify = resolveWalletInteractionMessage(
+    const messagesToVerify = resolveWalletInteractionMessages(
       fullMessage,
       content,
       'challenge',
     );
 
-    expect(messageToVerify).toBe(fullMessage);
-    expect(messageToVerify).not.toBeNull();
-    if (messageToVerify === null) {
-      throw new Error('Expected the wallet-signed message to be accepted');
-    }
+    expect(messagesToVerify).toEqual([fullMessage, content]);
     await expect(verifyWalletSignature({
       publicKey: toHex(signer.publicKey().toUint8Array()),
       signature: toHex(signature.toUint8Array()),
-      message: messageToVerify,
+      message: messagesToVerify[0],
     })).resolves.toEqual({ valid: true, scheme: 'ed25519' });
     await expect(verifyWalletSignature({
       publicKey: toHex(signer.publicKey().toUint8Array()),
@@ -47,40 +43,49 @@ describe('resolveWalletInteractionMessage', () => {
     })).resolves.toMatchObject({ valid: false, reason: 'invalid' });
   });
 
-  it('does not rely on the wallet-reported message claim', () => {
+  it('verifies the exact requested content when Petra omits it from fullMessage', async () => {
     const content = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
-    const fullMessage = `APTOS\nmessage: ${content}\nnonce: challenge`;
-    expect(resolveWalletInteractionMessage(
+    const fullMessage = 'wallet-generated signature framing';
+    const signer = Ed25519PrivateKey.generate();
+    const signature = signer.sign(toHex(new TextEncoder().encode(content)));
+    const messagesToVerify = resolveWalletInteractionMessages(
       fullMessage,
       content,
       'challenge',
-    )).toBe(fullMessage);
+    );
+
+    expect(messagesToVerify).toEqual([content]);
+    await expect(verifyWalletSignature({
+      publicKey: toHex(signer.publicKey().toUint8Array()),
+      signature: toHex(signature.toUint8Array()),
+      message: messagesToVerify[0],
+    })).resolves.toEqual({ valid: true, scheme: 'ed25519' });
   });
 
-  it('accepts CRLF framing while returning the original bytes for verification', () => {
+  it('accepts CRLF framing while preserving exact message bytes', () => {
     const expected = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
     const fullMessage = `APTOS\r\nmessage: ${expected.replace(/\n/g, '\r\n')}\r\nnonce: challenge`;
-    expect(resolveWalletInteractionMessage(
+    expect(resolveWalletInteractionMessages(
       fullMessage,
       expected,
       'challenge',
-    )).toBe(fullMessage);
+    )).toEqual([fullMessage, expected]);
   });
 
-  it('rejects a fullMessage that omits the requested action or payload', () => {
-    expect(resolveWalletInteractionMessage(
+  it('does not allow a fallback message without the exact requested action or payload', () => {
+    expect(resolveWalletInteractionMessages(
       'APTOS\nmessage: ShelbyFlix session: challenge\nnonce: challenge',
       'ShelbyFlix session: challenge\n{"purpose":"Authorize"}',
       'challenge',
-    )).toBeNull();
+    )).toEqual(['ShelbyFlix session: challenge\n{"purpose":"Authorize"}']);
   });
 
   it('requires the expected signed action to contain the issued nonce', () => {
     const expected = 'ShelbyFlix session: different-nonce\n{"purpose":"Authorize"}';
-    expect(resolveWalletInteractionMessage(
+    expect(resolveWalletInteractionMessages(
       `APTOS\nmessage: ${expected}\nnonce: challenge`,
       expected,
       'challenge',
-    )).toBeNull();
+    )).toEqual([]);
   });
 });
