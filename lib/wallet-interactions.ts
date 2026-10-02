@@ -9,10 +9,6 @@ type SignMessage = (args: { message: string; nonce: string }) => Promise<{
   fullMessage?: unknown;
   message?: unknown;
   publicKey?: unknown;
-  prefix?: unknown;
-  address?: unknown;
-  application?: unknown;
-  chainId?: unknown;
 }>;
 
 function stableStringify(value: unknown): string {
@@ -38,12 +34,6 @@ export async function postWalletInteraction<T>(
     signature: string;
     signedMessage: string;
     signedContent: string;
-    signedMessageFields: {
-      prefix?: string;
-      address?: string;
-      application?: string;
-      chainId?: number;
-    };
     nonce: string;
   }) =>
     csrfFetch('/api/interactions', {
@@ -84,12 +74,6 @@ export async function postWalletInteraction<T>(
     signature: serializeWalletValue(signed.signature, 'signature'),
     signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
     signedContent: serializeWalletValue(signed.message ?? message, 'utf8'),
-    signedMessageFields: {
-      prefix: typeof signed.prefix === 'string' ? signed.prefix : undefined,
-      address: typeof signed.address === 'string' ? signed.address : undefined,
-      application: typeof signed.application === 'string' ? signed.application : undefined,
-      chainId: typeof signed.chainId === 'number' ? signed.chainId : undefined,
-    },
     nonce: challenge.nonce,
   });
   const result = await response.json();

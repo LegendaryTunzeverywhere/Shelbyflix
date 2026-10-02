@@ -1,52 +1,70 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildWalletStandardMessage,
-  resolveWalletInteractionMessage,
-} from '@/lib/wallet-standard-message';
+import { Ed25519PrivateKey } from '@aptos-labs/ts-sdk';
+import { verifyWalletSignature } from '@/lib/wallet-signature';
+import { resolveWalletInteractionMessage } from '@/lib/wallet-standard-message';
 
-describe('buildWalletStandardMessage', () => {
-  it('reconstructs the canonical Aptos framing returned by Petra Web', () => {
-    expect(buildWalletStandardMessage({
-      prefix: 'APTOS',
-      address: '0xabc',
-      application: 'https://shelbyflix.vercel.app',
-      chainId: 126,
-      message: 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}',
-      nonce: 'challenge',
-    })).toBe(
-      'APTOS\naddress: 0xabc\napplication: https://shelbyflix.vercel.app\nchainId: 126' +
-      '\nmessage: ShelbyFlix session: challenge\n{"purpose":"Authorize"}\nnonce: challenge',
-    );
-  });
+function toHex(bytes: Uint8Array): string {
+  return `0x${Buffer.from(bytes).toString('hex')}`;
+}
 
-  it('rejects unknown prefixes rather than guessing the wallet signature frame', () => {
-    expect(buildWalletStandardMessage({
-      prefix: 'UNKNOWN',
-      message: 'signed content',
-      nonce: 'challenge',
-    })).toBeNull();
-  });
-
-  it('reconstructs the canonical signed bytes when Petra Web returns them separately', () => {
+describe('resolveWalletInteractionMessage', () => {
+  it('verifies against Petra Web exact fullMessage without changing wallet framing', () => {
     const content = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
+    const fullMessage =
+      `APTOS\napp-specific heading\n${content}\nwallet nonce field: challenge`;
     expect(resolveWalletInteractionMessage(
-      'wallet-returned-full-message',
+      fullMessage,
       content,
       content,
       'challenge',
-      { prefix: 'APTOS', application: 'https://shelbyflix.app', chainId: 126 },
-    )).toBe(
-      'APTOS\napplication: https://shelbyflix.app\nchainId: 126' +
-      `\nmessage: ${content}\nnonce: challenge`,
-    );
+    )).toBe(fullMessage);
   });
 
-  it('does not accept separately claimed content if it cannot bind it to signed bytes', () => {
+  it('verifies the bytes Petra signed rather than a server-reconstructed frame', async () => {
+    const content = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
+    const fullMessage = `APTOS\ncustom Petra frame\nmessage: ${content}\nnonce: challenge`;
+    const signer = Ed25519PrivateKey.generate();
+    const signature = signer.sign(toHex(new TextEncoder().encode(fullMessage)));
+    const messageToVerify = resolveWalletInteractionMessage(
+      fullMessage,
+      content,
+      content,
+      'challenge',
+    );
+
+    expect(messageToVerify).toBe(fullMessage);
+    expect(messageToVerify).not.toBeNull();
+    if (messageToVerify === null) {
+      throw new Error('Expected the wallet-signed message to be accepted');
+    }
+    await expect(verifyWalletSignature({
+      publicKey: toHex(signer.publicKey().toUint8Array()),
+      signature: toHex(signature.toUint8Array()),
+      message: messageToVerify,
+    })).resolves.toEqual({ valid: true, scheme: 'ed25519' });
+    await expect(verifyWalletSignature({
+      publicKey: toHex(signer.publicKey().toUint8Array()),
+      signature: toHex(signature.toUint8Array()),
+      message: content,
+    })).resolves.toMatchObject({ valid: false, reason: 'invalid' });
+  });
+
+  it('rejects action content that cannot be proven to be inside the signed message', () => {
     const content = 'ShelbyFlix session: challenge\n{"purpose":"Authorize"}';
     expect(resolveWalletInteractionMessage(
-      'unrelated signed bytes',
+      'wallet fullMessage with no authorized action',
       content,
       content,
+      'challenge',
+    )).toBeNull();
+  });
+
+  it('requires the issued nonce inside both the requested and returned signed content', () => {
+    const expected = 'ShelbyFlix session: different-nonce\n{"purpose":"Authorize"}';
+    expect(resolveWalletInteractionMessage(
+      `APTOS\nmessage: ${expected}\nnonce: challenge`,
+      expected,
+      expected,
       'challenge',
     )).toBeNull();
   });

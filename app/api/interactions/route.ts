@@ -37,7 +37,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       signature,
       signedMessage,
       signedContent,
-      signedMessageFields,
       nonce,
       action,
       payload,
@@ -90,11 +89,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         messageToBind,
         expectedMessage,
         nonce,
-        signedMessageFields !== null &&
-          typeof signedMessageFields === 'object' &&
-          !Array.isArray(signedMessageFields)
-          ? signedMessageFields
-          : undefined,
       );
       if (!messageToVerify) {
         return NextResponse.json({ error: 'Signature does not match this action' }, { status: 401 });
@@ -106,6 +100,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         message: messageToVerify,
       });
       if (!verification.valid) {
+        console.error('Wallet interaction signature verification failed:', {
+          scheme: verification.scheme,
+          reason: verification.reason,
+          detail: verification.detail,
+          messageBytes: Buffer.byteLength(messageToVerify, 'utf8'),
+          publicKeyHexLength: publicKey.length,
+          signatureHexLength: signature.length,
+        });
         if (verification.reason === 'unavailable') {
           return NextResponse.json({ error: 'Wallet signature verification is temporarily unavailable' }, { status: 503 });
         }

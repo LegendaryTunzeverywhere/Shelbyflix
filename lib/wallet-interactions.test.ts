@@ -75,8 +75,6 @@ describe('postWalletInteraction', () => {
       fullMessage: `APTOS\napplication: Shelbyflix\nmessage: ${message}\nnonce: session-challenge`,
       message,
       publicKey: '0xkey',
-      prefix: 'APTOS',
-      application: 'Shelbyflix',
     });
 
     await expect(
@@ -89,7 +87,6 @@ describe('postWalletInteraction', () => {
       payload: { purpose },
       signedContent: message,
       signedMessage: `APTOS\napplication: Shelbyflix\nmessage: ${message}\nnonce: session-challenge`,
-      signedMessageFields: { prefix: 'APTOS', application: 'Shelbyflix' },
       nonce: 'session-challenge',
     });
   });
@@ -147,7 +144,6 @@ describe('postWalletInteraction', () => {
       signature: '0x0102',
       signedMessage: 'wallet-standard-framing',
       signedContent: 'ShelbyFlix engagement: challenge-1\n{"disliked":false,"liked":true,"videoId":"video-1"}',
-      signedMessageFields: {},
       nonce: 'challenge-1',
     });
     expect(toUint8Array).not.toHaveBeenCalled();
