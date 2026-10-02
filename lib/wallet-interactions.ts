@@ -1,12 +1,18 @@
 import { csrfFetch } from '@/lib/csrf-client';
 import { serializeWalletValue } from '@/lib/wallet-serialization';
+import { WALLET_SESSION_PURPOSE } from '@/lib/wallet-session-constants';
 
-export type WalletAction = 'comment' | 'comment-delete' | 'comment-like' | 'engagement' | 'subscription' | 'subscription-status';
+export type WalletAction = 'comment' | 'comment-delete' | 'comment-like' | 'engagement' | 'session' | 'subscription' | 'subscription-status';
 
 type SignMessage = (args: { message: string; nonce: string }) => Promise<{
   signature?: unknown;
   fullMessage?: unknown;
+  message?: unknown;
   publicKey?: unknown;
+  prefix?: unknown;
+  address?: unknown;
+  application?: unknown;
+  chainId?: unknown;
 }>;
 
 function stableStringify(value: unknown): string {
@@ -31,6 +37,13 @@ export async function postWalletInteraction<T>(
     publicKey: string;
     signature: string;
     signedMessage: string;
+    signedContent: string;
+    signedMessageFields: {
+      prefix?: string;
+      address?: string;
+      application?: string;
+      chainId?: number;
+    };
     nonce: string;
   }) =>
     csrfFetch('/api/interactions', {
@@ -45,9 +58,8 @@ export async function postWalletInteraction<T>(
 
   const existingSessionResponse = await interaction();
   const existingSessionResult = await existingSessionResponse.json();
-  if (existingSessionResponse.ok) return existingSessionResult as T;
-
   if (existingSessionResult.code !== 'wallet_signature_required') {
+    if (existingSessionResponse.ok) return existingSessionResult as T;
     throw new Error(existingSessionResult.error || 'Wallet action failed');
   }
 
@@ -71,6 +83,13 @@ export async function postWalletInteraction<T>(
     publicKey: serializeWalletValue(key, 'publicKey'),
     signature: serializeWalletValue(signed.signature, 'signature'),
     signedMessage: serializeWalletValue(signed.fullMessage, 'utf8'),
+    signedContent: serializeWalletValue(signed.message ?? message, 'utf8'),
+    signedMessageFields: {
+      prefix: typeof signed.prefix === 'string' ? signed.prefix : undefined,
+      address: typeof signed.address === 'string' ? signed.address : undefined,
+      application: typeof signed.application === 'string' ? signed.application : undefined,
+      chainId: typeof signed.chainId === 'number' ? signed.chainId : undefined,
+    },
     nonce: challenge.nonce,
   });
   const result = await response.json();
@@ -78,4 +97,18 @@ export async function postWalletInteraction<T>(
     throw new Error(result.error || 'Wallet action failed');
   }
   return result as T;
+}
+
+export async function authorizeWalletSession(
+  walletAddress: string,
+  publicKey: unknown,
+  signMessage: SignMessage,
+): Promise<void> {
+  await postWalletInteraction<{ authorized: true }>(
+    walletAddress,
+    publicKey,
+    signMessage,
+    'session',
+    { purpose: WALLET_SESSION_PURPOSE },
+  );
 }

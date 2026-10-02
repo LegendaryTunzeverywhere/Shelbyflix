@@ -4,7 +4,7 @@ const csrfFetch = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/csrf-client', () => ({ csrfFetch }));
 
-import { postWalletInteraction } from '@/lib/wallet-interactions';
+import { authorizeWalletSession, postWalletInteraction } from '@/lib/wallet-interactions';
 
 const walletAddress = '0x1234';
 const payload = { videoId: 'video-1', liked: true, disliked: false };
@@ -39,12 +39,71 @@ describe('postWalletInteraction', () => {
     expect(signMessage).not.toHaveBeenCalled();
   });
 
+  it('bootstraps a session with an explicit, non-transaction purpose', async () => {
+    csrfFetch.mockResolvedValueOnce(jsonResponse({ authorized: true }, true, 200));
+    const signMessage = vi.fn();
+
+    await expect(
+      authorizeWalletSession(walletAddress, 'public-key', signMessage),
+    ).resolves.toBeUndefined();
+
+    expect(JSON.parse(csrfFetch.mock.calls[0][1].body)).toEqual({
+      walletAddress,
+      action: 'session',
+      payload: {
+        purpose: 'Authorize Shelbyflix interactions for 24 hours. No transaction or token transfer.',
+      },
+    });
+    expect(signMessage).not.toHaveBeenCalled();
+  });
+
+  it('signs the clear 24-hour purpose when no wallet session exists', async () => {
+    csrfFetch
+      .mockResolvedValueOnce(jsonResponse(
+        { code: 'wallet_signature_required', requiresSignature: true },
+        true,
+        200,
+      ))
+      .mockResolvedValueOnce(jsonResponse({ authorized: true }, true, 200));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ nonce: 'session-challenge' }, true, 200),
+    ));
+    const purpose = 'Authorize Shelbyflix interactions for 24 hours. No transaction or token transfer.';
+    const message = `ShelbyFlix session: session-challenge\n{"purpose":${JSON.stringify(purpose)}}`;
+    const signMessage = vi.fn().mockResolvedValue({
+      signature: '0xsig',
+      fullMessage: `APTOS\napplication: Shelbyflix\nmessage: ${message}\nnonce: session-challenge`,
+      message,
+      publicKey: '0xkey',
+      prefix: 'APTOS',
+      application: 'Shelbyflix',
+    });
+
+    await expect(
+      authorizeWalletSession(walletAddress, '0xkey', signMessage),
+    ).resolves.toBeUndefined();
+
+    expect(signMessage).toHaveBeenCalledWith({ message, nonce: 'session-challenge' });
+    expect(JSON.parse(csrfFetch.mock.calls[1][1].body)).toMatchObject({
+      action: 'session',
+      payload: { purpose },
+      signedContent: message,
+      signedMessage: `APTOS\napplication: Shelbyflix\nmessage: ${message}\nnonce: session-challenge`,
+      signedMessageFields: { prefix: 'APTOS', application: 'Shelbyflix' },
+      nonce: 'session-challenge',
+    });
+  });
+
   it('requests a signature only when the server requires one', async () => {
     csrfFetch
       .mockResolvedValueOnce(jsonResponse(
-        { code: 'wallet_signature_required', error: 'Wallet signature required' },
-        false,
-        401,
+        {
+          code: 'wallet_signature_required',
+          error: 'Wallet signature required',
+          requiresSignature: true,
+        },
+        true,
+        200,
       ))
       .mockResolvedValueOnce(jsonResponse({ success: true }, true, 200));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -60,7 +119,8 @@ describe('postWalletInteraction', () => {
         bcsToBytes: () => new Uint8Array([1, 2]),
         toUint8Array,
       },
-      fullMessage,
+      fullMessage: new TextEncoder().encode('wallet-standard-framing'),
+      message: fullMessage,
       publicKey: { toUint8Array: () => new Uint8Array([3, 4]) },
     });
 
@@ -85,7 +145,9 @@ describe('postWalletInteraction', () => {
       payload,
       publicKey: '0x0304',
       signature: '0x0102',
-      signedMessage: 'ShelbyFlix engagement: challenge-1\n{"disliked":false,"liked":true,"videoId":"video-1"}',
+      signedMessage: 'wallet-standard-framing',
+      signedContent: 'ShelbyFlix engagement: challenge-1\n{"disliked":false,"liked":true,"videoId":"video-1"}',
+      signedMessageFields: {},
       nonce: 'challenge-1',
     });
     expect(toUint8Array).not.toHaveBeenCalled();

@@ -306,7 +306,7 @@ export async function isSubscribed(subscriberId: string, channelId: string): Pro
     }),
   });
   const result = await response.json();
-  if (response.status === 401 && result.code === 'wallet_signature_required') return null;
+  if (result.code === 'wallet_signature_required') return null;
   if (!response.ok) throw new Error(result.error || 'Could not check subscription status');
   return Boolean(result.subscribed);
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { createWalletSession, hasWalletSession, setWalletSessionCookie } from '@/lib/wallet-session';
+import { WALLET_SESSION_PURPOSE } from '@/lib/wallet-session-constants';
+import { resolveWalletInteractionMessage } from '@/lib/wallet-standard-message';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
 function stableStringify(value: unknown): string {
@@ -29,11 +31,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const body = await request.json();
-    const { walletAddress, publicKey, signature, signedMessage, nonce, action, payload } = body ?? {};
+    const {
+      walletAddress,
+      publicKey,
+      signature,
+      signedMessage,
+      signedContent,
+      signedMessageFields,
+      nonce,
+      action,
+      payload,
+    } = body ?? {};
 
     if (
       !isAddress(walletAddress) ||
-      !['comment', 'comment-delete', 'comment-like', 'engagement', 'subscription', 'subscription-status'].includes(action) ||
+      !['comment', 'comment-delete', 'comment-like', 'engagement', 'session', 'subscription', 'subscription-status'].includes(action) ||
       payload === null || typeof payload !== 'object' || Array.isArray(payload)
     ) {
       return NextResponse.json({ error: 'Invalid wallet interaction request' }, { status: 400 });
@@ -50,8 +62,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         typeof nonce !== 'string' || !nonce
       ) {
         return NextResponse.json(
-          { error: 'Wallet signature required', code: 'wallet_signature_required' },
-          { status: 401 },
+          {
+            error: 'Wallet signature required',
+            code: 'wallet_signature_required',
+            requiresSignature: true,
+          },
         );
       }
 
@@ -66,14 +81,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!(await verifyAndConsumeNonce(key, nonce, ip))) {
         return NextResponse.json({ error: 'Nonce expired or IP does not match' }, { status: 401 });
       }
-      if (!signedMessage.includes(expectedMessage)) {
+      const messageToBind =
+        typeof signedContent === 'string' && signedContent
+          ? signedContent
+          : signedMessage;
+      const messageToVerify = resolveWalletInteractionMessage(
+        signedMessage,
+        messageToBind,
+        expectedMessage,
+        nonce,
+        signedMessageFields !== null &&
+          typeof signedMessageFields === 'object' &&
+          !Array.isArray(signedMessageFields)
+          ? signedMessageFields
+          : undefined,
+      );
+      if (!messageToVerify) {
         return NextResponse.json({ error: 'Signature does not match this action' }, { status: 401 });
       }
 
       const verification = await verifyWalletSignature({
         publicKey,
         signature,
-        message: signedMessage,
+        message: messageToVerify,
       });
       if (!verification.valid) {
         if (verification.reason === 'unavailable') {
@@ -91,6 +121,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       walletSessionToken = await createWalletSession(normalizedWallet);
+    }
+
+    if (action === 'session' && payload.purpose !== WALLET_SESSION_PURPOSE) {
+      return NextResponse.json({ error: 'Invalid wallet session authorization purpose' }, { status: 400 });
+    }
+
+    if (action === 'session') {
+      return successResponse({ authorized: true });
     }
 
     const admin = getSupabaseAdmin();

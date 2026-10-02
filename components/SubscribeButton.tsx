@@ -5,9 +5,9 @@ import { useWallet } from '@/hooks/useWallet';
 import {
   toggleSubscription,
   isSubscribed,
-  verifySubscriptionStatus,
 } from '@/lib/engagement-store';
-import { BellIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { authorizeWalletSession } from '@/lib/wallet-interactions';
+import { BellIcon, CheckIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 
 interface SubscribeButtonProps {
   channelId: string;
@@ -19,6 +19,7 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
   const { address, account, signMessage } = useWallet();
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sessionPending, setSessionPending] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -35,19 +36,36 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
 
     setStatusLoading(true);
     setStatusError(null);
-    isSubscribed(address.toString(), channelId)
-      .then((value) => {
-        if (active) setSubscribed(value);
-      })
-      .catch((error) => {
-        console.error('Failed to load subscription status:', error);
-        if (active) setStatusError('Could not verify subscription status.');
-      })
-      .finally(() => {
-        if (active) setStatusLoading(false);
-      });
+    const refreshStatus = () => {
+      setStatusLoading(true);
+      setStatusError(null);
+      isSubscribed(address.toString(), channelId)
+        .then((value) => {
+          if (active) setSubscribed(value);
+        })
+        .catch((error) => {
+          console.error('Failed to load subscription status:', error);
+          if (active) setStatusError('Could not verify subscription status.');
+        })
+        .finally(() => {
+          if (active) setStatusLoading(false);
+        });
+    };
 
-    return () => { active = false; };
+    refreshStatus();
+    const onSessionAuthorizing = () => setSessionPending(true);
+    const onSessionFinished = () => setSessionPending(false);
+    window.addEventListener('wallet-session-authorizing', onSessionAuthorizing);
+    window.addEventListener('wallet-session-established', onSessionFinished);
+    window.addEventListener('wallet-session-established', refreshStatus);
+    window.addEventListener('wallet-session-failed', onSessionFinished);
+    return () => {
+      active = false;
+      window.removeEventListener('wallet-session-authorizing', onSessionAuthorizing);
+      window.removeEventListener('wallet-session-established', onSessionFinished);
+      window.removeEventListener('wallet-session-established', refreshStatus);
+      window.removeEventListener('wallet-session-failed', onSessionFinished);
+    };
   }, [channelId, address]);
 
   const handleSubscribe = async () => {
@@ -58,12 +76,8 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
     try {
       const walletAddress = address.toString();
       if (subscribed === null) {
-        const currentStatus = await verifySubscriptionStatus(
-          walletAddress,
-          channelId,
-          signMessage,
-          account?.publicKey,
-        );
+        await authorizeWalletSession(walletAddress, account?.publicKey, signMessage);
+        const currentStatus = await isSubscribed(walletAddress, channelId);
         setSubscribed(currentStatus);
         return;
       }
@@ -87,8 +101,8 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
       <div>
         <button
           onClick={handleSubscribe}
-          disabled={!address || loading || statusLoading || Boolean(statusError)}
-          title={subscribed === null ? 'Verify subscription status' : subscribed ? 'Unsubscribe' : 'Subscribe'}
+          disabled={!address || loading || sessionPending || statusLoading || Boolean(statusError)}
+          title={subscribed === null ? 'Authorize your wallet' : subscribed ? 'Unsubscribe' : 'Subscribe'}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-black text-xs tracking-widest transition-all
             ${subscribed === true
               ? 'bg-zinc-800 text-white border border-zinc-700 hover:bg-zinc-700'
@@ -97,10 +111,12 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
                 : 'bg-brand-red text-white hover:bg-brand-red/90'
             } disabled:cursor-not-allowed disabled:opacity-50`}
         >
-          {statusLoading
+          {sessionPending
+            ? <span>AUTHORIZING…</span>
+            : statusLoading
             ? <span>CHECKING…</span>
             : subscribed === null
-              ? <><BellIcon className="w-3.5 h-3.5" /><span>VERIFY STATUS</span></>
+              ? <><ShieldCheckIcon className="w-3.5 h-3.5" /><span>AUTHORIZE</span></>
               : subscribed
               ? <><CheckIcon className="w-3.5 h-3.5" /><span>SUBSCRIBED</span></>
               : <><BellIcon className="w-3.5 h-3.5" /><span>SUBSCRIBE</span></>
@@ -138,8 +154,8 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
     <div>
       <button
         onClick={handleSubscribe}
-        disabled={!address || loading || statusLoading || Boolean(statusError)}
-        title={subscribed === null ? 'Verify subscription status' : subscribed ? 'Unsubscribe' : 'Subscribe'}
+        disabled={!address || loading || sessionPending || statusLoading || Boolean(statusError)}
+        title={subscribed === null ? 'Authorize your wallet' : subscribed ? 'Unsubscribe' : 'Subscribe'}
         className={`flex items-center gap-2 px-8 py-3 rounded-full font-black text-sm transition-all
           ${subscribed === true
             ? 'bg-zinc-800 text-white border border-zinc-700 hover:bg-zinc-700'
@@ -148,10 +164,12 @@ export default function SubscribeButton({ channelId, compact = false, onSubscrib
               : 'bg-brand-red text-white hover:bg-brand-red/90'
           } disabled:opacity-50 disabled:cursor-not-allowed`}
       >
-        {statusLoading
+        {sessionPending
+          ? <span>AUTHORIZING…</span>
+          : statusLoading
           ? <span>CHECKING…</span>
           : subscribed === null
-            ? <><BellIcon className="w-5 h-5" /><span>VERIFY STATUS</span></>
+            ? <><ShieldCheckIcon className="w-5 h-5" /><span>AUTHORIZE</span></>
             : subscribed
             ? <><CheckIcon className="w-5 h-5" /><span>SUBSCRIBED</span></>
             : <><BellIcon className="w-5 h-5" /><span>SUBSCRIBE</span></>
