@@ -6,6 +6,7 @@ import Link from 'next/link';
 import AuthGuard from '@/components/AuthGuard';
 import EngagementBar from '@/components/EngagementBar';
 import SubscribeButton from '@/components/SubscribeButton';
+import ShortsCommentsSheet from '@/components/ShortsCommentsSheet';
 import { useWallet } from '@/hooks/useWallet';
 import type { VideoMetadata } from '@/types';
 import {
@@ -145,10 +146,13 @@ function ShortsContent() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
 
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const countFetchedRef = useRef<Set<string>>(new Set());
 
   // One view per video per page session, same as the normal player's
   // countedViewForVideoRef. Kept here (not in ShortPlayer) so swiping past a
@@ -171,6 +175,29 @@ function ShortsContent() {
         console.error('Failed to record video view:', error);
       });
   }, []);
+
+  const activeShort = shorts[currentIndex];
+
+  // `comment_count` on the videos row is never written, so the badge can't
+  // come from the feed payload. Ask once per short (cheap public GET) so the
+  // overlay isn't stuck at 0; the open sheet corrects it as you read/post.
+  useEffect(() => {
+    const videoId = activeShort?.videoId;
+    if (!videoId || countFetchedRef.current.has(videoId)) return;
+    countFetchedRef.current.add(videoId);
+
+    (async () => {
+      try {
+        const { getVideoComments } = await import('@/lib/engagement-store');
+        const list = await getVideoComments(videoId);
+        const total = list.reduce((t, c) => t + 1 + (c.replies?.length ?? 0), 0);
+        setCommentCounts(prev => ({ ...prev, [videoId]: total }));
+      } catch {
+        // Leave the badge alone and try again next time it becomes active.
+        countFetchedRef.current.delete(videoId);
+      }
+    })();
+  }, [activeShort?.videoId]);
 
   useEffect(() => {
     (async () => {
@@ -216,12 +243,15 @@ function ShortsContent() {
   // Keyboard navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // The comments sheet owns the keyboard while it's open (arrows would
+      // otherwise swipe the feed out from under it).
+      if (commentsOpen) return;
       if (e.key === 'ArrowDown') goNext();
       if (e.key === 'ArrowUp') goPrev();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [goNext, goPrev]);
+  }, [goNext, goPrev, commentsOpen]);
 
   // Touch navigation
   function onTouchStart(e: React.TouchEvent) {
@@ -287,6 +317,12 @@ function ShortsContent() {
   }
 
   const current = shorts[currentIndex];
+  const commentTotal = commentCounts[current.videoId] ?? current.commentCount ?? 0;
+
+  const openComments = () => setCommentsOpen(true);
+  const handleCommentCount = (videoId: string, count: number) => {
+    setCommentCounts(prev => (prev[videoId] === count ? prev : { ...prev, [videoId]: count }));
+  };
 
   return (
     <div className="h-screen bg-black overflow-hidden flex flex-col">
@@ -364,16 +400,39 @@ function ShortsContent() {
               <EyeIcon className="w-3.5 h-3.5" />
               <span className="font-bold">{current.views.toLocaleString()}</span>
             </div>
-            <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={openComments}
+              className="flex items-center gap-1 pointer-events-auto hover:text-brand-red
+                transition-colors"
+              title="Comments"
+            >
               <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
-              <span className="font-bold">{current.commentCount || 0}</span>
-            </div>
+              <span className="font-bold">{commentTotal}</span>
+            </button>
           </div>
         </div>
 
         {/* Navigation controls */}
         <div className="absolute right-3 bottom-24 z-20 flex flex-col items-center gap-5">
           <EngagementBar videoId={current.videoId} vertical />
+
+          {/* Comments — opens the sheet over the video, which keeps playing */}
+          <button
+            type="button"
+            onClick={openComments}
+            className="flex flex-col items-center gap-1 group"
+            title="Comments"
+            aria-label={`Comments (${commentTotal})`}
+          >
+            <div
+              className="w-10 h-10 backdrop-blur-md bg-black/50 group-hover:bg-black/70
+                rounded-full flex items-center justify-center transition-colors"
+            >
+              <ChatBubbleLeftIcon className="w-5 h-5 text-white group-hover:text-brand-red transition-colors" />
+            </div>
+            <span className="text-white text-xs font-bold">{commentTotal}</span>
+          </button>
           
           {/* Up button - Always enabled for previous ✅ */}
           <button
@@ -400,6 +459,16 @@ function ShortsContent() {
           </button>
         </div>
       </div>
+
+      {/* Comments sheet — a sibling of the feed, so nothing about playback
+          is touched: the short keeps running behind it. */}
+      {commentsOpen && (
+        <ShortsCommentsSheet
+          videoId={current.videoId}
+          onClose={() => setCommentsOpen(false)}
+          onCountChange={(count) => handleCommentCount(current.videoId, count)}
+        />
+      )}
     </div>
   );
 }

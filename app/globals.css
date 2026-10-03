@@ -48,6 +48,15 @@
     animation: slideInFromRight 0.3s ease-out;
   }
 
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  /* Bottom sheet: rises from the bottom edge with a phone-like easing curve. */
+  .animate-sheet-in {
+    animation: sheetIn 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -58,11 +67,21 @@
 
   @keyframes slideIn {
     from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   @keyframes slideInFromRight {
     from { opacity: 0; transform: translateX(20px); }
-    to { opacity: 1; transform: translateX(0); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  @keyframes sheetIn {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
   }
 }
