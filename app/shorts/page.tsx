@@ -24,11 +24,13 @@ function ShortPlayer({
   isActive,
   isMuted,
   walletAddress,
+  onFirstPlay,
 }: {
   video: VideoMetadata;
   isActive: boolean;
   isMuted: boolean;
   walletAddress?: string | null;
+  onFirstPlay?: () => void;
 }) {
   const [streamUrl, setStreamUrl] = useState('');
   const [loading, setLoading] = useState(true);
@@ -118,7 +120,10 @@ function ShortPlayer({
           loop
           playsInline
           className="w-full h-full object-cover"
-          onPlay={() => setIsPaused(false)}
+          onPlay={() => {
+            setIsPaused(false);
+            onFirstPlay?.();
+          }}
           onPause={() => setIsPaused(true)}
         />
         {isPaused && streamUrl && (
@@ -144,6 +149,28 @@ function ShortsContent() {
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // One view per video per page session, same as the normal player's
+  // countedViewForVideoRef. Kept here (not in ShortPlayer) so swiping past a
+  // short and back — which unmounts and remounts it — doesn't double count.
+  const countedViewsRef = useRef<Set<string>>(new Set());
+
+  const countView = useCallback((video: VideoMetadata) => {
+    if (countedViewsRef.current.has(video.videoId)) return;
+    countedViewsRef.current.add(video.videoId);
+
+    import('@/lib/video-service')
+      .then(({ incrementViews }) => incrementViews(video.videoId))
+      .then((views) => {
+        setShorts(prev =>
+          prev.map(v => (v.videoId === video.videoId ? { ...v, views } : v)),
+        );
+      })
+      .catch((error) => {
+        countedViewsRef.current.delete(video.videoId);
+        console.error('Failed to record video view:', error);
+      });
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -301,7 +328,13 @@ function ShortsContent() {
               className="absolute inset-0 transition-transform duration-300 ease-out"
               style={{ transform: `translateY(${(idx - currentIndex) * 100}%)` }}
             >
-              <ShortPlayer video={short} isActive={idx === currentIndex} isMuted={isMuted} walletAddress={address?.toString()} />
+              <ShortPlayer
+                video={short}
+                isActive={idx === currentIndex}
+                isMuted={isMuted}
+                walletAddress={address?.toString()}
+                onFirstPlay={() => countView(short)}
+              />
             </div>
           );
         })}
