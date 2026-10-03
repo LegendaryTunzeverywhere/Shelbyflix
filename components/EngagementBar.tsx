@@ -22,7 +22,61 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadEngagement();
+    let stale = false;
+
+    // This component instance survives video changes (Shorts swipes, and
+    // /video/[id] links replace props without remounting), so anything left
+    // over from the previous video has to be cleared first — otherwise a
+    // finished reaction leaves the next video's buttons permanently disabled.
+    setLiked(false);
+    setDisliked(false);
+    setHasLiked(false);
+    setHasDisliked(false);
+    setLikes(0);
+    setDislikes(0);
+    setError(null);
+
+    (async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+
+        // Load counts from videos table
+        const { data } = await supabase
+          .from('videos')
+          .select('likes, dislikes')
+          .eq('video_id', videoId)
+          .single();
+        if (stale) return;
+        if (data) {
+          setLikes(data.likes ?? 0);
+          setDislikes(data.dislikes ?? 0);
+        }
+
+        // Load this user's engagement
+        if (address) {
+          const { data: eng } = await supabase
+            .from('video_engagement')
+            .select('liked, disliked')
+            .eq('video_id', videoId)
+            .eq('user_wallet', address.toString().toLowerCase()) // ✅ FIXED: user_wallet + lowercase
+            .maybeSingle();
+          if (stale) return;
+
+          if (eng) {
+            setLiked(eng.liked);
+            setDisliked(eng.disliked);
+            setHasLiked(eng.liked);
+            setHasDisliked(eng.disliked);
+          }
+        }
+      } catch (err) {
+        if (!stale) console.error('Failed to load engagement:', err);
+      }
+    })();
+
+    return () => {
+      stale = true;
+    };
   }, [videoId, address]);
 
   // Auto-dismiss error after 4 seconds
@@ -31,42 +85,6 @@ export default function EngagementBar({ videoId, vertical = false }: EngagementB
     const t = setTimeout(() => setError(null), 4000);
     return () => clearTimeout(t);
   }, [error]);
-
-  async function loadEngagement() {
-    try {
-      const { supabase } = await import('@/lib/supabase');
-
-      // Load counts from videos table
-      const { data } = await supabase
-        .from('videos')
-        .select('likes, dislikes')
-        .eq('video_id', videoId)
-        .single();
-      if (data) {
-        setLikes(data.likes ?? 0);
-        setDislikes(data.dislikes ?? 0);
-      }
-
-      // Load this user's engagement
-      if (address) {
-        const { data: eng } = await supabase
-          .from('video_engagement')
-          .select('liked, disliked')
-          .eq('video_id', videoId)
-          .eq('user_wallet', address.toString().toLowerCase()) // ✅ FIXED: user_wallet + lowercase
-          .maybeSingle();
-
-        if (eng) {
-          setLiked(eng.liked);
-          setDisliked(eng.disliked);
-          setHasLiked(eng.liked);
-          setHasDisliked(eng.disliked);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load engagement:', err);
-    }
-  }
 
   async function handleLike() {
     if (!address || hasLiked) return;

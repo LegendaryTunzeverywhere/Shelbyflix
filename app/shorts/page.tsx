@@ -20,6 +20,42 @@ import {
 } from '@heroicons/react/24/outline';
 import { formatDistanceToNow } from 'date-fns';
 
+/**
+ * Channel DP for the overlay. The feed payload has no avatar field, so the
+ * caller resolves `users.avatar_url` per channel; until it lands (or when
+ * there is no profile) we fall back to the gradient initials used everywhere
+ * else in the app.
+ */
+function ChannelAvatar({
+  avatarUrl,
+  channelName,
+}: {
+  avatarUrl?: string | null;
+  channelName: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = failed ? null : avatarUrl;
+
+  return (
+    <div
+      className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0 flex items-center
+        justify-center bg-gradient-to-br from-brand-purple to-brand-red text-white
+        font-black text-sm"
+    >
+      {src ? (
+        <img
+          src={src}
+          alt={channelName}
+          className="w-full h-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span>{channelName.slice(0, 2).toUpperCase()}</span>
+      )}
+    </div>
+  );
+}
+
 function ShortPlayer({
   video,
   isActive,
@@ -148,11 +184,13 @@ function ShortsContent() {
   const [loading, setLoading] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+  const [channelAvatars, setChannelAvatars] = useState<Record<string, string | null>>({});
 
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const countFetchedRef = useRef<Set<string>>(new Set());
+  const avatarFetchedRef = useRef<Set<string>>(new Set());
 
   // One view per video per page session, same as the normal player's
   // countedViewForVideoRef. Kept here (not in ShortPlayer) so swiping past a
@@ -198,6 +236,24 @@ function ShortsContent() {
       }
     })();
   }, [activeShort?.videoId]);
+
+  // Channel DP: `videos` carries no avatar, so look the uploader up once per
+  // channel. getUserByWallet resolves to null on 404 (no profile row).
+  useEffect(() => {
+    const channelId = activeShort?.channelId;
+    if (!channelId || avatarFetchedRef.current.has(channelId)) return;
+    avatarFetchedRef.current.add(channelId);
+
+    (async () => {
+      try {
+        const { getUserByWallet } = await import('@/lib/user-service');
+        const user = await getUserByWallet(channelId);
+        setChannelAvatars(prev => ({ ...prev, [channelId]: user?.avatar_url ?? null }));
+      } catch {
+        avatarFetchedRef.current.delete(channelId);
+      }
+    })();
+  }, [activeShort?.channelId]);
 
   useEffect(() => {
     (async () => {
@@ -286,7 +342,7 @@ function ShortsContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white" />
       </div>
     );
@@ -294,7 +350,7 @@ function ShortsContent() {
 
   if (shorts.length === 0) {
     return (
-      <div className="min-h-screen bg-black">
+      <div className="fixed inset-0 bg-black overflow-hidden">
         <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 pt-4">
           <Link href="/" className="text-white font-black text-xl tracking-tighter">
             SHELBY<span className="text-brand-red">FLIX</span>
@@ -325,7 +381,7 @@ function ShortsContent() {
   };
 
   return (
-    <div className="h-screen bg-black overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black overflow-hidden flex flex-col">
       <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 pt-4">
         <Link href="/" className="text-white font-black text-xl tracking-tighter">
           SHELBY<span className="text-brand-red">FLIX</span>
@@ -376,45 +432,57 @@ function ShortsContent() {
         })}
 
         {/* Info overlay */}
-        <div className="absolute bottom-0 left-0 right-16 p-5 z-20 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none">
-          <div className="flex items-center gap-3 mb-3 pointer-events-auto">
-            <Link href={`/channel/${current.channelId}`}>
-              <div className="w-10 h-10 bg-gradient-to-br from-brand-purple to-brand-red rounded-full flex items-center justify-center text-white font-black text-sm flex-shrink-0">
-                {current.channelName.slice(0, 2).toUpperCase()}
+        <div className="absolute bottom-0 left-0 right-14 sm:right-16 p-4 sm:p-5 z-20 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none">
+          {/* Constrained so the subscribe control stays beside the channel on
+              wide screens instead of being pushed to the far right edge. */}
+          <div className="max-w-xl">
+            <div className="flex items-center gap-3 mb-3 pointer-events-auto">
+              <Link
+                href={`/channel/${current.channelId}`}
+                className="group flex items-center gap-3 min-w-0"
+                title={`Open ${current.channelName}'s channel`}
+              >
+                <ChannelAvatar
+                  key={current.channelId}
+                  avatarUrl={channelAvatars[current.channelId]}
+                  channelName={current.channelName}
+                />
+                <div className="min-w-0">
+                  <p className="text-white font-black text-sm truncate group-hover:text-brand-red transition-colors">
+                    {current.channelName}
+                  </p>
+                  <p className="text-zinc-400 text-xs truncate">{formatDistanceToNow(current.uploadTimestamp, { addSuffix: true })}</p>
+                </div>
+              </Link>
+              <div>
+                <SubscribeButton channelId={current.channelId} compact />
               </div>
-            </Link>
-            <div className="flex-1 min-w-0">
-              <p className="text-white font-black text-sm truncate">{current.channelName}</p>
-              <p className="text-zinc-400 text-xs">{formatDistanceToNow(current.uploadTimestamp, { addSuffix: true })}</p>
             </div>
-            <div className="pointer-events-auto">
-              <SubscribeButton channelId={current.channelId} />
+            <h2 className="text-white font-black text-base mb-1 line-clamp-2 leading-tight">{current.title}</h2>
+            {current.description && (
+              <p className="text-zinc-300 text-sm line-clamp-2 mb-3">{current.description}</p>
+            )}
+            <div className="flex items-center gap-4 text-white text-xs pointer-events-none">
+              <div className="flex items-center gap-1">
+                <EyeIcon className="w-3.5 h-3.5" />
+                <span className="font-bold">{current.views.toLocaleString()}</span>
+              </div>
+              <button
+                type="button"
+                onClick={openComments}
+                className="flex items-center gap-1 pointer-events-auto hover:text-brand-red
+                  transition-colors"
+                title="Comments"
+              >
+                <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
+                <span className="font-bold">{commentTotal}</span>
+              </button>
             </div>
-          </div>
-          <h2 className="text-white font-black text-base mb-1 line-clamp-2 leading-tight">{current.title}</h2>
-          {current.description && (
-            <p className="text-zinc-300 text-sm line-clamp-2 mb-3">{current.description}</p>
-          )}
-          <div className="flex items-center gap-4 text-white text-xs pointer-events-none">
-            <div className="flex items-center gap-1">
-              <EyeIcon className="w-3.5 h-3.5" />
-              <span className="font-bold">{current.views.toLocaleString()}</span>
-            </div>
-            <button
-              type="button"
-              onClick={openComments}
-              className="flex items-center gap-1 pointer-events-auto hover:text-brand-red
-                transition-colors"
-              title="Comments"
-            >
-              <ChatBubbleLeftIcon className="w-3.5 h-3.5" />
-              <span className="font-bold">{commentTotal}</span>
-            </button>
           </div>
         </div>
 
         {/* Navigation controls */}
-        <div className="absolute right-3 bottom-24 z-20 flex flex-col items-center gap-5">
+        <div className="absolute right-2 sm:right-3 bottom-20 sm:bottom-24 z-20 flex flex-col items-center gap-4 sm:gap-5">
           <EngagementBar videoId={current.videoId} vertical />
 
           {/* Comments — opens the sheet over the video, which keeps playing */}
@@ -474,6 +542,29 @@ function ShortsContent() {
 }
 
 export default function ShortsPage() {
+  // The feed is a fixed, full-viewport surface, but the document could still
+  // be scrolled (residual offset from the previous route, safe-area padding,
+  // mobile URL-bar resizing) which shifted the frame and pushed the like rail
+  // and the subscribe row off screen.
+  useEffect(() => {
+    const { body, documentElement: html } = document;
+    const prevBodyOverflow = body.style.overflow;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevScrollBehavior = html.style.scrollBehavior;
+
+    html.style.scrollBehavior = 'auto';
+    body.style.overflow = 'hidden';
+    html.style.overflow = 'hidden';
+    // Arriving from another page can leave a scroll offset behind.
+    if (window.scrollY > 0) window.scrollTo(0, 0);
+
+    return () => {
+      body.style.overflow = prevBodyOverflow;
+      html.style.overflow = prevHtmlOverflow;
+      html.style.scrollBehavior = prevScrollBehavior;
+    };
+  }, []);
+
   return (
     <AuthGuard requireUsername={false}>
       <ShortsContent />
