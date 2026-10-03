@@ -6,6 +6,7 @@ import { WALLET_SESSION_PURPOSE } from '@/lib/wallet-session-constants';
 import {
   resolveWalletInteractionMessages,
   walletFullMessageBindsAction,
+  walletFullMessageIncludes,
 } from '@/lib/wallet-standard-message';
 import { checkPublicKeyAddressBinding, verifyWalletSignature } from '@/lib/wallet-signature';
 
@@ -118,17 +119,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         nonce,
       );
       if (!verification?.valid || !messageToVerify || !actionIsBound) {
-        const normalizedFullMessage = signedMessage.replace(/\r\n?/g, '\n');
-        const normalizedExpectedMessage = expectedMessage.replace(/\r\n?/g, '\n');
         const expectedAction = `ShelbyFlix ${action}: ${nonce}`;
         const expectedPayload = stableStringify(payload);
         const diagnostics = {
-          actionIncluded: normalizedFullMessage.includes(expectedAction),
-          payloadIncluded: normalizedFullMessage.includes(expectedPayload),
+          actionIncluded: walletFullMessageIncludes(signedMessage, expectedAction),
+          payloadIncluded: walletFullMessageIncludes(signedMessage, expectedPayload),
           fullMessageLength: signedMessage.length,
           signedContentLength: typeof signedContent === 'string' ? signedContent.length : null,
-          nonceIncluded: normalizedFullMessage.includes(nonce),
-          expectedMessageIncluded: normalizedFullMessage.includes(normalizedExpectedMessage),
+          nonceIncluded: walletFullMessageIncludes(signedMessage, nonce),
+          expectedMessageIncluded: walletFullMessageIncludes(signedMessage, expectedMessage),
           verifierScheme: verification?.scheme ?? 'unknown',
           verifierReason: verification?.valid ? 'valid' : verification?.reason ?? 'unknown',
           verifierDetail: verification?.valid === false ? verification.detail : undefined,

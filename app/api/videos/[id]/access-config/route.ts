@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { normalizeAddress } from '@/lib/access-control';
 import { truncateHash } from '@/lib/shared-utils';
 import { verifyWalletSignature } from '@/lib/wallet-signature';
+import { walletFullMessageIncludes } from '@/lib/wallet-standard-message';
 import { moveContractBackend } from '@/lib/move-contract-backend';
 import { ChainUnavailableError } from '@/lib/move-contract-backend';
 import { ACCESS_CONTROL_MODULE } from '@/lib/move-contract';
@@ -168,7 +169,9 @@ export async function PATCH(
         ? fullMessage
         : plainMessage;
 
-    if (!messageToVerify.includes(nonce)) {
+    // The nonce may be carried literally or hex-encoded: Aptos Connect's
+    // prompt frames the request bytes as `message: 0x…`/`nonce: 0x…`.
+    if (!walletFullMessageIncludes(messageToVerify, nonce)) {
       logRejection('signed_message_missing_nonce', {
         videoId,
         walletAddress: truncateHash(storeKey),

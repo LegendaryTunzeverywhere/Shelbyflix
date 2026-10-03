@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { verifyWalletSignature } from '@/lib/wallet-signature';
+import { walletFullMessageIncludes } from '@/lib/wallet-standard-message';
 
 const VIDEO_ID_REGEX = /^[\w-]+$/;
 
@@ -87,7 +88,10 @@ export async function DELETE(
 
     // ── Verify the signed content is bound to THIS delete request ────────
     const expectedMessage = `ShelbyFlix delete: ${videoId}`;
-    if (!fullMessage.includes(expectedMessage)) {
+    // Containment rather than exact equality: wallets wrap the requested
+    // text in their own framing, and Aptos Connect's prompt hex-encodes it
+    // (`message: 0x…`) — see walletFullMessageIncludes.
+    if (!walletFullMessageIncludes(fullMessage, expectedMessage)) {
       return NextResponse.json(
         { error: 'Signed message does not match this delete request' },
         { status: 401 },

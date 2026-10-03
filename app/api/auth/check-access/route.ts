@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { hasNonce, verifyAndConsumeNonce } from '@/lib/nonce-store';
 import { verifyWalletSignature } from '@/lib/wallet-signature';
+import { walletFullMessageIncludes } from '@/lib/wallet-standard-message';
 // import { checkTokenOwnership } from '@/lib/aptos'; // Available for opt-in token-gating
 
 // ---------------------------------------------------------------------------
@@ -70,8 +71,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Extra safety: if client claims a fullMessage, it must contain the
     // nonce we issued. Prevents reuse of a signature over an attacker-chosen
-    // message.
-    if (!messageToVerify.includes(nonce)) {
+    // message. The nonce may be carried literally or hex-encoded — wallets
+    // frame the request bytes as `0x…` (see walletFullMessageIncludes).
+    if (!walletFullMessageIncludes(messageToVerify, nonce)) {
       return NextResponse.json(
         { error: 'Signed message does not contain issued nonce' },
         { status: 401 }
