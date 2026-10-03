@@ -133,7 +133,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           verifierReason: verification?.valid ? 'valid' : verification?.reason ?? 'unknown',
           verifierDetail: verification?.valid === false ? verification.detail : undefined,
         };
-        console.warn('Wallet interaction fullMessage did not include the expected action:', {
+        console.warn('Wallet interaction signature verification or message binding failed:', {
           action,
           ...diagnostics,
           publicKeyHexLength: publicKey.length,
@@ -143,7 +143,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           error: actionIsBound
             ? 'Wallet signature does not match the signed message'
             : 'Wallet full message does not bind the requested action',
-          code: actionIsBound ? 'wallet_signature_invalid' : 'wallet_message_unbound',
+          code: verification?.valid
+            ? 'wallet_message_unbound'
+            : 'wallet_signature_invalid',
           diagnostics,
         }, { status: 401 });
       }

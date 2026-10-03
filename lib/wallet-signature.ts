@@ -196,10 +196,10 @@ function unwrapSignature(signature: AnySignature | Ed25519Signature) {
   return signature instanceof AnySignature ? signature.signature : signature;
 }
 
-// Keyless proofs are chain-specific, so use the same network as the wallet
-// adapter when fetching the verification key and patched JWKs.
-
-let cachedKeylessAptosConfig: AptosConfig | null = null;
+// Petra Web currently uses Aptos Connect's shared Devnet keyless prover for
+// Shelbynet. Keep Shelbynet as the primary verifier, then try Devnet's
+// on-chain keyless configuration if the shared prover's proof does not match.
+const cachedKeylessAptosConfigs = new Map<Network, AptosConfig>();
 
 export function resolveKeylessVerificationNetwork(networkName: string): Network {
   switch (networkName.trim().toUpperCase()) {
@@ -207,6 +207,8 @@ export function resolveKeylessVerificationNetwork(networkName: string): Network 
       return Network.MAINNET;
     case 'TESTNET':
       return Network.TESTNET;
+    case 'DEVNET':
+      return Network.DEVNET;
     case 'SHELBYNET':
     case 'CUSTOM':
       return Network.CUSTOM;
@@ -215,13 +217,24 @@ export function resolveKeylessVerificationNetwork(networkName: string): Network 
   }
 }
 
-function getKeylessAptosConfig(): AptosConfig {
-  if (cachedKeylessAptosConfig) return cachedKeylessAptosConfig;
+export function resolveKeylessVerificationNetworks(
+  networkName: string,
+  hasExplicitOverride = false,
+): Network[] {
+  const primaryNetwork = resolveKeylessVerificationNetwork(networkName);
+  if (
+    !hasExplicitOverride &&
+    networkName.trim().toUpperCase() === 'SHELBYNET'
+  ) {
+    return [primaryNetwork, Network.DEVNET];
+  }
+  return [primaryNetwork];
+}
 
-  const networkName = process.env.KEYLESS_VERIFICATION_NETWORK?.trim()
-    || process.env.NEXT_PUBLIC_NETWORK_NAME?.trim()
-    || 'SHELBYNET';
-  const network = resolveKeylessVerificationNetwork(networkName);
+function getKeylessAptosConfig(network: Network): AptosConfig {
+  const cached = cachedKeylessAptosConfigs.get(network);
+  if (cached) return cached;
+
   const fullnode = process.env.KEYLESS_VERIFICATION_FULLNODE_URL?.trim()
     || (network === Network.CUSTOM
       ? process.env.NEXT_PUBLIC_SHELBYNET_NODE_URL?.trim()
@@ -231,17 +244,18 @@ function getKeylessAptosConfig(): AptosConfig {
     ? getAptosClientConfigWithApiKey()
     : undefined;
 
-  cachedKeylessAptosConfig = new AptosConfig({
+  const aptosConfig = new AptosConfig({
     network,
     ...(fullnode ? { fullnode } : {}),
     ...(clientConfig ? { clientConfig } : {}),
   });
-  return cachedKeylessAptosConfig;
+  cachedKeylessAptosConfigs.set(network, aptosConfig);
+  return aptosConfig;
 }
 
 /** Test seam — drops the memoised config so a new env takes effect. */
 export function __resetVerificationAptosConfig(): void {
-  cachedKeylessAptosConfig = null;
+  cachedKeylessAptosConfigs.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -319,9 +333,19 @@ async function verifyKeylessSignature(args: {
     };
   }
 
-  let aptosConfig: AptosConfig;
+  const configuredNetwork = process.env.KEYLESS_VERIFICATION_NETWORK?.trim();
+  const networkName = configuredNetwork
+    || process.env.NEXT_PUBLIC_NETWORK_NAME?.trim()
+    || 'SHELBYNET';
+  let networks: Network[];
   try {
-    aptosConfig = getKeylessAptosConfig();
+    networks = resolveKeylessVerificationNetworks(
+      networkName,
+      Boolean(
+        configuredNetwork ||
+        process.env.KEYLESS_VERIFICATION_FULLNODE_URL?.trim(),
+      ),
+    );
   } catch (err) {
     return {
       valid: false,
@@ -331,61 +355,68 @@ async function verifyKeylessSignature(args: {
     };
   }
 
-  try {
-    const valid = await innerPublicKey.verifySignatureAsync({
-      aptosConfig,
-      message,
-      signature: innerSignature,
-      // Without this the SDK swallows the real reason and just returns
-      // `false`, which would make an unreachable fullnode indistinguishable
-      // from a forged signature.
-      options: { throwErrorWithReason: true },
-    } as never);
+  let invalidResult: WalletSignatureResult | null = null;
+  let unavailableResult: WalletSignatureResult | null = null;
+  for (const network of networks) {
+    try {
+      const valid = await innerPublicKey.verifySignatureAsync({
+        aptosConfig: getKeylessAptosConfig(network),
+        message,
+        signature: innerSignature,
+        // Without this the SDK swallows the real reason and just returns
+        // `false`, which would make an unreachable fullnode indistinguishable
+        // from a forged signature.
+        options: { throwErrorWithReason: true },
+      } as never);
 
-    return valid === true
-      ? { valid: true, scheme: 'keyless' }
-      : { valid: false, scheme: 'keyless', reason: 'invalid' };
-  } catch (err) {
-    if (err instanceof KeylessError) {
-      // API_ERROR / EXTERNAL_API_ERROR mean we never got a trustworthy
-      // verdict (fullnode down, keyless module missing, JWK not fetched,
-      // rate-limited). Everything else (expired proof, bad JWT, unrecognised
-      // issuer, failed pairing) is a real "no".
-      const infraFailure =
-        err.category === KeylessErrorCategory.API_ERROR ||
-        err.category === KeylessErrorCategory.EXTERNAL_API_ERROR;
-
-      // PROOF_VERIFICATION_FAILED specifically means the Groth16 pairing check
-      // did not hold. The statement being hashed there does NOT include the
-      // signed message — it is built from the ephemeral key, the idCommitment
-      // of the public key we were handed, the expiry, the issuer, the JWT
-      // header and the on-chain JWK. So when only the pairing fails, the
-      // signature and our message handling are fine; what is in question is
-      // the public key, or the JWK/issuer it was proved against. Log those
-      // inputs, because the user-visible message ("Invalid wallet signature")
-      // cannot distinguish "forged" from "wrong public key submitted".
-      if (err.type === KeylessErrorType.PROOF_VERIFICATION_FAILED) {
-        console.error(
-          '[wallet-signature] keyless proof verification failed — inputs:',
-          describeKeylessInputs(innerPublicKey, innerSignature, publicKey),
-        );
-      }
-
-      return {
+      if (valid === true) return { valid: true, scheme: 'keyless' };
+      invalidResult = {
         valid: false,
         scheme: 'keyless',
-        reason: infraFailure ? 'unavailable' : 'invalid',
-        detail: `${String(err.type)}: ${err.message}`,
+        reason: 'invalid',
+        detail: `Signature rejected by ${network}`,
       };
+    } catch (err) {
+      if (err instanceof KeylessError) {
+        // API_ERROR / EXTERNAL_API_ERROR mean we never got a trustworthy
+        // verdict. Keep trying trusted network configurations, but report an
+        // outage if no verifier can establish a valid proof.
+        const infraFailure =
+          err.category === KeylessErrorCategory.API_ERROR ||
+          err.category === KeylessErrorCategory.EXTERNAL_API_ERROR;
+        const result: WalletSignatureResult = {
+          valid: false,
+          scheme: 'keyless',
+          reason: infraFailure ? 'unavailable' : 'invalid',
+          detail: `${String(err.type)}: ${err.message} (${network})`,
+        };
+        if (infraFailure) unavailableResult = result;
+        else invalidResult = result;
+      } else {
+        unavailableResult = {
+          valid: false,
+          scheme: 'keyless',
+          reason: 'unavailable',
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
-
-    return {
-      valid: false,
-      scheme: 'keyless',
-      reason: 'unavailable',
-      detail: err instanceof Error ? err.message : String(err),
-    };
   }
+
+  if (unavailableResult) return unavailableResult;
+  if (invalidResult?.reason === 'invalid') {
+    const proofFailed = invalidResult.detail?.includes(
+      String(KeylessErrorType.PROOF_VERIFICATION_FAILED),
+    );
+    if (proofFailed) {
+      console.error(
+        '[wallet-signature] keyless proof verification failed — inputs:',
+        describeKeylessInputs(innerPublicKey, innerSignature, publicKey),
+      );
+    }
+    return invalidResult;
+  }
+  return { valid: false, scheme: 'keyless', reason: 'invalid' };
 }
 
 // ---------------------------------------------------------------------------
