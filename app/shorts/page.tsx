@@ -72,6 +72,10 @@ function ShortPlayer({
   const [streamUrl, setStreamUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // 'session' = 401 wallet_session_required from the key endpoint; the
+  // overlay shows a Sign In button and retries on wallet-session-established.
+  const [errorKind, setErrorKind] = useState<'session' | 'other' | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const loadedRef = useRef(false);
@@ -82,36 +86,55 @@ function ShortPlayer({
 
     (async () => {
       try {
-        const { downloadAndDecryptVideo } = await import('@/lib/shelby');
+        const { downloadAndDecryptVideo, downloadRawVideo, fetchDecryptionKey } =
+          await import('@/lib/shelby');
 
-        const keyParams = new URLSearchParams();
-        if (walletAddress) keyParams.set('wallet', walletAddress);
-        const keyRes = await fetch(
-          `/api/videos/${encodeURIComponent(video.videoId)}/decryption-key${
-            keyParams.toString() ? `?${keyParams.toString()}` : ''
-          }`,
-        );
-        if (!keyRes.ok) {
-          if (keyRes.status === 403) {
-            throw new Error('This video requires purchase or access approval.');
-          }
-          throw new Error(`Failed to fetch decryption key (${keyRes.status})`);
-        }
-        const keyPayload = (await keyRes.json()) as { encryptionKey?: string };
-        if (!keyPayload.encryptionKey) {
-          throw new Error('Decryption key unavailable');
-        }
+        // Unencrypted uploads skip the key endpoint entirely — raw bytes,
+        // plain fetch. Encrypted ones (default) stay key-gated.
+        const blob =
+          video.isEncrypted !== false
+            ? await downloadAndDecryptVideo(
+                video.shelbyUrl,
+                await fetchDecryptionKey(video.videoId, walletAddress),
+                video.blobName,
+              )
+            : await downloadRawVideo(video.shelbyUrl, video.blobName);
 
-        const blob = await downloadAndDecryptVideo(video.shelbyUrl, keyPayload.encryptionKey, video.blobName);
         const url = URL.createObjectURL(blob);
         setStreamUrl(url);
+        setErrorKind(null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load');
+        if (e instanceof Error && e.name === 'WalletSessionRequiredError') {
+          setErrorKind('session');
+          setError('Sign in with your wallet to watch this video.');
+        } else if (e instanceof Error && /403/.test(e.message)) {
+          setErrorKind('other');
+          setError('This video requires purchase or access approval.');
+        } else {
+          setErrorKind('other');
+          setError(e instanceof Error ? e.message : 'Failed to load');
+        }
       } finally {
         setLoading(false);
       }
     })();
-  }, [isActive, video.videoId, video.shelbyUrl, video.blobName, walletAddress]);
+  }, [isActive, video.videoId, video.shelbyUrl, video.blobName, video.isEncrypted, walletAddress, retryTick]);
+
+  // A wallet session just completed after a 401 — reset the loader and
+  // re-run the effect above.
+  useEffect(() => {
+    if (errorKind !== 'session') return;
+    const onSessionEstablished = () => {
+      loadedRef.current = false;
+      setError('');
+      setErrorKind(null);
+      setLoading(true);
+      setRetryTick((n) => n + 1);
+    };
+    window.addEventListener('wallet-session-established', onSessionEstablished);
+    return () =>
+      window.removeEventListener('wallet-session-established', onSessionEstablished);
+  }, [errorKind]);
 
   useEffect(() => {
     const vid = videoRef.current;
@@ -146,8 +169,20 @@ function ShortPlayer({
         </div>
       )}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black">
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black gap-4">
           <p className="text-zinc-400 text-sm px-8 text-center">{error}</p>
+          {errorKind === 'session' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new Event('shelbyflix:authorize-session'));
+              }}
+              className="px-5 py-2 bg-brand-red text-white rounded-xl font-black text-xs tracking-widest hover:bg-brand-red/90 transition-colors"
+            >
+              SIGN IN
+            </button>
+          )}
         </div>
       )}
       {/* 9:16 container — video stays portrait on any screen */}

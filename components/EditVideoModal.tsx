@@ -82,11 +82,15 @@ export default function EditVideoModal({ video, onClose, onSuccess }: EditVideoM
         updates.thumbnail_url = thumbnailPreview;
       }
 
+      // Explicit column list — never `select()` (= all columns) here: this
+      // runs on the anon-key client, so a wildcard would return
+      // `encryption_key` to the browser (see PUBLIC_VIDEO_COLUMNS note in
+      // lib/video-service.ts).
       const { data, error: updateError } = await supabase
         .from('videos')
         .update(updates)
         .eq('video_id', video.videoId)
-        .select()
+        .select('video_id, title, description, category, tags, thumbnail_url')
         .single();
 
       if (updateError) throw new Error(updateError.message);

@@ -81,6 +81,20 @@ export default function LayoutClient({ children }: { children: React.ReactNode }
     return () => window.clearTimeout(timer);
   }, [connected, address, walletLoading, needsUsername, authorize]);
 
+  // Programmatic sign-in trigger: the wallet dropdown's "Sign In" button
+  // and the players' "Sign In" state after a 401 both dispatch this event
+  // so the signing flow (and its modal) lives in exactly one place.
+  useEffect(() => {
+    const onRequestSession = () => {
+      if (!connected || !address) return;
+      if (sessionState === 'authorizing') return;
+      void authorize();
+    };
+    window.addEventListener('shelbyflix:authorize-session', onRequestSession);
+    return () =>
+      window.removeEventListener('shelbyflix:authorize-session', onRequestSession);
+  }, [connected, address, sessionState, authorize]);
+
   const handleUsernameComplete = async (_username: string) => {
     setShowUsernameModal(false);
     await refreshUser();
@@ -145,8 +159,9 @@ export default function LayoutClient({ children }: { children: React.ReactNode }
               {sessionState === 'authorizing' ? 'Authorize Shelbyflix' : 'Wallet authorization needed'}
             </h2>
             <p id="wallet-session-description" className="mt-3 text-sm leading-6 text-zinc-300">
-              Approve the wallet signature to use comments, likes, and subscriptions for 24 hours.
-              It is not a blockchain transaction and will not transfer tokens.
+              Approve the wallet signature to sign in — it unlocks comments, likes,
+              subscriptions, and protected videos for 24 hours. It is not a
+              blockchain transaction and will not transfer tokens.
             </p>
 
             {sessionState === 'authorizing' ? (

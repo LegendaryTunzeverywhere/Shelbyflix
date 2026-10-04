@@ -23,7 +23,9 @@ export interface ShelbyUploadResponse {
   blobId: string;
   blobName: string;
   shelbyUrl: string;
-  encryptionKey: string;
+  // Null when the creator selected the unencrypted upload option.
+  encryptionKey: string | null;
+  isEncrypted: boolean;
   duration: number;
   thumbnailUrl?: string;
   success: boolean;
@@ -333,16 +335,28 @@ export async function uploadToShelby(
 
     const duration = await getVideoDuration(file);
 
-    // Step 2: Generate encryption key
-    onProgress?.({ stage: 'encrypting', progress: 10, message: 'Generating encryption key...' });
+    // Step 2/3: Encrypt, or pass through untouched — the creator's
+    // upload-time choice (metadata.isEncrypted). Unencrypted blobs are raw
+    // bytes on storage: streamable AND downloadable by anyone with the URL,
+    // with no decryption-key gate on playback. Encrypted blobs are
+    // AES-256-GCM ciphertext gated behind GET /api/videos/:id/decryption-key.
+    const isEncrypted = metadata.isEncrypted !== false;
+    let encryptionKey: string | null = null;
+    let stagedBlob: Blob;
 
-    const encryptionKey = generateEncryptionKey();
+    if (isEncrypted) {
+      onProgress?.({ stage: 'encrypting', progress: 10, message: 'Generating encryption key...' });
+      encryptionKey = generateEncryptionKey();
 
-    // Step 3: Encrypt video
-    onProgress?.({ stage: 'encrypting', progress: 20, message: 'Encrypting video...' });
-
-    const encryptedBlob = await encryptFile(file, encryptionKey);
-    const encryptedBuffer = await encryptedBlob.arrayBuffer();
+      onProgress?.({ stage: 'encrypting', progress: 20, message: 'Encrypting video...' });
+      stagedBlob = await encryptFile(file, encryptionKey);
+    } else {
+      onProgress?.({ stage: 'preparing', progress: 15, message: 'Preparing video (unencrypted)...' });
+      stagedBlob = new Blob([await file.arrayBuffer()], {
+        type: file.type || 'video/mp4',
+      });
+    }
+    const stagedBuffer = await stagedBlob.arrayBuffer();
 
     // Step 4: Generate thumbnail
     onProgress?.({ stage: 'encrypting', progress: 30, message: 'Generating thumbnail...' });
@@ -385,7 +399,7 @@ export async function uploadToShelby(
     // by the creator's own wallet via access_control below.
     onProgress?.({ stage: 'uploading', progress: 35, message: 'Preparing upload...' });
 
-    const fileHashHex = await sha256Hex(encryptedBuffer);
+    const fileHashHex = await sha256Hex(stagedBuffer);
     const uploadAuthMessage = `ShelbyFlix upload: ${fileHashHex}`;
     const nonce = crypto.randomUUID();
 
@@ -461,7 +475,7 @@ export async function uploadToShelby(
     const { supabase } = await import('./supabase');
     const { error: stagingError } = await supabase.storage
       .from(tokenResult.bucket)
-      .uploadToSignedUrl(tokenResult.path, tokenResult.token, encryptedBlob, {
+      .uploadToSignedUrl(tokenResult.path, tokenResult.token, stagedBlob, {
         contentType: 'application/octet-stream',
       });
     if (stagingError) {
@@ -560,6 +574,7 @@ export async function uploadToShelby(
       blobName,
       shelbyUrl,
       encryptionKey,
+      isEncrypted,
       duration,
       thumbnailUrl,
       success: true,
@@ -575,6 +590,48 @@ export async function uploadToShelby(
 
     throw error;
   }
+}
+
+/**
+ * Thrown when the decryption-key endpoint answers 401
+ * (`wallet_session_required`): the viewer's wallet claim is not backed by a
+ * signed wallet session. Callers surface a "Sign in" affordance instead of a
+ * generic playback error, then retry once `wallet-session-established` fires.
+ */
+export class WalletSessionRequiredError extends Error {
+  constructor() {
+    super('Sign in with your wallet to watch this video.');
+    this.name = 'WalletSessionRequiredError';
+  }
+}
+
+/**
+ * Fetch the raw AES key for a video from the single key-egress endpoint.
+ * Shared by VideoPlayer and Shorts so 401/403/status handling stays in one
+ * place. Throws WalletSessionRequiredError on 401.
+ */
+export async function fetchDecryptionKey(
+  videoId: string,
+  wallet?: string | null,
+): Promise<string> {
+  const params = new URLSearchParams();
+  if (wallet) params.set('wallet', wallet);
+  const query = params.toString();
+
+  const response = await fetch(
+    `/api/videos/${encodeURIComponent(videoId)}/decryption-key${query ? `?${query}` : ''}`,
+  );
+  if (response.status === 401) {
+    throw new WalletSessionRequiredError();
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to fetch decryption key (${response.status})`);
+  }
+  const payload = (await response.json()) as { encryptionKey?: string };
+  if (!payload.encryptionKey) {
+    throw new Error('Decryption key unavailable');
+  }
+  return payload.encryptionKey;
 }
 
 /**
@@ -617,6 +674,49 @@ export async function downloadAndDecryptVideo(
 
     cacheVideo(cacheKey, decryptedBlob);
     return decryptedBlob;
+  })();
+
+  inFlightRequests.set(cacheKey, promise);
+  promise.finally(() => inFlightRequests.delete(cacheKey));
+
+  return promise;
+}
+
+/**
+ * Download an UNencrypted video blob as-is — no key fetch, no decrypt.
+ * Used when the creator selected the unencrypted upload option: the bytes on
+ * storage are already a playable file, so playback is a plain fetch. Shares
+ * the cache/in-flight maps with downloadAndDecryptVideo (a given blobName is
+ * always one encryption mode or the other, never both).
+ */
+export async function downloadRawVideo(
+  shelbyUrl: string,
+  blobName: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const cacheKey = `video_${blobName}`;
+
+  const cached = getCachedVideo(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  if (inFlightRequests.has(cacheKey)) {
+    return inFlightRequests.get(cacheKey)!;
+  }
+
+  const promise = (async () => {
+    const response = await fetch(shelbyUrl, { signal });
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`Download failed: 404`);
+      }
+      throw new Error(`Download failed: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    cacheVideo(cacheKey, blob);
+    return blob;
   })();
 
   inFlightRequests.set(cacheKey, promise);

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { normalizeAddress, resolveAccess } from '@/lib/access-control';
+import { hasWalletSession } from '@/lib/wallet-session';
+import { openVideoKey } from '@/lib/video-key-box';
 
 // ---------------------------------------------------------------------------
 // GET /api/videos/:id/decryption-key?wallet=0x...
@@ -14,11 +16,26 @@ import { normalizeAddress, resolveAccess } from '@/lib/access-control';
 // allowlisted / time-locked ones) regardless of whether the caller had
 // actually earned access.
 //
-// This route re-derives the access decision the same way
-// GET /api/videos/:id/access does (same `resolveAccess` call, same
-// normalized wallet handling) and only reads `encryption_key` — via the
-// service-role client, which the anon key cannot reach — once `hasAccess`
-// is confirmed true. No caching headers are set, matching the access
+// Two-stage authorization:
+//
+//   1. Anonymous resolution first. Videos anyone may watch (Public, a
+//      Time Lock past its unlock time, a free Purchasable video) hand over
+//      the key with no wallet and no session, so playback for open content
+//      never depends on auth state.
+//
+//   2. Wallet-dependent access (owner, allowlist, purchase receipt) is ONLY
+//      honored when the `wallet` query param is backed by a valid
+//      wallet-session cookie (`hasWalletSession` — established by signing
+//      the challenge in POST /api/interactions, action 'session'). A bare
+//      `?wallet=0x...` is forgeable by anyone with curl: without this check,
+//      anybody who knew an allowlisted or paying viewer's public address
+//      could mint the decryption key for gated content by impersonating
+//      them. Missing/expired session → 401 `wallet_session_required` so the
+//      client can prompt a re-sign instead of showing a terminal 403.
+//
+// The stored key may be sealed at rest (lib/video-key-box.ts); `openVideoKey`
+// reverses that with the server-side KEK and passes legacy plaintext rows
+// through unchanged. No caching headers are set, matching the access
 // endpoint, so a permission change (allowlist edit, unlock time passing,
 // a fresh purchase) is reflected immediately.
 // ---------------------------------------------------------------------------
@@ -42,18 +59,59 @@ export async function GET(
     const normalizedWallet = normalizeAddress(walletRaw);
     const wallet = normalizedWallet.length > 0 ? normalizedWallet : null;
 
-    const access = await resolveAccess(videoId, wallet);
+    // Stage 1: can an anonymous caller already play this video?
+    const anonAccess = await resolveAccess(videoId, null);
 
-    if (access.reason === 'chain_unavailable') {
+    if (anonAccess.reason === 'chain_unavailable') {
       return NextResponse.json(
         { error: 'Chain temporarily unreachable', reason: 'chain_unavailable' },
         { status: 503 },
       );
     }
 
-    if (!access.hasAccess) {
+    let hasAccess = anonAccess.hasAccess;
+    let denyReason = anonAccess.reason;
+
+    if (!hasAccess && wallet) {
+      // Stage 2: wallet-dependent access — the wallet claim must be backed
+      // by a signed wallet session, not just a query parameter.
+      let sessionOk = false;
+      try {
+        sessionOk = await hasWalletSession(req, wallet);
+      } catch (err) {
+        console.error('[/api/videos/:id/decryption-key] session lookup failed:', err);
+        return NextResponse.json(
+          { error: 'Internal server error', reason: 'server_error' },
+          { status: 500 },
+        );
+      }
+
+      if (!sessionOk) {
+        return NextResponse.json(
+          {
+            error: 'Sign in to access this video',
+            reason: 'wallet_session_required',
+          },
+          { status: 401 },
+        );
+      }
+
+      const walletAccess = await resolveAccess(videoId, wallet);
+      if (walletAccess.reason === 'chain_unavailable') {
+        return NextResponse.json(
+          { error: 'Chain temporarily unreachable', reason: 'chain_unavailable' },
+          { status: 503 },
+        );
+      }
+      hasAccess = walletAccess.hasAccess;
+      denyReason = walletAccess.reason;
+    }
+
+    if (!hasAccess) {
+      // Anonymous caller with no wallet on gated content (or a verified
+      // wallet that still failed the access check) — plain denial.
       return NextResponse.json(
-        { error: 'Access denied', reason: access.reason },
+        { error: 'Access denied', reason: denyReason },
         { status: 403 },
       );
     }
@@ -93,10 +151,19 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(
-      { encryptionKey: data.encryption_key as string },
-      { status: 200 },
-    );
+    let encryptionKey: string;
+    try {
+      encryptionKey = openVideoKey(data.encryption_key as string);
+    } catch (err) {
+      // Sealed key but KEK missing/mismatched — operator error, not client.
+      console.error('[/api/videos/:id/decryption-key] key open failed:', err);
+      return NextResponse.json(
+        { error: 'Internal server error', reason: 'server_error' },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ encryptionKey }, { status: 200 });
   } catch (err) {
     console.error('[/api/videos/:id/decryption-key] unexpected error:', err);
     return NextResponse.json(

@@ -10,6 +10,7 @@ import CategorySelector from './CategorySelector';
 import TagInput from './TagInput';
 import ExpirationPicker from './ExpirationPicker';
 import AccessModeSelector from './AccessModeSelector';
+import EncryptionSelector from './EncryptionSelector';
 import AllowlistEditor from './AllowlistEditor';
 import TimeLockPicker from './TimeLockPicker';
 import UploadProgressDisplay from './UploadProgress';
@@ -43,6 +44,10 @@ export default function UploadForm() {
   const [availabilityDays, setAvailabilityDays] = useState(30);
   const [price, setPrice] = useState('10000000');
   const [accessMode, setAccessMode] = useState<AccessMode>('public');
+  // Creator's upload-time encryption choice. Encrypted (default) = AES-256
+  // blob gated behind the decryption-key endpoint (streams in-app, not
+  // downloadable). Unencrypted = raw file on storage, freely downloadable.
+  const [encrypted, setEncrypted] = useState(true);
   const [allowlist, setAllowlist] = useState<string[]>([]);
   const [unlockAt, setUnlockAt] = useState<number | undefined>(undefined);
   const [isUploading, setIsUploading] = useState(false);
@@ -291,6 +296,7 @@ export default function UploadForm() {
           channelName: walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4),
           price: priceVal.price,
           accessMode,
+          isEncrypted: encrypted,
           allowlist: accessMode === 'allowlist' ? allowlist : undefined,
           unlockAt: accessMode === 'timelock' ? unlockAt : undefined,
           thumbnailUrl: thumbnailPreview || undefined,
@@ -325,6 +331,7 @@ export default function UploadForm() {
         tags: tagsVal.tags,
         shelbyUrl: result.shelbyUrl,
         encryptionKey: result.encryptionKey,
+        isEncrypted: result.isEncrypted,
         duration: result.duration,
         thumbnailUrl: result.thumbnailUrl,
         uploadTimestamp: Date.now(),
@@ -379,6 +386,7 @@ export default function UploadForm() {
       setVideoDuration(0);
       setVideoType('long');
       setAccessMode('public');
+      setEncrypted(true);
       setAllowlist([]);
       setUnlockAt(undefined);
       setPendingChainTxHash(null);
@@ -443,6 +451,7 @@ export default function UploadForm() {
       setVideoDuration(0);
       setVideoType('long');
       setAccessMode('public');
+      setEncrypted(true);
       setAllowlist([]);
       setUnlockAt(undefined);
 
@@ -732,6 +741,13 @@ export default function UploadForm() {
           <p className="text-[11px] text-zinc-600 mt-1">Viewers pay this once for lifetime access</p>
         </div>
       )}
+
+      {/* ENCRYPTION */}
+      <EncryptionSelector
+        value={encrypted}
+        onChange={setEncrypted}
+        disabled={isUploading}
+      />
 
       {uploadProgress && (
         <div className="p-5 bg-zinc-900 rounded-2xl border border-zinc-800">

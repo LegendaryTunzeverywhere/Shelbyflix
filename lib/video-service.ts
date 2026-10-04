@@ -17,7 +17,7 @@ import { csrfFetch } from './csrf-client';
 // it) instead of '*' on `videos`.
 // ---------------------------------------------------------------------------
 const PUBLIC_VIDEO_COLUMNS =
-  'video_id, blob_id, blob_name, uploader_wallet, channel_id, channel_name, title, description, category, tags, shelby_url, thumbnail_url, duration, is_short, video_type, upload_timestamp, expiration_timestamp, availability_period, views, likes, dislikes, comment_count, price, access_mode, allowlist, unlock_at' as const;
+  'video_id, blob_id, blob_name, uploader_wallet, channel_id, channel_name, title, description, category, tags, shelby_url, thumbnail_url, duration, is_short, video_type, upload_timestamp, expiration_timestamp, availability_period, views, likes, dislikes, comment_count, price, access_mode, allowlist, unlock_at, is_encrypted' as const;
 
 export async function saveVideo(metadata: VideoMetadata): Promise<void> {
   const response = await csrfFetch('/api/videos', {
@@ -34,7 +34,8 @@ export async function saveVideo(metadata: VideoMetadata): Promise<void> {
       category: metadata.category,
       tags: metadata.tags,
       shelby_url: metadata.shelbyUrl,
-      encryption_key: metadata.encryptionKey,
+      encryption_key: metadata.isEncrypted === false ? null : (metadata.encryptionKey ?? null),
+      is_encrypted: metadata.isEncrypted !== false,
       thumbnail_url: metadata.thumbnailUrl,
       duration: metadata.duration,
       is_short: metadata.isShort,
@@ -190,6 +191,7 @@ type PublicVideoRecord = Pick<
   | 'access_mode'
   | 'allowlist'
   | 'unlock_at'
+  | 'is_encrypted'
 > & { video_type?: string };
 
 function recordToMetadata(record: PublicVideoRecord): VideoMetadata {
@@ -225,6 +227,10 @@ function recordToMetadata(record: PublicVideoRecord): VideoMetadata {
     // that needs the real key must fetch it from that endpoint rather
     // than reading it off this object.
     encryptionKey: '',
+    // Never true-by-accident: rows written before the option existed get the
+    // column's DEFAULT true from the migration, and a missing/null value on
+    // an old row still resolves to encrypted so playback keeps gating.
+    isEncrypted: record.is_encrypted !== false,
     thumbnailUrl: record.thumbnail_url,
     duration: record.duration,
     uploadTimestamp: record.upload_timestamp,

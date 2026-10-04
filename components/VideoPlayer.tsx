@@ -57,7 +57,7 @@ interface VideoPlayerProps {
   className?: string;
 }
 
-type DownloadErrorKind = 'unavailable' | 'network' | 'playback' | null;
+type DownloadErrorKind = 'unavailable' | 'network' | 'playback' | 'session' | null;
 
 const BASE_CONTAINER =
   'aspect-video bg-zinc-950 border border-zinc-800 rounded-xl flex flex-col items-center justify-center p-8 text-center';
@@ -86,6 +86,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadErrorKind, setDownloadErrorKind] =
     useState<DownloadErrorKind>(null);
+  // Bumped to force the download effect to re-run (retry button, or a
+  // wallet session established after a 401). Access-derived deps can stay
+  // byte-identical across those events, so they alone wouldn't retrigger.
+  const [downloadEpoch, setDownloadEpoch] = useState(0);
+  // Ref mirror of downloadErrorKind so the window-event listener below can
+  // read the current value without a stale closure.
+  const downloadErrorKindRef = useRef<DownloadErrorKind>(null);
+  const markDownloadErrorKind = (kind: DownloadErrorKind) => {
+    downloadErrorKindRef.current = kind;
+    setDownloadErrorKind(kind);
+  };
 
   const objectUrlRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
@@ -112,39 +123,32 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (streamUrl || objectUrlRef.current || loadingRef.current) return;
 
     let cancelled = false;
+    // Encrypted videos (default, and every legacy row) go through the
+    // key-gated decrypt path. Unencrypted uploads are raw bytes on storage:
+    // plain fetch, no key endpoint, no decrypt — playable AND downloadable.
+    const isEncrypted = video.isEncrypted !== false;
 
     (async () => {
       loadingRef.current = true;
       setDownloading(true);
       setDownloadError(null);
-      setDownloadErrorKind(null);
+      markDownloadErrorKind(null);
 
       try {
-        const { downloadAndDecryptVideo } = await import('@/lib/shelby');
-        const keyParams = new URLSearchParams();
-        if (walletAddress) keyParams.set('wallet', walletAddress);
-        const keyRes = await fetch(
-          `/api/videos/${encodeURIComponent(video.videoId)}/decryption-key${
-            keyParams.toString() ? `?${keyParams.toString()}` : ''
-          }`,
-        );
-        if (!keyRes.ok) {
-          throw new Error(`Failed to fetch decryption key (${keyRes.status})`);
-        }
-        const keyPayload = (await keyRes.json()) as { encryptionKey?: string };
-        if (!keyPayload.encryptionKey) {
-          throw new Error('Decryption key unavailable');
-        }
+        const { downloadAndDecryptVideo, downloadRawVideo, fetchDecryptionKey } =
+          await import('@/lib/shelby');
 
-        const decryptedBlob = await downloadAndDecryptVideo(
-          video.shelbyUrl,
-          keyPayload.encryptionKey,
-          video.blobName,
-        );
+        const blob = isEncrypted
+          ? await downloadAndDecryptVideo(
+              video.shelbyUrl,
+              await fetchDecryptionKey(video.videoId, walletAddress),
+              video.blobName,
+            )
+          : await downloadRawVideo(video.shelbyUrl, video.blobName);
 
         if (cancelled) return;
 
-        const url = URL.createObjectURL(decryptedBlob);
+        const url = URL.createObjectURL(blob);
         objectUrlRef.current = url;
         setStreamUrl(url);
       } catch (err) {
@@ -152,25 +156,33 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const errorMsg =
           err instanceof Error ? err.message : 'Failed to load video';
 
-        // The access endpoint owns expiration now, so 404s at this layer
-        // mean the blob is genuinely missing from storage — treat as a
-        // terminal unavailability rather than trying to mark it.
-        if (
+        if (err instanceof Error && err.name === 'WalletSessionRequiredError') {
+          // 401 from the key endpoint: the wallet claim needs a signed
+          // session. Show the sign-in prompt; the session-established
+          // listener below retries automatically once signing completes.
+          markDownloadErrorKind('session');
+          setDownloadError(
+            'Sign in with your wallet to watch this video. It is a quick signature — not a transaction.',
+          );
+        } else if (
+          // The access endpoint owns expiration now, so 404s at this layer
+          // mean the blob is genuinely missing from storage — treat as a
+          // terminal unavailability rather than trying to mark it.
           errorMsg.includes('404') ||
           errorMsg.includes('Download failed: 404') ||
           errorMsg.includes('Download failed')
         ) {
-          setDownloadErrorKind('unavailable');
+          markDownloadErrorKind('unavailable');
           setDownloadError(
             'This video is no longer available. It may have expired or been removed by the creator.',
           );
         } else if (/network|fetch|timeout|offline/i.test(errorMsg)) {
-          setDownloadErrorKind('network');
+          markDownloadErrorKind('network');
           setDownloadError(
             "We couldn't reach the video storage. Check your connection and try again.",
           );
         } else {
-          setDownloadErrorKind('playback');
+          markDownloadErrorKind('playback');
           setDownloadError('Unable to play video. Please refresh and try again.');
         }
 
@@ -187,8 +199,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // Depending on `access.reason` specifically means a flip from e.g.
     // `payment_required` to `purchased` (after refetch) restarts the
     // download without restarting it on every identity change of the
-    // `access` object.
-  }, [access?.hasAccess, access?.reason, video.videoId, video.shelbyUrl, video.blobName, walletAddress, streamUrl]);
+    // `access` object. `downloadEpoch` covers same-access retries (retry
+    // button, wallet session just established after a 401).
+  }, [access?.hasAccess, access?.reason, video.videoId, video.shelbyUrl, video.blobName, video.isEncrypted, walletAddress, streamUrl, downloadEpoch]);
+
+  // After the viewer signs the wallet-session challenge (triggered from the
+  // 'session' error state below, or the auto prompt on connect), clear the
+  // 401 state and re-run the download effect.
+  useEffect(() => {
+    const onSessionEstablished = () => {
+      if (downloadErrorKindRef.current !== 'session') return;
+      setDownloadError(null);
+      markDownloadErrorKind(null);
+      setDownloadEpoch((n) => n + 1);
+    };
+    window.addEventListener('wallet-session-established', onSessionEstablished);
+    return () =>
+      window.removeEventListener('wallet-session-established', onSessionEstablished);
+    // markDownloadErrorKind is a stable inline closure over setState only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Attach the blob URL to the <video> element and kick off autoplay.
   useEffect(() => {
@@ -374,7 +404,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <div className="text-center">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-red mx-auto mb-3" />
           <p className="text-zinc-500 text-xs font-black uppercase tracking-widest">
-            Decrypting stream...
+            {video.isEncrypted !== false ? 'Decrypting stream...' : 'Loading stream...'}
           </p>
         </div>
       </div>
@@ -383,13 +413,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   if (downloadError) {
     const isUnavailable = downloadErrorKind === 'unavailable';
+    const needsSignIn = downloadErrorKind === 'session';
     const Icon = isUnavailable ? FilmIcon : ExclamationCircleIcon;
     const iconColor = isUnavailable ? 'text-zinc-500' : 'text-brand-red';
     const headline = isUnavailable
       ? 'Video Not Available'
-      : downloadErrorKind === 'network'
-        ? 'Connection Problem'
-        : 'Playback Error';
+      : needsSignIn
+        ? 'Sign In Required'
+        : downloadErrorKind === 'network'
+          ? 'Connection Problem'
+          : 'Playback Error';
 
     return (
       <div role="alert" className={`${BASE_CONTAINER} ${className}`}>
@@ -405,19 +438,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {!isUnavailable && (
           <button
             onClick={() => {
+              if (needsSignIn) {
+                // Ask LayoutClient to run the wallet-session signing flow;
+                // the session-established listener above retries playback.
+                window.dispatchEvent(new Event('shelbyflix:authorize-session'));
+                return;
+              }
               setDownloadError(null);
-              setDownloadErrorKind(null);
+              markDownloadErrorKind(null);
               loadingRef.current = false;
               objectUrlRef.current = null;
               setStreamUrl('');
-              // Trigger the download effect to re-run by refetching access;
-              // a no-op on success but cleanly handles the case where
-              // access has since flipped.
+              // Bump the epoch so the download effect re-runs even when the
+              // access-derived deps above are byte-identical, then refetch
+              // access to also catch any permission flip.
+              setDownloadEpoch((n) => n + 1);
               refetchAccess();
             }}
             className="px-5 py-2 bg-brand-red text-white rounded-xl font-black text-xs tracking-widest hover:bg-brand-red/90 transition-colors"
           >
-            RETRY
+            {needsSignIn ? 'SIGN IN' : 'RETRY'}
           </button>
         )}
       </div>
@@ -451,7 +491,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onError={(e) => {
             const code = e.currentTarget.error?.code;
             const msg = e.currentTarget.error?.message ?? 'Unknown error';
-            setDownloadErrorKind('playback');
+            markDownloadErrorKind('playback');
             setDownloadError(`Playback error (${code}): ${msg}`);
           }}
         />

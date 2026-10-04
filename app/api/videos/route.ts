@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import { sealVideoKey } from '@/lib/video-key-box';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const body = await req.json();
     const supabaseAdmin = getSupabaseAdmin();
+
+    // Creator's upload-time encryption choice (default true so legacy
+    // callers and existing clients that don't send the field keep the
+    // protected behavior). An encrypted video must carry a key; an
+    // unencrypted one must NOT — a stray key would just sit unused.
+    const isEncrypted = body.is_encrypted !== false;
+    const rawKey =
+      typeof body.encryption_key === 'string' && body.encryption_key.length > 0
+        ? body.encryption_key
+        : null;
+
+    if (isEncrypted && !rawKey) {
+      return NextResponse.json(
+        { error: 'encryption_key is required for encrypted videos' },
+        { status: 400 },
+      );
+    }
 
     const { data, error } = await supabaseAdmin.from('videos').insert({
       video_id: body.video_id,
@@ -18,7 +36,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       category: body.category,
       tags: body.tags,
       shelby_url: body.shelby_url,
-      encryption_key: body.encryption_key,
+      // Seal with the server-side KEK before storage so a DB dump never
+      // contains raw decryption keys (no-op passthrough when VIDEO_KEY_KEK
+      // is unset — see lib/video-key-box.ts).
+      encryption_key: rawKey ? sealVideoKey(rawKey) : null,
+      is_encrypted: isEncrypted,
       thumbnail_url: body.thumbnail_url,
       duration: body.duration,
       is_short: body.is_short,
@@ -94,6 +116,7 @@ export async function GET(_req: NextRequest): Promise<NextResponse> {
        uploader_wallet,
        shelby_url,
        blob_name,
+       is_encrypted,
        price`
     )
     .order('upload_timestamp', { ascending: false });

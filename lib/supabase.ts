@@ -35,7 +35,12 @@ export interface VideoRecord {
   category: string;
   tags: string[];
   shelby_url: string;
-  encryption_key: string;
+  // Null for unencrypted uploads (and rows predating the option default to
+  // the equivalent of encrypted via is_encrypted = true).
+  encryption_key: string | null;
+  // Whether the blob was AES-256-GCM encrypted at upload time. Legacy rows
+  // (column backfilled with DEFAULT true) behave as encrypted.
+  is_encrypted: boolean;
   thumbnail_url?: string;
   duration: number;
   is_short: boolean;

@@ -11,6 +11,7 @@ import {
   ExclamationTriangleIcon,
   XMarkIcon,
   DocumentDuplicateIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 
 // ── Logout confirmation modal ─────────────────────────────────────────────────
@@ -59,6 +60,11 @@ const WalletConnect: React.FC = () => {
   const [balancesLoading, setBalancesLoading] = useState(false);
   const [balancesError, setBalancesError] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Wallet-session ("Sign in") state — distinct from merely being connected:
+  // the session cookie is what the decryption-key and interactions endpoints
+  // require to trust this wallet's claim.
+  const [signInState, setSignInState] = useState<'checking' | 'signed-in' | 'signed-out'>('checking');
+  const [signInBusy, setSignInBusy] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -95,11 +101,52 @@ const WalletConnect: React.FC = () => {
     }
   }, [userAddress]);
 
+  // Probe the session cookie when the dropdown opens, then stay in sync
+  // with the LayoutClient signing flow via its window events.
+  const checkSignIn = useCallback(async () => {
+    if (!userAddress) return;
+    setSignInState('checking');
+    try {
+      const response = await fetch(
+        `/api/auth/session?wallet=${encodeURIComponent(userAddress)}`,
+        { cache: 'no-store' },
+      );
+      const payload = await response.json().catch(() => ({}));
+      setSignInState(payload.signedIn ? 'signed-in' : 'signed-out');
+    } catch {
+      setSignInState('signed-out');
+    }
+  }, [userAddress]);
+
   useEffect(() => {
     if (showDropdown) {
       fetchBalances();
+      checkSignIn();
     }
-  }, [showDropdown, fetchBalances]);
+  }, [showDropdown, fetchBalances, checkSignIn]);
+
+  useEffect(() => {
+    const onAuthorizing = () => {
+      setSignInBusy(true);
+      setSignInState('checking');
+    };
+    const onEstablished = () => {
+      setSignInBusy(false);
+      setSignInState('signed-in');
+    };
+    const onFailed = () => {
+      setSignInBusy(false);
+      setSignInState('signed-out');
+    };
+    window.addEventListener('wallet-session-authorizing', onAuthorizing);
+    window.addEventListener('wallet-session-established', onEstablished);
+    window.addEventListener('wallet-session-failed', onFailed);
+    return () => {
+      window.removeEventListener('wallet-session-authorizing', onAuthorizing);
+      window.removeEventListener('wallet-session-established', onEstablished);
+      window.removeEventListener('wallet-session-failed', onFailed);
+    };
+  }, []);
 
   // Close modal on outside click
   useEffect(() => {
@@ -362,6 +409,34 @@ const WalletConnect: React.FC = () => {
           <>
             <div className="absolute right-0 mt-2 w-72 bg-zinc-900 rounded-2xl shadow-2xl
               border border-zinc-800 z-50 overflow-hidden" data-wallet-dropdown>
+
+              {/* Top-right: wallet-session sign-in — required for protected
+                  videos, comments, likes. Distinct from connecting. */}
+              <div className="p-4 border-b border-zinc-800 bg-zinc-950/50 flex justify-end">
+                {signInState === 'signed-in' ? (
+                  <div className="flex items-center gap-2" aria-live="polite">
+                    <span className="text-xs font-bold text-green-500">Signed in</span>
+                    <ShieldCheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setSignInBusy(true);
+                      window.dispatchEvent(new Event('shelbyflix:authorize-session'));
+                    }}
+                    disabled={signInBusy}
+                    aria-label="Sign in with your wallet"
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl
+                      bg-brand-red/10 border border-brand-red/30 hover:bg-brand-red/20
+                      transition-colors text-right disabled:opacity-60"
+                  >
+                    <span className="text-xs font-black text-white">
+                      {signInState === 'checking' ? 'Checking…' : signInBusy ? 'Waiting for wallet…' : 'Sign In'}
+                    </span>
+                    <ShieldCheckIcon className={`w-4 h-4 text-brand-red flex-shrink-0 ${signInBusy ? 'animate-pulse' : ''}`} />
+                  </button>
+                )}
+              </div>
 
               <div className="p-5 border-b border-zinc-800 bg-zinc-950/50">
                 <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">

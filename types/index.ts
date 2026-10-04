@@ -24,7 +24,16 @@ export interface VideoMetadata {
   blobId: string;
   blobName: string;
   shelbyUrl: string;
-  encryptionKey: string;
+  // Raw AES-256 key for encrypted videos — null when the creator chose the
+  // unencrypted option at upload time. NEVER read back from list/detail
+  // queries (they don't select the column): the real key is fetched
+  // separately, post-access-check, from GET /api/videos/:id/decryption-key.
+  encryptionKey: string | null;
+  // Creator's upload-time choice. Encrypted (default, also true for every
+  // legacy row) = AES-256-GCM blob gated behind the decryption-key endpoint,
+  // so viewers can only stream in-app. Unencrypted = raw bytes on storage,
+  // freely downloadable by anyone with the URL.
+  isEncrypted: boolean;
   thumbnailUrl?: string;
   duration: number;
   uploadTimestamp: number;

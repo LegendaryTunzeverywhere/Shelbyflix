@@ -33,7 +33,9 @@
     "backfill": "tsx scripts/backfill-move-policies.ts",
     "rotate-video-keys": "tsx scripts/rotate-video-keys.ts --dry-run",
     "rotate-video-keys:plan": "tsx scripts/rotate-video-keys.ts --dry-run > scripts/rotate-video-keys.plan.json",
-    "rotate-video-keys:admin": "node scripts/rotate-video-keys-admin-server.mjs"
+    "rotate-video-keys:admin": "node scripts/rotate-video-keys-admin-server.mjs",
+    "seal-video-keys": "tsx scripts/seal-video-keys.ts --dry-run",
+    "seal-video-keys:execute": "tsx scripts/seal-video-keys.ts --execute"
   },
   "dependencies": {
     "@aptos-labs/ace-sdk": "0.1.1",
@@ -66,7 +68,7 @@
     "@fast-check/vitest": "^0.4.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "20.0.0",
+    "@types/node": "^26.6.4",
     "@types/react": "19.0.0",
     "@types/react-dom": "19.0.0",
     "@vitejs/plugin-react": "^6.0.1",
@@ -79,7 +81,7 @@
     "postcss": "8.4.0",
     "tailwindcss": "4.2.1",
     "tsx": "4.19.4",
-    "typescript": "5.3.3",
+    "typescript": "^5.9.3",
     "vitest": "^4.1.5"
   },
   "overrides": {
