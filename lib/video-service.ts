@@ -13,11 +13,16 @@ import { csrfFetch } from './csrf-client';
 // allowlisted/time-locked videos without ever passing an access check.
 // The key is now only ever served by GET /api/videos/:id/decryption-key,
 // which calls `resolveAccess()` first and reads the column via the
-// service-role client. Always select this explicit list (or a subset of
-// it) instead of '*' on `videos`.
+// service-role client. Likewise `shelby_url` (and `blob_name`) are only
+// served by GET /api/videos/:id/stream-url after the same access check —
+// a listing must never hand out a directly fetchable storage URL for
+// gated content. This is enforced at the database, not just here: see
+// supabase/migrations/2026_10_05_video_column_grants.sql, which grants
+// anon/authenticated SELECT on these 25 columns only. Always select this
+// explicit list (or a subset of it) instead of '*' on `videos`.
 // ---------------------------------------------------------------------------
 const PUBLIC_VIDEO_COLUMNS =
-  'video_id, blob_id, blob_name, uploader_wallet, channel_id, channel_name, title, description, category, tags, shelby_url, thumbnail_url, duration, is_short, video_type, upload_timestamp, expiration_timestamp, availability_period, views, likes, dislikes, comment_count, price, access_mode, allowlist, unlock_at, is_encrypted' as const;
+  'video_id, blob_id, uploader_wallet, channel_id, channel_name, title, description, category, tags, thumbnail_url, duration, is_short, video_type, upload_timestamp, expiration_timestamp, availability_period, views, likes, dislikes, comment_count, price, access_mode, allowlist, unlock_at, is_encrypted' as const;
 
 export async function saveVideo(metadata: VideoMetadata): Promise<void> {
   const response = await csrfFetch('/api/videos', {
@@ -163,12 +168,12 @@ export async function incrementViews(videoId: string): Promise<number> {
 }
 
 // Matches exactly the columns selected by PUBLIC_VIDEO_COLUMNS above (never
-// `encryption_key` — see the block comment near that constant).
+// `encryption_key`, `shelby_url` or `blob_name` — see the block comment
+// near that constant).
 type PublicVideoRecord = Pick<
   VideoRecord,
   | 'video_id'
   | 'blob_id'
-  | 'blob_name'
   | 'uploader_wallet'
   | 'channel_id'
   | 'channel_name'
@@ -176,7 +181,6 @@ type PublicVideoRecord = Pick<
   | 'description'
   | 'category'
   | 'tags'
-  | 'shelby_url'
   | 'thumbnail_url'
   | 'duration'
   | 'is_short'
@@ -211,14 +215,16 @@ function recordToMetadata(record: PublicVideoRecord): VideoMetadata {
   return {
     videoId: record.video_id,
     blobId: record.blob_id,
-    blobName: record.blob_name,
     channelId: record.channel_id,
     channelName: record.channel_name,
     title: record.title,
     description: record.description ?? '',
     category,
     tags: record.tags,
-    shelbyUrl: record.shelby_url,
+    // Deliberately NOT record.shelby_url / record.blob_name — those columns
+    // aren't selected either (see PUBLIC_VIDEO_COLUMNS above). The storage
+    // URL is fetched separately, post-access-check, from
+    // GET /api/videos/:id/stream-url.
     // Deliberately NOT record.encryption_key — this file's queries no
     // longer select that column (see PUBLIC_VIDEO_COLUMNS above). The
     // real key is fetched separately, post-access-check, from

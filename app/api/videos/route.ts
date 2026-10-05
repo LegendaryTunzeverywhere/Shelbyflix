@@ -111,13 +111,11 @@ export async function GET(_req: NextRequest): Promise<NextResponse> {
        likes,
        dislikes,
        comment_count,
-       channel_id,
-       channel_name,
-       uploader_wallet,
-       shelby_url,
-       blob_name,
-       is_encrypted,
-       price`
+        channel_id,
+        channel_name,
+        uploader_wallet,
+        is_encrypted,
+        price`
     )
     .order('upload_timestamp', { ascending: false });
 

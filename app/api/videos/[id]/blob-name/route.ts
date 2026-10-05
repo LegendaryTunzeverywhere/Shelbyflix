@@ -46,8 +46,8 @@ import { logChainViewFailure } from '@/lib/move-logging';
 //
 // No wallet authentication is required. The response contains only data
 // that is already publicly derivable — `uploader_wallet` and `blob_name`
-// are returned by the public `GET /api/videos` listing, and
-// `create_full_blob_name` is a view function. The endpoint is a pure
+// are readable through this endpoint and the chain's own view functions,
+// and `create_full_blob_name` is a view function. The endpoint is a pure
 // server-side convenience so the client never has to reconstruct the
 // suffix format itself.
 //

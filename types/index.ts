@@ -22,8 +22,12 @@ export interface VideoMetadata {
   category: VideoCategory;
   tags: string[];
   blobId: string;
-  blobName: string;
-  shelbyUrl: string;
+  // Written only on the upload path. NEVER read back from list/detail
+  // queries (they don't select these columns): the storage location is
+  // fetched separately, post-access-check, from
+  // GET /api/videos/:id/stream-url — same two-stage rule as encryptionKey.
+  blobName?: string;
+  shelbyUrl?: string;
   // Raw AES-256 key for encrypted videos — null when the creator chose the
   // unencrypted option at upload time. NEVER read back from list/detail
   // queries (they don't select the column): the real key is fetched

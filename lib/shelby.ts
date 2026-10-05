@@ -635,6 +635,40 @@ export async function fetchDecryptionKey(
 }
 
 /**
+ * Fetch the storage stream URL for a video from the single gated egress
+ * endpoint. `shelby_url` is no longer part of any public listing (see
+ * PUBLIC_VIDEO_COLUMNS), so every player resolves it here AFTER the server
+ * has re-checked access — same two-stage auth as fetchDecryptionKey, same
+ * 401 → WalletSessionRequiredError contract. Throws on 403 so callers can
+ * surface "requires purchase or access approval".
+ */
+export async function fetchStreamUrl(
+  videoId: string,
+  wallet?: string | null,
+): Promise<string> {
+  const params = new URLSearchParams();
+  if (wallet) params.set('wallet', wallet);
+  const query = params.toString();
+
+  const response = await fetch(
+    `/api/videos/${encodeURIComponent(videoId)}/stream-url${query ? `?${query}` : ''}`,
+  );
+  if (response.status === 401) {
+    throw new WalletSessionRequiredError();
+  }
+  if (!response.ok) {
+    // Deliberately avoids the word "fetch" so the players' error mapping
+    // doesn't misread a 403/404 as a network failure.
+    throw new Error(`Stream URL request rejected (${response.status})`);
+  }
+  const payload = (await response.json()) as { shelbyUrl?: string };
+  if (!payload.shelbyUrl) {
+    throw new Error('Stream URL unavailable');
+  }
+  return payload.shelbyUrl;
+}
+
+/**
  * Download and decrypt video from Shelbynet
  */
 export async function downloadAndDecryptVideo(

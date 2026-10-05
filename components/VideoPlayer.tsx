@@ -135,16 +135,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       markDownloadErrorKind(null);
 
       try {
-        const { downloadAndDecryptVideo, downloadRawVideo, fetchDecryptionKey } =
-          await import('@/lib/shelby');
+        const {
+          downloadAndDecryptVideo,
+          downloadRawVideo,
+          fetchDecryptionKey,
+          fetchStreamUrl,
+        } = await import('@/lib/shelby');
+
+        // Gated egress: listings never carry the storage URL, so resolve it
+        // here — only after useVideoAccess said yes — from the endpoint that
+        // re-checks access server-side. The third download argument is the
+        // blob cache key; keyed by video id since blob_name is server-side.
+        const shelbyUrl = await fetchStreamUrl(video.videoId, walletAddress);
 
         const blob = isEncrypted
           ? await downloadAndDecryptVideo(
-              video.shelbyUrl,
+              shelbyUrl,
               await fetchDecryptionKey(video.videoId, walletAddress),
-              video.blobName,
+              video.videoId,
             )
-          : await downloadRawVideo(video.shelbyUrl, video.blobName);
+          : await downloadRawVideo(shelbyUrl, video.videoId);
 
         if (cancelled) return;
 
@@ -201,7 +211,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // download without restarting it on every identity change of the
     // `access` object. `downloadEpoch` covers same-access retries (retry
     // button, wallet session just established after a 401).
-  }, [access?.hasAccess, access?.reason, video.videoId, video.shelbyUrl, video.blobName, video.isEncrypted, walletAddress, streamUrl, downloadEpoch]);
+  }, [access?.hasAccess, access?.reason, video.videoId, video.isEncrypted, walletAddress, streamUrl, downloadEpoch]);
 
   // After the viewer signs the wallet-session challenge (triggered from the
   // 'session' error state below, or the auto prompt on connect), clear the

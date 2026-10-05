@@ -7,6 +7,7 @@ import AuthGuard from '@/components/AuthGuard';
 import EngagementBar from '@/components/EngagementBar';
 import SubscribeButton from '@/components/SubscribeButton';
 import ShortsCommentsSheet from '@/components/ShortsCommentsSheet';
+import ShareModal from '@/components/ShareModal';
 import { useWallet } from '@/hooks/useWallet';
 import type { VideoMetadata } from '@/types';
 import {
@@ -14,6 +15,7 @@ import {
   ChevronDownIcon,
   EyeIcon,
   ChatBubbleLeftIcon,
+  ShareIcon,
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
   PlayIcon,
@@ -86,19 +88,30 @@ function ShortPlayer({
 
     (async () => {
       try {
-        const { downloadAndDecryptVideo, downloadRawVideo, fetchDecryptionKey } =
-          await import('@/lib/shelby');
+        const {
+          downloadAndDecryptVideo,
+          downloadRawVideo,
+          fetchDecryptionKey,
+          fetchStreamUrl,
+        } = await import('@/lib/shelby');
+
+        // Shorts have no useVideoAccess gate, so this call IS the gate: the
+        // stream-url endpoint re-checks access server-side (401 wallet
+        // session / 403 denied) before handing over the storage URL, which
+        // listings no longer carry. Third download arg = blob cache key,
+        // keyed by video id since blob_name stays server-side.
+        const shelbyUrl = await fetchStreamUrl(video.videoId, walletAddress);
 
         // Unencrypted uploads skip the key endpoint entirely — raw bytes,
         // plain fetch. Encrypted ones (default) stay key-gated.
         const blob =
           video.isEncrypted !== false
             ? await downloadAndDecryptVideo(
-                video.shelbyUrl,
+                shelbyUrl,
                 await fetchDecryptionKey(video.videoId, walletAddress),
-                video.blobName,
+                video.videoId,
               )
-            : await downloadRawVideo(video.shelbyUrl, video.blobName);
+            : await downloadRawVideo(shelbyUrl, video.videoId);
 
         const url = URL.createObjectURL(blob);
         setStreamUrl(url);
@@ -110,6 +123,9 @@ function ShortPlayer({
         } else if (e instanceof Error && /403/.test(e.message)) {
           setErrorKind('other');
           setError('This video requires purchase or access approval.');
+        } else if (e instanceof Error && /404/.test(e.message)) {
+          setErrorKind('other');
+          setError('This video is no longer available.');
         } else {
           setErrorKind('other');
           setError(e instanceof Error ? e.message : 'Failed to load');
@@ -118,7 +134,7 @@ function ShortPlayer({
         setLoading(false);
       }
     })();
-  }, [isActive, video.videoId, video.shelbyUrl, video.blobName, video.isEncrypted, walletAddress, retryTick]);
+  }, [isActive, video.videoId, video.isEncrypted, walletAddress, retryTick]);
 
   // A wallet session just completed after a 401 — reset the loader and
   // re-run the effect above.
@@ -218,6 +234,7 @@ function ShortsContent() {
   const [isMuted, setIsMuted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const [channelAvatars, setChannelAvatars] = useState<Record<string, string | null>>({});
 
@@ -226,6 +243,10 @@ function ShortsContent() {
   const containerRef = useRef<HTMLDivElement>(null);
   const countFetchedRef = useRef<Set<string>>(new Set());
   const avatarFetchedRef = useRef<Set<string>>(new Set());
+  // Applies /shorts?v=<id> exactly once per mount: view-count updates
+  // rebuild the shorts array, and re-running on those would snap the feed
+  // back to the deep-linked index after the viewer has swiped away.
+  const deepLinkHandledRef = useRef(false);
 
   // One view per video per page session, same as the normal player's
   // countedViewForVideoRef. Kept here (not in ShortPlayer) so swiping past a
@@ -315,6 +336,30 @@ function ShortsContent() {
   }, []);
 
   // ✅ FIX: Allow both next AND previous navigation
+  // Deep link: /shorts?v=<videoId> (the share button's URL) opens directly
+  // on that short instead of always starting at index 0.
+  useEffect(() => {
+    if (shorts.length === 0 || deepLinkHandledRef.current) return;
+    deepLinkHandledRef.current = true;
+
+    const target = new URLSearchParams(window.location.search).get('v');
+    if (!target) return;
+    const idx = shorts.findIndex((s) => s.videoId === target);
+    if (idx >= 0) setCurrentIndex(idx);
+  }, [shorts]);
+
+  // Keep the address bar pointing at whatever is on screen, so the browser's
+  // own copy-URL and any re-share land on the current short. Native
+  // replaceState keeps Next's router state in sync without a navigation.
+  useEffect(() => {
+    const id = shorts[currentIndex]?.videoId;
+    if (!id || typeof window === 'undefined') return;
+    const next = `${window.location.pathname}?v=${encodeURIComponent(id)}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) {
+      window.history.replaceState(null, '', next);
+    }
+  }, [currentIndex, shorts]);
+
   const goNext = useCallback(() => {
     setCurrentIndex(i => {
       const next = i + 1;
@@ -335,14 +380,15 @@ function ShortsContent() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // The comments sheet owns the keyboard while it's open (arrows would
-      // otherwise swipe the feed out from under it).
-      if (commentsOpen) return;
+      // otherwise swipe the feed out from under it) — same for the share
+      // sheet.
+      if (commentsOpen || shareUrl) return;
       if (e.key === 'ArrowDown') goNext();
       if (e.key === 'ArrowUp') goPrev();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [goNext, goPrev, commentsOpen]);
+  }, [goNext, goPrev, commentsOpen, shareUrl]);
 
   // Touch navigation
   function onTouchStart(e: React.TouchEvent) {
@@ -536,7 +582,29 @@ function ShortsContent() {
             </div>
             <span className="text-white text-xs font-bold">{commentTotal}</span>
           </button>
-          
+
+          {/* Share — links straight to /shorts?v=<id>, which deep-links on
+              that short. URL is built on click so no window access happens
+              during render. */}
+          <button
+            type="button"
+            onClick={() =>
+              setShareUrl(
+                `${window.location.origin}/shorts?v=${encodeURIComponent(current.videoId)}`,
+              )
+            }
+            className="flex flex-col items-center gap-1 group"
+            title="Share"
+            aria-label="Share"
+          >
+            <div
+              className="w-10 h-10 backdrop-blur-md bg-black/50 group-hover:bg-black/70
+                rounded-full flex items-center justify-center transition-colors"
+            >
+              <ShareIcon className="w-5 h-5 text-white group-hover:text-brand-red transition-colors" />
+            </div>
+          </button>
+
           {/* Up button - Always enabled for previous ✅ */}
           <button
             onClick={goPrev}
@@ -570,6 +638,15 @@ function ShortsContent() {
           videoId={current.videoId}
           onClose={() => setCommentsOpen(false)}
           onCountChange={(count) => handleCommentCount(current.videoId, count)}
+        />
+      )}
+
+      {shareUrl && (
+        <ShareModal
+          open
+          onClose={() => setShareUrl(null)}
+          title={current.title}
+          url={shareUrl}
         />
       )}
     </div>

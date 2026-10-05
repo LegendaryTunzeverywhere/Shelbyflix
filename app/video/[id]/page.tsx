@@ -228,8 +228,12 @@ export default function VideoPage() {
    */
   const shareUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return `${window.location.origin}${window.location.pathname}`;
-  }, []);
+    // Built from the route param rather than `location.pathname`: related
+    // videos navigate client-side without remounting this page, so pathname
+    // would still be the *previous* video when the sheet opens.
+    // Query/hash are dropped on purpose so the link points at the video.
+    return `${window.location.origin}/video/${videoId}`;
+  }, [videoId]);
 
   async function handleShare() {
     setShowShareModal(true);
