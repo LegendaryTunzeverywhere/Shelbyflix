@@ -119,6 +119,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const progressiveTriedFallbackRef = useRef(false);
   const loadingRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const countedViewForVideoRef = useRef<string | null>(null);
 
   // Progressive → blob fallback: a pure in-memory swap (the Blob rides in
@@ -273,6 +274,33 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // markDownloadErrorKind is a stable inline closure over setState only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Native controls fullscreen the <video> element itself — and siblings
+  // are excluded from the fullscreen tree, so the watermark would vanish
+  // exactly when a screen recording starts. Swap the fullscreen target onto
+  // the wrapper frame (which contains both video and stamp). The second
+  // request runs inside the same user-activation window as the click on
+  // the native fullscreen button, so browsers allow it.
+  useEffect(() => {
+    if (!material) return;
+    const vid = videoRef.current;
+    const frame = frameRef.current;
+    if (!vid || !frame) return;
+    const onFullscreenChange = () => {
+      if (document.fullscreenElement !== vid) return;
+      try {
+        // May reject (activation window expired / secondary request
+        // refused) — worst case is the old behavior: fullscreen without
+        // the watermark, so swallow it.
+        const pending = frame.requestFullscreen?.();
+        pending?.catch(() => {});
+      } catch {
+        // Legacy sync-throwing implementations — same fallback applies.
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, [material]);
 
   // Attach the playback material to the <video> element and kick off
   // autoplay. Blob material is the classic src assignment; progressive
@@ -576,7 +604,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   return (
     <div
-      className={`aspect-video bg-black rounded-xl overflow-hidden relative ${className}`}
+      ref={frameRef}
+      className={`player-frame aspect-video bg-black rounded-xl overflow-hidden relative ${className}`}
     >
       {material ? (
         <video

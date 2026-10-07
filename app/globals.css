@@ -76,6 +76,23 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Fullscreen runs on the wrapper, not the <video> (VideoPlayer swaps the
+     target so the watermark overlay stays inside the fullscreen tree).
+     Match native fullscreen behavior: fill the screen, letterbox the video
+     instead of stretching it, black backdrop, readable stamp size. */
+  .player-frame:fullscreen {
+    border-radius: 0;
+  }
+  .player-frame:fullscreen video {
+    object-fit: contain;
+  }
+  .player-frame:fullscreen::backdrop {
+    background: #000;
+  }
+  .player-frame:fullscreen [data-testid='playback-watermark'] {
+    font-size: 13px;
+  }
+
   @keyframes slideIn {
     from { opacity: 0; transform: translateY(-10px); }
     to   { opacity: 1; transform: translateY(0); }
