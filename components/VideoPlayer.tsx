@@ -11,6 +11,13 @@ import {
 } from '@heroicons/react/24/outline';
 import useVideoAccess from '@/hooks/useVideoAccess';
 import PurchaseGate from './PurchaseGate';
+import PlaybackWatermark from './PlaybackWatermark';
+import {
+  attachProgressivePlayback,
+  progressivePlaybackSupported,
+  type PlaybackMaterial,
+  type ProgressivePlaybackHandle,
+} from '@/lib/progressive-playback';
 
 // ---------------------------------------------------------------------------
 // VideoPlayer
@@ -81,7 +88,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   } = useVideoAccess(video.videoId, walletAddress ?? null);
 
   // ── Download / decrypt state ─────────────────────────────────────────
-  const [streamUrl, setStreamUrl] = useState<string>('');
+  // Material = how the (already access-granted) bytes reach the element:
+  //   progressive → MediaSource pipeline, no full-file URL exists for the
+  //                 save menus to grab (the whole point — see
+  //                 lib/progressive-playback.ts);
+  //   blob        → classic object URL. Used when MSE is unsupported or
+  //                 rejected the container/codec, and the only path on
+  //                 browsers without MediaSource/ManagedMediaSource.
+  const [material, setMaterial] = useState<PlaybackMaterial | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadErrorKind, setDownloadErrorKind] =
@@ -99,15 +113,33 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const objectUrlRef = useRef<string | null>(null);
+  const progressiveHandleRef = useRef<ProgressivePlaybackHandle | null>(null);
+  // One-shot guard: a failed progressive pipeline swaps to blob playback
+  // exactly once, so an error can never bounce between the two paths.
+  const progressiveTriedFallbackRef = useRef(false);
   const loadingRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const countedViewForVideoRef = useRef<string | null>(null);
+
+  // Progressive → blob fallback: a pure in-memory swap (the Blob rides in
+  // the material for exactly this), so no re-download or second key fetch.
+  // Used by the attach error path AND the <video> onError prop.
+  const fallBackToBlob = (source: PlaybackMaterial) => {
+    if (source.kind !== 'progressive') return;
+    if (progressiveTriedFallbackRef.current) return;
+    progressiveTriedFallbackRef.current = true;
+    const url = URL.createObjectURL(source.blob);
+    objectUrlRef.current = url;
+    setMaterial({ kind: 'blob', url });
+  };
 
   // Clear any object URL / stream state when the video changes or when
   // access flips back to denied (e.g. owner removed a viewer from an
   // allowlist while they were watching).
   useEffect(() => {
     return () => {
+      progressiveHandleRef.current?.dispose();
+      progressiveHandleRef.current = null;
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
         objectUrlRef.current = null;
@@ -120,7 +152,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // invariant of Req 7.6: no blob fetch unless the server said yes.
   useEffect(() => {
     if (!access || !access.hasAccess) return;
-    if (streamUrl || objectUrlRef.current || loadingRef.current) return;
+    if (material || objectUrlRef.current || loadingRef.current) return;
 
     let cancelled = false;
     // Encrypted videos (default, and every legacy row) go through the
@@ -158,9 +190,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         if (cancelled) return;
 
-        const url = URL.createObjectURL(blob);
-        objectUrlRef.current = url;
-        setStreamUrl(url);
+        progressiveTriedFallbackRef.current = false;
+
+        if (progressivePlaybackSupported()) {
+          // Keep the decrypted bytes in memory and hand them to the MSE
+          // pipeline: no full-file blob URL is ever minted, so the save
+          // menus have nothing to offer. The Blob stays in `material` as
+          // the in-memory fallback if the pipeline rejects the file.
+          const buffer = await blob.arrayBuffer();
+          if (cancelled) return;
+          setMaterial({ kind: 'progressive', buffer, blob });
+        } else {
+          const url = URL.createObjectURL(blob);
+          objectUrlRef.current = url;
+          setMaterial({ kind: 'blob', url });
+        }
       } catch (err) {
         if (cancelled) return;
         const errorMsg =
@@ -211,7 +255,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // download without restarting it on every identity change of the
     // `access` object. `downloadEpoch` covers same-access retries (retry
     // button, wallet session just established after a 401).
-  }, [access?.hasAccess, access?.reason, video.videoId, video.isEncrypted, walletAddress, streamUrl, downloadEpoch]);
+  }, [access?.hasAccess, access?.reason, video.videoId, video.isEncrypted, walletAddress, material, downloadEpoch]);
 
   // After the viewer signs the wallet-session challenge (triggered from the
   // 'session' error state below, or the auto prompt on connect), clear the
@@ -230,18 +274,70 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Attach the blob URL to the <video> element and kick off autoplay.
+  // Attach the playback material to the <video> element and kick off
+  // autoplay. Blob material is the classic src assignment; progressive
+  // material wires the MediaSource pipeline (which owns the element's src)
+  // and only starts playback once the init segment has landed.
   useEffect(() => {
-    if (streamUrl && videoRef.current) {
-      videoRef.current.src = streamUrl;
-      videoRef.current.load();
+    if (!material) return;
+    const vid = videoRef.current;
+    if (!vid) return;
+
+    if (material.kind === 'blob') {
+      vid.src = material.url;
+      vid.load();
       if (autoPlay) {
-        videoRef.current.play().catch(() => {
+        vid.play().catch(() => {
           // Autoplay may be blocked by browser — silent fail is fine.
         });
       }
+      return;
     }
-  }, [streamUrl, autoPlay]);
+
+    let disposed = false;
+    let handle: ProgressivePlaybackHandle | null = null;
+    // Aborts a still-pending setup when this effect cleans up (material
+    // swapped, video changed, unmount) — the handle only exists post-resolve.
+    const controller = new AbortController();
+
+    attachProgressivePlayback(vid, material.buffer, {
+      signal: controller.signal,
+      onError: (err) => {
+        console.warn('Progressive pipeline error, using blob fallback:', err);
+        fallBackToBlob(material);
+      },
+    })
+      .then((h) => {
+        if (disposed) {
+          h.dispose();
+          return;
+        }
+        handle = h;
+        progressiveHandleRef.current = h;
+        if (autoPlay) {
+          vid.play().catch(() => {
+            // Autoplay may be blocked by browser — silent fail is fine.
+          });
+        }
+      })
+      .catch((err) => {
+        if (disposed) return;
+        console.warn('Progressive playback unavailable, using blob fallback:', err);
+        fallBackToBlob(material);
+      });
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      handle?.dispose();
+      if (progressiveHandleRef.current === handle) {
+        progressiveHandleRef.current = null;
+      }
+    };
+    // fallBackToBlob is a stable setState+refs closure; listing it would
+    // re-run the effect on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [material, autoPlay]);
 
   // ── 1. Access check is in flight ─────────────────────────────────────
   if (accessLoading && !access) {
@@ -457,8 +553,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
               setDownloadError(null);
               markDownloadErrorKind(null);
               loadingRef.current = false;
-              objectUrlRef.current = null;
-              setStreamUrl('');
+              progressiveTriedFallbackRef.current = false;
+              if (objectUrlRef.current) {
+                URL.revokeObjectURL(objectUrlRef.current);
+                objectUrlRef.current = null;
+              }
+              setMaterial(null);
               // Bump the epoch so the download effect re-runs even when the
               // access-derived deps above are byte-identical, then refetch
               // access to also catch any permission flip.
@@ -475,15 +575,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }
 
   return (
-    <div className={`aspect-video bg-black rounded-xl overflow-hidden ${className}`}>
-      {streamUrl ? (
+    <div
+      className={`aspect-video bg-black rounded-xl overflow-hidden relative ${className}`}
+    >
+      {material ? (
         <video
           ref={videoRef}
           controls
           controlsList="nodownload"
           playsInline
           muted={muted}
-          className="w-full h-full"
+          className="shelbyflix-protected w-full h-full"
+          // Blunt the platform save affordances: right-click "Save video as"
+          // on PC/Android and the long-press callout on iOS. The progressive
+          // path never creates a file URL (nothing to save); this guards the
+          // blob fallback, where the decrypted copy would otherwise be one
+          // click away. Deterrent only — DevTools and screen recording are
+          // untouched (see lib/progressive-playback.ts).
+          onContextMenu={(e) => e.preventDefault()}
           onPlay={() => {
             if (countedViewForVideoRef.current === video.videoId) return;
             countedViewForVideoRef.current = video.videoId;
@@ -499,6 +608,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
               });
           }}
           onError={(e) => {
+            if (material.kind === 'progressive') {
+              // The MSE pipeline rejected the file after attach: swap to
+              // the in-memory blob fallback instead of erroring outright.
+              // If THAT fails too, material is 'blob' and we fall through
+              // to the error state below.
+              if (!progressiveTriedFallbackRef.current) {
+                fallBackToBlob(material);
+                return;
+              }
+            }
             const code = e.currentTarget.error?.code;
             const msg = e.currentTarget.error?.message ?? 'Unknown error';
             markDownloadErrorKind('playback');
@@ -510,6 +629,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-red" />
         </div>
       )}
+      {material && <PlaybackWatermark walletAddress={walletAddress} />}
     </div>
   );
 };

@@ -21,6 +21,13 @@ import {
   PlayIcon,
 } from '@heroicons/react/24/outline';
 import { formatDistanceToNow } from 'date-fns';
+import {
+  attachProgressivePlayback,
+  progressivePlaybackSupported,
+  type PlaybackMaterial,
+  type ProgressivePlaybackHandle,
+} from '@/lib/progressive-playback';
+import { PlaybackWatermark } from '@/components/PlaybackWatermark';
 
 /**
  * Channel DP for the overlay. The feed payload has no avatar field, so the
@@ -71,7 +78,10 @@ function ShortPlayer({
   walletAddress?: string | null;
   onFirstPlay?: () => void;
 }) {
-  const [streamUrl, setStreamUrl] = useState('');
+  // Progressive (MediaSource) material when the browser supports it — no
+  // full-file blob URL for the save menus to grab (see
+  // lib/progressive-playback.ts); classic blob URL otherwise.
+  const [material, setMaterial] = useState<PlaybackMaterial | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // 'session' = 401 wallet_session_required from the key endpoint; the
@@ -81,6 +91,39 @@ function ShortPlayer({
   const [isPaused, setIsPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const loadedRef = useRef(false);
+  const objectUrlRef = useRef<string | null>(null);
+  const progressiveHandleRef = useRef<ProgressivePlaybackHandle | null>(null);
+  // One-shot: a failed progressive pipeline swaps to blob playback exactly
+  // once, so an error can't bounce between the two paths.
+  const progressiveTriedFallbackRef = useRef(false);
+
+  // Progressive → blob fallback: pure in-memory swap (the Blob rides in the
+  // material for exactly this) — no re-download, no second key fetch.
+  const fallBackToBlob = (source: PlaybackMaterial) => {
+    if (source.kind !== 'progressive') return;
+    if (progressiveTriedFallbackRef.current) return;
+    progressiveTriedFallbackRef.current = true;
+    const url = URL.createObjectURL(source.blob);
+    objectUrlRef.current = url;
+    setMaterial({ kind: 'blob', url });
+  };
+
+  // Apply the feed's active state without ever touching src: an MSE
+  // pipeline can't survive a reload, and re-setting src+load() on every
+  // active flip (the old behavior) just restarted the short from zero.
+  const applyActiveState = (vid: HTMLVideoElement) => {
+    vid.muted = isMuted;
+    if (isActive) {
+      vid.play().catch(() => {});
+    } else {
+      vid.pause();
+      try {
+        vid.currentTime = 0;
+      } catch {
+        /* not seekable yet */
+      }
+    }
+  };
 
   useEffect(() => {
     if (!isActive || loadedRef.current) return;
@@ -113,8 +156,23 @@ function ShortPlayer({
               )
             : await downloadRawVideo(shelbyUrl, video.videoId);
 
-        const url = URL.createObjectURL(blob);
-        setStreamUrl(url);
+        progressiveTriedFallbackRef.current = false;
+        if (objectUrlRef.current) {
+          URL.revokeObjectURL(objectUrlRef.current);
+          objectUrlRef.current = null;
+        }
+
+        if (progressivePlaybackSupported()) {
+          // Keep the decrypted bytes in memory for the MSE pipeline — no
+          // full-file URL exists for a long-press/right-click to save. The
+          // Blob stays in the material as the in-memory fallback.
+          const buffer = await blob.arrayBuffer();
+          setMaterial({ kind: 'progressive', buffer, blob });
+        } else {
+          const url = URL.createObjectURL(blob);
+          objectUrlRef.current = url;
+          setMaterial({ kind: 'blob', url });
+        }
         setErrorKind(null);
       } catch (e) {
         if (e instanceof Error && e.name === 'WalletSessionRequiredError') {
@@ -152,27 +210,85 @@ function ShortPlayer({
       window.removeEventListener('wallet-session-established', onSessionEstablished);
   }, [errorKind]);
 
+  // Attach the playback material to the element — only on material change.
+  // Blob material is a plain src assignment; progressive material wires the
+  // MediaSource pipeline (which owns the element's src) and applies the
+  // active state once the init segment has landed.
   useEffect(() => {
     const vid = videoRef.current;
-    if (!vid || !streamUrl) return;
-    vid.src = streamUrl;
-    vid.load();
-    if (isActive) {
-      vid.muted = isMuted;
-      vid.play().catch(() => {});
-    } else {
-      vid.pause();
-      vid.currentTime = 0;
+    if (!vid || !material) return;
+
+    if (material.kind === 'blob') {
+      vid.src = material.url;
+      vid.load();
+      applyActiveState(vid);
+      return;
     }
-  }, [streamUrl, isActive]);
+
+    let disposed = false;
+    let handle: ProgressivePlaybackHandle | null = null;
+    // Aborts a still-pending setup when this effect cleans up (material
+    // swapped or unmount) — the handle only exists post-resolve.
+    const controller = new AbortController();
+
+    attachProgressivePlayback(vid, material.buffer, {
+      signal: controller.signal,
+      onError: (err) => {
+        console.warn('Progressive pipeline error, using blob fallback:', err);
+        fallBackToBlob(material);
+      },
+    })
+      .then((h) => {
+        if (disposed) {
+          h.dispose();
+          return;
+        }
+        handle = h;
+        progressiveHandleRef.current = h;
+        applyActiveState(vid);
+      })
+      .catch((err) => {
+        if (disposed) return;
+        console.warn('Progressive playback unavailable, using blob fallback:', err);
+        fallBackToBlob(material);
+      });
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      handle?.dispose();
+      if (progressiveHandleRef.current === handle) {
+        progressiveHandleRef.current = null;
+      }
+    };
+    // applyActiveState/fallBackToBlob are stable closures over props+setState.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [material]);
+
+  // Feed flips: play/pause/reset without reloading the source.
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || !material) return;
+    applyActiveState(vid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, material]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = isMuted;
   }, [isMuted]);
 
+  // Dispose the pipeline and revoke any object URL on unmount.
+  useEffect(() => {
+    return () => {
+      progressiveHandleRef.current?.dispose();
+      progressiveHandleRef.current = null;
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    };
+  }, []);
+
   function togglePause() {
     const vid = videoRef.current;
-    if (!vid || !streamUrl) return;
+    if (!vid || !material) return;
     if (vid.paused) { vid.play(); setIsPaused(false); }
     else { vid.pause(); setIsPaused(true); }
   }
@@ -207,20 +323,26 @@ function ShortPlayer({
           ref={videoRef}
           loop
           playsInline
-          className="w-full h-full object-cover"
+          controlsList="nodownload"
+          className="shelbyflix-protected w-full h-full object-cover"
+          // Same save-deterrent as VideoPlayer: shorts render without native
+          // controls, but the long-press / right-click menu would still offer
+          // the decrypted copy for download.
+          onContextMenu={(e) => e.preventDefault()}
           onPlay={() => {
             setIsPaused(false);
             onFirstPlay?.();
           }}
           onPause={() => setIsPaused(true)}
         />
-        {isPaused && streamUrl && (
+        {isPaused && material && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center">
               <PlayIcon className="w-8 h-8 text-white" />
             </div>
           </div>
         )}
+        {material && <PlaybackWatermark walletAddress={walletAddress} />}
       </div>
     </div>
   );
